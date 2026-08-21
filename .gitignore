@@ -1,7 +1,10 @@
 # build output
 /lexicode
 /dist/
-/web/dist/
+# web/dist is build output, but .gitkeep is committed so that //go:embed all:dist compiles on a
+# clean checkout, before anyone has run `make web`. See web/embed.go.
+/web/dist/*
+!/web/dist/.gitkeep
 /web/node_modules/
 node_modules/
 

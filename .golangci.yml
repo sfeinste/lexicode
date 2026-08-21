@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck      # an ignored error is a bug that has not happened yet
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
