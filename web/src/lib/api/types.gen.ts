@@ -700,6 +700,9 @@ export interface components {
             created_by_user_id: string | null;
             created_by_agent_id: string | null;
             label_ids: string[];
+            /** @description Acceptance-criteria progress (S11): total checklist items. The board card renders "▸ 3/5 acceptance criteria" from these two counts — only when criteria_total > 0. */
+            criteria_total: number;
+            criteria_checked: number;
             /** @description Set = archived (D-15 soft delete). */
             archived_at: string | null;
             /** Format: date-time */

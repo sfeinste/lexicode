@@ -105,11 +105,29 @@ const overviewRoute = createRoute({
   component: OverviewPage,
 });
 
-/** `?view=backlog` is the backlog — same view, filtered route (§1). */
+/**
+ * Board selection state, all in the URL (interaction rule 12): `?view=backlog` is the
+ * backlog — same view, filtered route (§1); `?layout=list` is the ⌘B list rendering (absent =
+ * board); `?group_by=` the grouping (absent = status); the filter chips (`assignee`,
+ * `delegate`, `label`, `priority` — "none" filters for the unset value), the search box
+ * (`q`), the keyboard selection (`sel`, a ticket key) and the ⇧V display properties (`show`,
+ * a comma list; absent = everything on).
+ */
 export interface BoardSearch {
   view?: "backlog";
+  layout?: "list";
   group_by?: "status" | "assignee" | "delegate" | "priority" | "label";
+  assignee?: string;
+  delegate?: string;
+  label?: string;
+  priority?: "none" | "low" | "medium" | "high" | "urgent";
+  q?: string;
+  sel?: string;
+  show?: string;
 }
+
+const optStr = (v: unknown): string | undefined =>
+  typeof v === "string" && v !== "" ? v : undefined;
 
 const boardRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -117,6 +135,7 @@ const boardRoute = createRoute({
   component: BoardPage,
   validateSearch: (search: Record<string, unknown>): BoardSearch => ({
     view: search.view === "backlog" ? "backlog" : undefined,
+    layout: search.layout === "list" ? "list" : undefined,
     group_by:
       search.group_by === "status" ||
       search.group_by === "assignee" ||
@@ -125,6 +144,20 @@ const boardRoute = createRoute({
       search.group_by === "label"
         ? search.group_by
         : undefined,
+    assignee: optStr(search.assignee),
+    delegate: optStr(search.delegate),
+    label: optStr(search.label),
+    priority:
+      search.priority === "none" ||
+      search.priority === "low" ||
+      search.priority === "medium" ||
+      search.priority === "high" ||
+      search.priority === "urgent"
+        ? search.priority
+        : undefined,
+    q: optStr(search.q),
+    sel: optStr(search.sel),
+    show: optStr(search.show),
   }),
 });
 

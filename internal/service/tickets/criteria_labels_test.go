@@ -142,3 +142,57 @@ func TestLabelsProjectScoped(t *testing.T) {
 		t.Fatalf("project still lists %d labels, want 0", len(body["labels"].([]any)))
 	}
 }
+
+// TestCriteriaCountsOnTicketBodies (S11): every ticket serialization carries
+// criteria_total/criteria_checked, so the board card can render "▸ 1/2 acceptance criteria"
+// from the list response without a per-card fetch.
+func TestCriteriaCountsOnTicketBodies(t *testing.T) {
+	e := newEnv(t)
+	c, _ := e.owner()
+	e.createProject(c, "CNT")
+	tk := e.createTicket(c, "CNT", "with progress", "")
+	id := tk["id"].(string)
+	e.createTicket(c, "CNT", "without criteria", "")
+
+	var critIDs []string
+	for _, text := range []string{"one", "two"} {
+		status, body := e.doJSON(c, "POST", "/api/v1/tickets/"+id+"/criteria",
+			fmt.Sprintf(`{"text":%q}`, text))
+		if status != http.StatusCreated {
+			t.Fatalf("add criterion = %d: %v", status, body)
+		}
+		critIDs = append(critIDs, body["id"].(string))
+	}
+	if status, body := e.doJSON(c, "PATCH", "/api/v1/criteria/"+critIDs[0], `{"checked":true}`); status != http.StatusOK {
+		t.Fatalf("check = %d: %v", status, body)
+	}
+
+	status, list := e.doJSON(c, "GET", "/api/v1/projects/CNT/tickets", "")
+	if status != http.StatusOK {
+		t.Fatalf("list = %d", status)
+	}
+	byTitle := map[string]map[string]any{}
+	for _, raw := range list["tickets"].([]any) {
+		row := raw.(map[string]any)
+		byTitle[row["title"].(string)] = row
+	}
+	with := byTitle["with progress"]
+	if with["criteria_total"].(float64) != 2 || with["criteria_checked"].(float64) != 1 {
+		t.Fatalf("list counts = %v/%v, want 1/2 checked/total",
+			with["criteria_checked"], with["criteria_total"])
+	}
+	without := byTitle["without criteria"]
+	if without["criteria_total"].(float64) != 0 || without["criteria_checked"].(float64) != 0 {
+		t.Fatalf("list counts for bare ticket = %v/%v, want 0/0",
+			without["criteria_checked"], without["criteria_total"])
+	}
+
+	status, detail := e.doJSON(c, "GET", "/api/v1/tickets/"+id, "")
+	if status != http.StatusOK {
+		t.Fatalf("get = %d", status)
+	}
+	if detail["criteria_total"].(float64) != 2 || detail["criteria_checked"].(float64) != 1 {
+		t.Fatalf("detail counts = %v/%v, want 1/2 checked/total",
+			detail["criteria_checked"], detail["criteria_total"])
+	}
+}

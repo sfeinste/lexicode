@@ -1,0 +1,580 @@
+/*
+ * Board styles (UI spec §5.3, tokens §3). The board scrolls horizontally inside its own
+ * container (§10 — the page body never scrolls sideways); each column scrolls vertically.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.error {
+  color: var(--fail);
+  font-size: var(--fs-body);
+  padding: 4px 0;
+}
+
+/* ---- header row ---------------------------------------------------------------------- */
+
+.header {
+  flex: none;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.layoutToggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.layoutToggle button {
+  padding: 3px 10px;
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  background: var(--surface);
+  transition: background var(--ease-state);
+}
+
+.layoutToggle button[data-active] {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.groupBy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-mono);
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+.groupBy select,
+.filters select {
+  font-size: var(--fs-body);
+  padding: 3px 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.filters {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.search {
+  width: 180px;
+  padding: 4px 8px;
+  font-size: var(--fs-body);
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.search:focus {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.displayButton,
+.newTicket {
+  padding: 4px 10px;
+  font-size: var(--fs-body);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  transition: background var(--ease-state);
+}
+
+.displayButton:hover,
+.newTicket:hover {
+  background: var(--surface-3);
+}
+
+.newTicket {
+  margin-left: auto;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.newTicket:hover {
+  background: var(--accent);
+  opacity: 0.9;
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  font-size: var(--fs-micro);
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.chip:hover {
+  background: var(--surface-3);
+}
+
+/* ---- needs-you pinned lane (§5.3): full-width, amber left border, not collapsible ----- */
+
+.needsYouLane {
+  flex: none;
+  margin: 10px 16px 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--needs-you);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 8px 12px;
+}
+
+.needsYouTitle {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--needs-you);
+  margin-bottom: 6px;
+}
+
+.needsYouCards {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.needsYouCard {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: var(--fs-body);
+}
+
+.needsYouCardTitle {
+  color: var(--text);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needsYouFlavor {
+  color: var(--needs-you);
+  font-size: var(--fs-micro);
+}
+
+.needsYouAction {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ---- board layout --------------------------------------------------------------------- */
+
+.board {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px 16px;
+  overflow-x: auto;
+  align-items: flex-start;
+}
+
+.column {
+  flex: none;
+  width: 280px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.columnHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: var(--fs-body);
+}
+
+.columnName {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.columnCount {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+
+/* WIP `3/4`: amber AT the limit, red OVER (§5.3). Under stays quiet. */
+.wip {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+}
+
+.wip[data-wip="at"] {
+  color: var(--needs-you);
+  font-weight: 600;
+}
+
+.wip[data-wip="over"] {
+  color: var(--fail);
+  font-weight: 600;
+}
+
+.autoStart {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--needs-you);
+  white-space: nowrap;
+}
+
+.columnBody {
+  flex: 1;
+  min-height: 40px;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.columnBody[data-drop-active] {
+  background: var(--surface-2);
+}
+
+.cardSlot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dropLine {
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+/* ---- the card (§5.3 anatomy) ---------------------------------------------------------- */
+
+.card,
+.rowCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background var(--ease-state);
+  text-align: left;
+}
+
+.card:hover,
+.rowCard:hover {
+  background: var(--surface-2);
+}
+
+.card:focus-visible,
+.rowCard:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+
+.card[data-selected],
+.rowCard[data-selected] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.card[data-multi],
+.rowCard[data-multi] {
+  background: var(--surface-3);
+}
+
+.cardTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cardKey {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+}
+
+.cardNeedsYou {
+  font-size: var(--fs-micro);
+  color: var(--needs-you);
+  white-space: nowrap;
+}
+
+.cardTitle {
+  margin-top: 2px;
+  font-size: var(--fs-body);
+  color: var(--text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; /* title, 2 lines max (§5.3) */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.rowTitle {
+  margin-top: 1px;
+  font-size: var(--fs-body);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cardCriteria {
+  margin-top: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.cardFooter {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.cardPriority {
+  font-family: var(--font-mono);
+  letter-spacing: -1px;
+  color: var(--text-3);
+}
+
+.cardPeople {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.cardDelegate {
+  font-family: var(--font-mono);
+  color: var(--halt);
+}
+
+.cardAssignee {
+  color: var(--text-2);
+}
+
+.cardLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.labelSwatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.cardPr {
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+/* ---- list layout ---------------------------------------------------------------------- */
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.sectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 8px;
+  min-height: 24px;
+}
+
+.sectionBody[data-drop-active] {
+  background: var(--surface-2);
+}
+
+/* ---- overlays ------------------------------------------------------------------------- */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 35%);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 40;
+}
+
+.overlay {
+  width: 420px;
+  max-width: 90vw;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 25%);
+}
+
+.overlayTitle {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.overlayInput {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: var(--fs-body);
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.overlayInput:focus {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.overlayActions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.overlayActions button {
+  padding: 4px 12px;
+  font-size: var(--fs-body);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.overlayActions button[type="submit"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.overlayActions button:disabled {
+  opacity: 0.5;
+}
+
+.peekHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.peekColumn {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
+.peekDescription {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.displayRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-body);
+  padding: 4px 0;
+}
+
+.pickerList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pickerOption {
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  font-size: var(--fs-body);
+  border-radius: 5px;
+  color: var(--text);
+  transition: background var(--ease-state);
+}
+
+.pickerOption:hover,
+.pickerOption[data-cursor] {
+  background: var(--surface-2);
+}
+
+.pickerEmpty {
+  font-size: var(--fs-body);
+  color: var(--text-3);
+  padding: 8px 0;
+}

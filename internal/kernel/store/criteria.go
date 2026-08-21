@@ -71,6 +71,51 @@ func (r *CriteriaRepo) Update(ctx context.Context, c *domain.Criterion) error {
 	return errIfNone(res)
 }
 
+// CriteriaCounts is a ticket's checklist progress — what the board card renders as
+// "▸ 3/5 acceptance criteria" (UI spec §5.3) without loading the rows.
+type CriteriaCounts struct {
+	Total   int64
+	Checked int64
+}
+
+// CountsForTicket returns one ticket's criteria progress. A ticket with no criteria
+// returns zeros, not an error.
+func (r *CriteriaRepo) CountsForTicket(ctx context.Context, ticketID string) (CriteriaCounts, error) {
+	var c CriteriaCounts
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(checked), 0)
+		FROM acceptance_criteria WHERE ticket_id = ?`, ticketID).Scan(&c.Total, &c.Checked)
+	if err != nil {
+		return CriteriaCounts{}, mapErr(err)
+	}
+	return c, nil
+}
+
+// CountsForProjectTickets returns ticket_id → criteria progress for every ticket of a
+// project — the one query the ticket list needs instead of one per row (same shape as
+// LabelsRepo.IDsForProjectTickets). Tickets without criteria are absent from the map.
+func (r *CriteriaRepo) CountsForProjectTickets(ctx context.Context, projectID string) (map[string]CriteriaCounts, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT ac.ticket_id, COUNT(*), COALESCE(SUM(ac.checked), 0)
+		FROM acceptance_criteria ac JOIN tickets t ON t.id = ac.ticket_id
+		WHERE t.project_id = ? GROUP BY ac.ticket_id`, projectID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]CriteriaCounts{}
+	for rows.Next() {
+		var ticketID string
+		var c CriteriaCounts
+		if err := rows.Scan(&ticketID, &c.Total, &c.Checked); err != nil {
+			return nil, mapErr(err)
+		}
+		out[ticketID] = c
+	}
+	return out, rows.Err()
+}
+
 // Delete removes a criterion.
 func (r *CriteriaRepo) Delete(ctx context.Context, id string) error {
 	res, err := r.h.w.ExecContext(ctx, `DELETE FROM acceptance_criteria WHERE id = ?`, id)

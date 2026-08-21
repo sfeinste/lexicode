@@ -1024,8 +1024,8 @@ components:
       required:
         [id, project_id, seq, key, title, description, column_id, category, position,
          priority, assignee_id, delegate_agent_id, parent_id, pr_number, pr_state, branch,
-         origin, created_by_user_id, created_by_agent_id, label_ids, archived_at,
-         created_at, updated_at]
+         origin, created_by_user_id, created_by_agent_id, label_ids, criteria_total,
+         criteria_checked, archived_at, created_at, updated_at]
       properties:
         id: { type: string }
         project_id: { type: string }
@@ -1051,6 +1051,12 @@ components:
         label_ids:
           type: array
           items: { type: string }
+        criteria_total:
+          type: integer
+          description: >
+            Acceptance-criteria progress (S11): total checklist items. The board card renders
+            "▸ 3/5 acceptance criteria" from these two counts — only when criteria_total > 0.
+        criteria_checked: { type: integer }
         archived_at: { type: [string, "null"], description: Set = archived (D-15 soft delete). }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }

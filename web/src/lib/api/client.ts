@@ -27,6 +27,7 @@ export type ColumnListResponse = components["schemas"]["ColumnListResponse"];
 export type CreateColumnRequest = components["schemas"]["CreateColumnRequest"];
 export type UpdateColumnRequest = components["schemas"]["UpdateColumnRequest"];
 export type Ticket = components["schemas"]["Ticket"];
+export type TicketPriority = components["schemas"]["TicketPriority"];
 export type TicketDetail = components["schemas"]["TicketDetail"];
 export type TicketListResponse = components["schemas"]["TicketListResponse"];
 export type CreateTicketRequest = components["schemas"]["CreateTicketRequest"];

@@ -31,11 +31,28 @@ export function applyStreamEvent(
       // refetch mid-run); invalidation is the correct conservative default until then.
       void qc.invalidateQueries({ queryKey: ["run", id] });
       break;
+    // Ticket events arrive on the project topic ("project:PAY" → id "PAY"). Every one of
+    // them can change what the board shows (S11), so they invalidate the ["board", key]
+    // family alongside the ticket cache.
+    case "ticket.created":
     case "ticket.updated":
+    case "ticket.moved":
+    case "ticket.archived":
+    case "ticket.unarchived":
       void qc.invalidateQueries({ queryKey: ["ticket", id] });
+      void qc.invalidateQueries({ queryKey: ["board", id] });
       break;
+    // Label CRUD changes chip names/colors on cards and the filter menu.
+    case "label.created":
+    case "label.updated":
+    case "label.deleted":
+      void qc.invalidateQueries({ queryKey: ["board", id] });
+      break;
+    // Column changes (S09 settings in another tab): the board reads columns through the S09
+    // query key, so both families refetch.
     case "board.updated":
       void qc.invalidateQueries({ queryKey: ["board", id] });
+      void qc.invalidateQueries({ queryKey: ["columns", "list", id] });
       break;
     case "triage.created":
       void qc.invalidateQueries({ queryKey: ["triage", id] });

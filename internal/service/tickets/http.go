@@ -148,6 +148,8 @@ type ticketBody struct {
 	CreatedByUserID  *string  `json:"created_by_user_id"`
 	CreatedByAgentID *string  `json:"created_by_agent_id"`
 	LabelIDs         []string `json:"label_ids"`
+	CriteriaTotal    int64    `json:"criteria_total"`
+	CriteriaChecked  int64    `json:"criteria_checked"`
 	ArchivedAt       *string  `json:"archived_at"`
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`
@@ -168,8 +170,10 @@ func toTicketBody(t TicketWithMeta) ticketBody {
 		PRNumber: tk.PRNumber, PRState: tk.PRState, Branch: tk.Branch,
 		Origin:          string(tk.Origin),
 		CreatedByUserID: tk.CreatedByUserID, CreatedByAgentID: tk.CreatedByAgentID,
-		LabelIDs: labelIDs, ArchivedAt: tk.ArchivedAt,
-		CreatedAt: tk.CreatedAt, UpdatedAt: tk.UpdatedAt,
+		LabelIDs:      labelIDs,
+		CriteriaTotal: t.CriteriaTotal, CriteriaChecked: t.CriteriaChecked,
+		ArchivedAt: tk.ArchivedAt,
+		CreatedAt:  tk.CreatedAt, UpdatedAt: tk.UpdatedAt,
 	}
 }
 

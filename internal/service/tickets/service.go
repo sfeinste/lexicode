@@ -142,12 +142,15 @@ func (e *ActiveRunsError) Error() string {
 
 // ---------------------------------------------------------------- reads -----
 
-// TicketWithMeta pairs a ticket with its derived status (the column's category — plan rule 3)
-// and its attached label IDs — the list/board read model.
+// TicketWithMeta pairs a ticket with its derived status (the column's category — plan rule 3),
+// its attached label IDs, and its criteria progress (S11: the board card's "▸ 3/5 acceptance
+// criteria" without a per-card fetch) — the list/board read model.
 type TicketWithMeta struct {
-	Ticket   domain.Ticket
-	Category domain.ColumnCategory
-	LabelIDs []string
+	Ticket          domain.Ticket
+	Category        domain.ColumnCategory
+	LabelIDs        []string
+	CriteriaTotal   int64
+	CriteriaChecked int64
 }
 
 // Detail is the GET /tickets/{id} read model. The stream is its own endpoint.
@@ -182,9 +185,15 @@ func (s *Service) List(ctx context.Context, projectKey string, includeArchived b
 	if err != nil {
 		return nil, err
 	}
+	counts, err := s.st.Criteria().CountsForProjectTickets(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]TicketWithMeta, len(tks))
 	for i, tk := range tks {
-		out[i] = TicketWithMeta{Ticket: tk, Category: cats[tk.ColumnID], LabelIDs: labelIDs[tk.ID]}
+		c := counts[tk.ID]
+		out[i] = TicketWithMeta{Ticket: tk, Category: cats[tk.ColumnID], LabelIDs: labelIDs[tk.ID],
+			CriteriaTotal: c.Total, CriteriaChecked: c.Checked}
 	}
 	return out, nil
 }
@@ -215,11 +224,22 @@ func (s *Service) Get(ctx context.Context, id string) (Detail, error) {
 	for i, l := range labels {
 		labelIDs[i] = l.ID
 	}
+	var checked int64
+	for _, c := range crit {
+		if c.Checked {
+			checked++
+		}
+	}
+	counts, err := s.st.Criteria().CountsForProjectTickets(ctx, tk.ProjectID)
+	if err != nil {
+		return Detail{}, err
+	}
 	d := Detail{
-		TicketWithMeta: TicketWithMeta{Ticket: tk, Category: cats[tk.ColumnID], LabelIDs: labelIDs},
-		Criteria:       crit,
-		Labels:         labels,
-		Children:       make([]TicketWithMeta, len(children)),
+		TicketWithMeta: TicketWithMeta{Ticket: tk, Category: cats[tk.ColumnID], LabelIDs: labelIDs,
+			CriteriaTotal: int64(len(crit)), CriteriaChecked: checked},
+		Criteria: crit,
+		Labels:   labels,
+		Children: make([]TicketWithMeta, len(children)),
 	}
 	for i, c := range children {
 		ids, err := s.st.Labels().ForTicket(ctx, c.ID)
@@ -230,7 +250,9 @@ func (s *Service) Get(ctx context.Context, id string) (Detail, error) {
 		for j, l := range ids {
 			childLabels[j] = l.ID
 		}
-		d.Children[i] = TicketWithMeta{Ticket: c, Category: cats[c.ColumnID], LabelIDs: childLabels}
+		cc := counts[c.ID]
+		d.Children[i] = TicketWithMeta{Ticket: c, Category: cats[c.ColumnID], LabelIDs: childLabels,
+			CriteriaTotal: cc.Total, CriteriaChecked: cc.Checked}
 	}
 	return d, nil
 }
@@ -651,7 +673,8 @@ func (s *Service) Update(ctx context.Context, id string, patch UpdatePatch) (Tic
 	return s.withMeta(ctx, tk)
 }
 
-// withMeta loads the derived category and label IDs for a single-ticket response.
+// withMeta loads the derived category, label IDs and criteria progress for a single-ticket
+// response.
 func (s *Service) withMeta(ctx context.Context, tk domain.Ticket) (TicketWithMeta, error) {
 	col, err := s.st.Columns().ByID(ctx, tk.ColumnID)
 	if err != nil {
@@ -665,5 +688,10 @@ func (s *Service) withMeta(ctx context.Context, tk domain.Ticket) (TicketWithMet
 	for i, l := range labels {
 		ids[i] = l.ID
 	}
-	return TicketWithMeta{Ticket: tk, Category: col.Category, LabelIDs: ids}, nil
+	counts, err := s.st.Criteria().CountsForTicket(ctx, tk.ID)
+	if err != nil {
+		return TicketWithMeta{}, err
+	}
+	return TicketWithMeta{Ticket: tk, Category: col.Category, LabelIDs: ids,
+		CriteriaTotal: counts.Total, CriteriaChecked: counts.Checked}, nil
 }
