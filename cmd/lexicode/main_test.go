@@ -157,3 +157,28 @@ func newTestServer(t *testing.T) string {
 	waitForServer(t, cfg.Addr())
 	return "http://" + cfg.Addr()
 }
+
+// TestSystemModulesIsServed checks the kernel is actually wired into serve: its route answers on
+// the real server, and the /api/ catch-all does not shadow it. This build registers no modules
+// yet — github, docker and the rest arrive with the stories that build them — so the list is
+// legitimately empty, and must be an empty array rather than null.
+func TestSystemModulesIsServed(t *testing.T) {
+	srv := newTestServer(t)
+
+	resp, err := http.Get(srv + "/api/v1/system/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if got := strings.TrimSpace(string(body)); got != `{"modules":[]}` {
+		t.Errorf("body = %s, want {\"modules\":[]}", got)
+	}
+}

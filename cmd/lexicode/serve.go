@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spruce/lexicode/internal/config"
+	"github.com/spruce/lexicode/internal/kernel"
 	"github.com/spruce/lexicode/internal/logging"
 	webui "github.com/spruce/lexicode/web"
 )
@@ -62,8 +63,32 @@ func cmdServe(args []string, stdout, stderr io.Writer) error {
 }
 
 func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout io.Writer) error {
+	// cmd/lexicode is the only wiring site (architecture §2.1): the kernel is built here, the
+	// modules are registered here, and nothing below this line knows which modules exist.
+	mux := http.NewServeMux()
+	k := kernel.New(kernel.Options{Logger: logger, Mux: mux})
+
+	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
+	// stories that build them (architecture §3.1); each is one line here.
+	if err := k.RegisterModule(); err != nil {
+		return err
+	}
+
+	// Init all → (migrate, story S03) → Start all → serve → Stop all in reverse.
+	if err := k.Init(); err != nil {
+		return err
+	}
+	// Modules stop after everything else this function does, in reverse registration order, with
+	// their own deadline (kernel.StopTimeout). A deferred call is what makes that true on the
+	// serve-error path as well as on the signal path. The signal context is cancelled by then, so
+	// shutdown runs on a fresh one.
+	defer func() {
+		k.Stop(context.Background())
+		logger.Info("stopped")
+	}()
+
 	srv := &http.Server{
-		Handler:           newHandler(logger),
+		Handler:           newHandler(logger, mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
@@ -97,6 +122,15 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		}
 	}
 
+	// Modules start before the listener is served so that a module which needs to be ready for
+	// the first request is. A Start failure marks the module degraded and boot continues.
+	k.Start(ctx)
+	for _, m := range k.Modules() {
+		if m.State == kernel.StateDegraded {
+			fmt.Fprintf(stdout, "Module %s is degraded: %s\n", m.Name, m.Reason)
+		}
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		err := srv.Serve(ln)
@@ -113,6 +147,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	}
 
 	logger.Info("shutting down", slog.Duration("grace", shutdownGrace))
+	// The signal context is already cancelled here, so shutdown runs on a fresh one.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -122,16 +157,15 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		_ = srv.Close()
 	}
 	<-errCh
-	logger.Info("stopped")
 	return nil
 }
 
-// newHandler wires the two surfaces story S01 has: the JSON API namespace, which so far contains
-// nothing, and the embedded SPA. Story S06 replaces this with kernel/httpx and its middleware
-// chain; the /api/ prefix is registered first here so that the SPA fallback can never answer an
-// API request with HTML.
-func newHandler(logger *slog.Logger) http.Handler {
-	mux := http.NewServeMux()
+// newHandler wires the surfaces the process has onto the kernel's mux: the routes the kernel and
+// its modules registered during Init, the JSON API namespace fallback, and the embedded SPA.
+// Story S06 replaces this with kernel/httpx and its middleware chain. The "/api/" pattern is a
+// catch-all for the namespace; Go's mux resolves by specificity, so a real endpoint such as
+// /api/v1/system/modules always wins over it regardless of registration order.
+func newHandler(logger *slog.Logger, mux *http.ServeMux) http.Handler {
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "not_found",
 			"No such endpoint",
