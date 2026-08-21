@@ -1,0 +1,78 @@
+.screen {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  padding: 24px;
+}
+
+.card {
+  width: 360px;
+  max-width: 100%;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wordmark {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.title {
+  font-size: var(--fs-title);
+}
+
+.lead {
+  color: var(--text-2);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  color: var(--text-2);
+  font-size: var(--fs-mono);
+}
+
+.fieldError {
+  color: var(--fail);
+  font-size: var(--fs-mono);
+}
+
+.problem {
+  color: var(--fail);
+}
+
+.submit {
+  padding: 7px 12px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 500;
+  transition: opacity var(--ease-state);
+}
+
+.submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.footer {
+  color: var(--text-2);
+  font-size: var(--fs-mono);
+}

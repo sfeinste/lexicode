@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -27,6 +28,13 @@ export default defineConfig({
   build: {
     outDir: OUT_DIR,
     emptyOutDir: true,
+  },
+  test: {
+    // globals:true is what lets @testing-library/react register its automatic afterEach
+    // cleanup; test files still import describe/it/expect explicitly.
+    globals: true,
+    environment: 'jsdom',
+    include: ['src/**/*.test.{ts,tsx}'],
   },
   server: {
     port: 5173,

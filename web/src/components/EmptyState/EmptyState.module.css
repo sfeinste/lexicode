@@ -1,0 +1,30 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.headline {
+  font-size: var(--fs-section);
+  color: var(--text);
+}
+
+.body {
+  max-width: 420px;
+  color: var(--text-2);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.secondary {
+  color: var(--text-2);
+}

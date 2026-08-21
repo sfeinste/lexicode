@@ -1,0 +1,75 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.dialog {
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
+}
+
+.input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-2);
+  padding: 10px 12px;
+  font-size: var(--fs-body);
+}
+
+.input:focus {
+  border-color: var(--border);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: var(--row-height);
+  padding: 0 8px;
+  border-radius: 4px;
+  color: var(--text);
+  text-align: left;
+  transition: background var(--ease-state);
+}
+
+.item[data-selected] {
+  background: var(--surface-3);
+}
+
+.chord {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.none {
+  padding: 12px 8px;
+  color: var(--text-3);
+}

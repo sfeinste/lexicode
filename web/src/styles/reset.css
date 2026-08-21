@@ -1,0 +1,96 @@
+/*
+ * Base reset + app-wide element defaults, over tokens.css. Everything component-shaped lives
+ * in CSS Modules next to its component (D-1: no utility framework, no component library).
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  /* §10: the page body never scrolls horizontally — wide content scrolls in its own box. */
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+h2 {
+  font-size: var(--fs-section);
+  font-weight: 600;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  transition: border-color var(--ease-state);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+
+/* §10: focus rings on everything interactive, --border-strong, never removed. */
+:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}

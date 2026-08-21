@@ -1,0 +1,353 @@
+/* The §2.1 global frame: fixed 40px top bar, 208px rail, fluid content. Regions separate
+ * with a 1px border and a background step, never margin alone (§2.2). */
+
+.frame {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.boot {
+  height: 100%;
+  background: var(--bg);
+}
+
+.bootError {
+  padding: 24px;
+  color: var(--fail);
+}
+
+/* ---- top bar ---- */
+
+.topbar {
+  flex: none;
+  height: var(--topbar-height);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.wordmark {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wordmark:hover {
+  text-decoration: none;
+}
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.topnavLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: var(--text-2);
+  transition: background var(--ease-state), color var(--ease-state);
+}
+
+.topnavLink:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.topnavLink[data-active] {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.search {
+  flex: 1;
+  max-width: 480px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-body);
+  transition: border-color var(--ease-state);
+}
+
+.search:hover {
+  border-color: var(--border-strong);
+}
+
+.search span {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.topbarRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--text-2);
+  transition: background var(--ease-state);
+}
+
+.iconButton:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+
+/* ---- user menu ---- */
+
+.userMenu {
+  position: relative;
+}
+
+.avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #ffffff;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 220px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+
+.menuHeader {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.menuMeta {
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+
+.menuRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 8px;
+  color: var(--text-2);
+}
+
+.menuAction {
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--text);
+  transition: background var(--ease-state);
+}
+
+.menuAction:hover {
+  background: var(--surface-3);
+}
+
+/* ---- body: rail + content ---- */
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.rail {
+  flex: none;
+  width: var(--rail-width);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  transition: width var(--ease-state);
+}
+
+.rail[data-collapsed] {
+  width: var(--rail-width-collapsed);
+}
+
+.railSection {
+  padding: 12px 8px;
+}
+
+.railNeedsYou {
+  border-top: 1px solid var(--border);
+}
+
+.railHeading {
+  padding: 0 8px 6px;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.railEmpty {
+  padding: 0 8px;
+  color: var(--text-3);
+}
+
+.railList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.railLink {
+  display: flex;
+  align-items: center;
+  height: var(--row-height);
+  padding: 0 8px;
+  border-radius: 4px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--ease-state), color var(--ease-state);
+}
+
+.railLink:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.railLink[data-active] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.railMore {
+  display: block;
+  padding: 4px 8px;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+/* ---- project header + tabs ---- */
+
+.project {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.projectHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.projectKey {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.projectName {
+  color: var(--text);
+  font-size: var(--fs-section);
+  font-weight: 600;
+}
+
+.projectMeta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+}
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto; /* wide content scrolls in its own container (§10) */
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  color: var(--text-2);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition: color var(--ease-state);
+}
+
+.tab:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.tab[data-active] {
+  color: var(--text);
+  border-bottom-color: var(--border-strong);
+}
+
+.tabSettings {
+  margin-left: auto;
+}
+
+.tabContent {
+  flex: 1;
+  min-height: 0;
+}

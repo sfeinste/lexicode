@@ -36,9 +36,19 @@ check-go:
 	$(GO) test ./...
 
 .PHONY: check-web
-check-web: web/node_modules
+check-web: web/node_modules check-api-types
 	cd web && npx tsc -b --noEmit
 	cd web && npx eslint .
+	cd web && npx vitest run
+
+# The committed types.gen.ts must match what openapi.yaml generates — regenerate to a scratch
+# file and diff, so a stale commit fails check without dirtying the tree.
+.PHONY: check-api-types
+check-api-types: web/node_modules
+	cd web && npx openapi-typescript ../internal/api/v1/openapi.yaml -o /tmp/lexicode-types-check.gen.ts >/dev/null
+	@diff -u web/src/lib/api/types.gen.ts /tmp/lexicode-types-check.gen.ts \
+		|| (echo "web/src/lib/api/types.gen.ts is stale — run 'make api-types'"; exit 1)
+	@rm -f /tmp/lexicode-types-check.gen.ts
 
 .PHONY: test
 test: ## Run the Go tests
@@ -58,6 +68,10 @@ web/node_modules: web/package.json web/package-lock.json
 .PHONY: web
 web: web/node_modules ## Build the frontend into web/dist (embedded by the Go build)
 	cd web && $(NPM) run build
+
+.PHONY: api-types
+api-types: web/node_modules ## Regenerate web/src/lib/api/types.gen.ts from internal/api/v1/openapi.yaml
+	cd web && npx openapi-typescript ../internal/api/v1/openapi.yaml -o src/lib/api/types.gen.ts
 
 # ------------------------------------------------------------------ build ----
 

@@ -1,0 +1,125 @@
+/*
+ * Design tokens — a literal transcription of UI spec §3.
+ *
+ * Theme handling exactly as specified: the full light palette on bare :root, the dark values
+ * under @media (prefers-color-scheme: dark) guarded as :root:not([data-theme="light"]), and
+ * again under :root[data-theme="dark"] so an explicit toggle wins both ways. The in-app toggle
+ * writes data-theme on <html>; "system" removes the attribute.
+ *
+ * §3.1 gives the dark surface ladder verbatim; light is the same ladder inverted. The §10
+ * contrast requirements (body text >= 4.5:1 against its surface, status glyphs >= 3:1) are
+ * asserted by web/src/styles/tokens.contrast.test.ts against BOTH palettes — change a value
+ * here and the test recomputes.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* §3.1 surfaces — light ladder */
+  --bg: #f4f5f7;             /* app background */
+  --surface: #ffffff;        /* panels, cards */
+  --surface-2: #f2f4f7;      /* raised: hover rows, popovers, inputs */
+  --surface-3: #e9edf2;      /* pressed, selected row */
+  --border: #d9dee5;         /* hairlines */
+  --border-strong: #a8b2bf;  /* focused inputs, active tab underline */
+  --text: #1a2028;           /* primary */
+  --text-2: #4b5563;         /* secondary, labels */
+  --text-3: #68717d;         /* tertiary, timestamps, disabled */
+
+  /* §3.2 semantic colors — one hue per meaning, no decorative color */
+  --accent: #4653cf;         /* interactive, primary action, links */
+  --running: #0f7f9c;        /* a run is in flight (also the pulse animation) */
+  --needs-you: #915f0a;      /* a human is blocking progress */
+  --ok: #1c7d54;             /* succeeded, merged, passing */
+  --fail: #c22f3f;           /* failed, error, changes requested */
+  --halt: #7a4fc0;           /* loop stopped, budget exceeded, superseded, debounced */
+  --muted: #667080;          /* queued, no action, canceled, archived */
+
+  /* §3.3 type */
+  --font-ui: ui-sans-serif, -apple-system, "Segoe UI", Inter, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --fs-micro: 11px;   /* micro / badges */
+  --fs-mono: 12px;    /* mono, meta */
+  --fs-body: 13px;    /* body / UI */
+  --fs-section: 15px; /* section headers */
+  --fs-title: 20px;   /* page titles. Nothing larger anywhere in the app. */
+
+  /* §2.2 density — 32px base rows; data-density="compact" switches to 28px */
+  --row-height: 32px;
+
+  /* §2.1 chrome dimensions */
+  --topbar-height: 40px;
+  --rail-width: 208px;
+  --rail-width-collapsed: 48px;
+
+  /* §3.4 motion — the only three animations that exist */
+  --ease-state: 120ms ease-out; /* hover / press state changes */
+  --log-fade: 80ms;             /* new log lines fade in */
+  /* the 2s pulse lives in @keyframes lx-pulse below */
+}
+
+:root[data-density="compact"] {
+  --row-height: 28px;
+}
+
+/* Dark palette — §3.1/§3.2 verbatim. Applies when the OS prefers dark and the user has not
+ * explicitly chosen light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #0b0d10;
+    --surface: #121519;
+    --surface-2: #181c22;
+    --surface-3: #1f242b;
+    --border: #232830;
+    --border-strong: #333a45;
+    --text: #e6e9ef;
+    --text-2: #9aa4b2;
+    --text-3: #6b7480;
+
+    --accent: #6c7cff;
+    --running: #3fb8d4;
+    --needs-you: #e0a33e;
+    --ok: #3fb37f;
+    --fail: #e05563;
+    --halt: #a072e0;
+    --muted: #6b7480;
+  }
+}
+
+/* The explicit dark toggle wins regardless of the OS preference. Keep in sync with the media
+ * block above — the contrast test reads this block as the dark palette of record. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0b0d10;
+  --surface: #121519;
+  --surface-2: #181c22;
+  --surface-3: #1f242b;
+  --border: #232830;
+  --border-strong: #333a45;
+  --text: #e6e9ef;
+  --text-2: #9aa4b2;
+  --text-3: #6b7480;
+
+  --accent: #6c7cff;
+  --running: #3fb8d4;
+  --needs-you: #e0a33e;
+  --ok: #3fb37f;
+  --fail: #e05563;
+  --halt: #a072e0;
+  --muted: #6b7480;
+}
+
+/* §3.4 — the pulse on the running dot. 2s, nothing slides, nothing bounces. */
+@keyframes lx-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* §3.4 — new log lines fade in over 80ms. */
+@keyframes lx-log-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

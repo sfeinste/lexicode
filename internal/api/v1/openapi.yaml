@@ -1,0 +1,292 @@
+# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S06).
+#
+# This file is the source of truth for request/response shapes (contracts §5). The frontend's
+# TypeScript types are generated from it: `make api-types` regenerates
+# web/src/lib/api/types.gen.ts, and `make check` fails if the committed file is stale.
+#
+# Grow this file in the story that adds the route — never ahead of it.
+openapi: 3.1.0
+info:
+  title: Lexicode API
+  version: "1"
+  description: >
+    JSON over cookie-session auth. Every error is application/problem+json with a stable
+    `type` slug the frontend switches on (architecture §14). While the database has zero
+    users, every call except POST /auth/setup answers 401 `setup_required`.
+servers:
+  - url: /api/v1
+paths:
+  /auth/setup:
+    post:
+      operationId: authSetup
+      summary: First-run owner creation. 409 `already_setup` once any user exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetupRequest" }
+      responses:
+        "201":
+          description: Owner created and signed in (session cookie set).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /auth/login:
+    post:
+      operationId: authLogin
+      summary: Sign in with email and password. 401 `invalid_credentials` on failure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Signed in (session cookie set).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/logout:
+    post:
+      operationId: authLogout
+      summary: Revoke the current session. Idempotent.
+      responses:
+        "204":
+          description: Session revoked and cookie cleared.
+  /auth/me:
+    get:
+      operationId: authMe
+      summary: The signed-in user. 401 `unauthenticated` or `session_expired` otherwise.
+      responses:
+        "200":
+          description: The current user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /invites:
+    post:
+      operationId: createInvite
+      summary: Mint a one-time invite link (owner only). The raw token appears here once.
+      responses:
+        "201":
+          description: The copyable invite path and its expiry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invite" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /invites/{token}/redeem:
+    post:
+      operationId: redeemInvite
+      summary: >
+        Join via an invite link. 404 `invite_invalid` for an unknown or used token,
+        410 `invite_expired` past expiry, 409 `email_taken`.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RedeemRequest" }
+      responses:
+        "201":
+          description: Member created and signed in (session cookie set).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+  /system/modules:
+    get:
+      operationId: systemModules
+      summary: Registered modules and their post-boot state.
+      responses:
+        "200":
+          description: The module list. Empty list, never null.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModulesResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /audit:
+    get:
+      operationId: auditList
+      summary: Query the audit log (owner only). Keyset-paginated.
+      parameters:
+        - { name: project, in: query, schema: { type: string }, description: Project key or id. }
+        - { name: actor, in: query, schema: { type: string }, description: "`human` or `human:<id>` (later: agent, trigger, system)." }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: target, in: query, schema: { type: string }, description: Target kind. }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: until, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 200 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: One page of audit entries, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditListResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /stream:
+    get:
+      operationId: stream
+      summary: >
+        The SSE stream (contracts §5.1). One connection per tab;
+        `?topics=project:PAY,run:01H…,inbox` selects topics. Frames carry `id:` (ULID),
+        `event:` (StreamEventType) and `data:` (StreamFrame). `Last-Event-ID` on reconnect
+        replays missed frames. Not consumable through fetch — the SPA uses EventSource.
+      parameters:
+        - name: topics
+          in: query
+          schema: { type: string }
+          description: Comma-separated topic list.
+      responses:
+        "200":
+          description: An event stream; stays open until the client goes away.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Problem" }
+components:
+  responses:
+    Problem:
+      description: application/problem+json with a stable `type` slug.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Problem:
+      type: object
+      description: >
+        RFC 9457 problem details. `type` is a slug, not a URL. Slugs in use today:
+        setup_required, already_setup, invalid_credentials, session_expired, unauthenticated,
+        forbidden, invite_invalid, invite_expired, email_taken, not_found, invalid_request,
+        validation_failed, internal.
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors:
+          type: array
+          items: { $ref: "#/components/schemas/FieldError" }
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field: { type: string }
+        message: { type: string }
+    User:
+      type: object
+      required: [id, email, display_name, role, avatar_color, created_at]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        display_name: { type: string }
+        role: { type: string, enum: [owner, member] }
+        avatar_color: { type: string }
+        created_at: { type: string, format: date-time }
+    SetupRequest:
+      type: object
+      required: [email, display_name, password]
+      properties:
+        email: { type: string }
+        display_name: { type: string }
+        password: { type: string }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string }
+        password: { type: string }
+    RedeemRequest:
+      type: object
+      required: [email, display_name, password]
+      properties:
+        email: { type: string }
+        display_name: { type: string }
+        password: { type: string }
+    Invite:
+      type: object
+      required: [path, expires_at]
+      properties:
+        path:
+          type: string
+          description: The one-time path (`/invite/<token>`) the owner copies into a message.
+        expires_at: { type: string, format: date-time }
+    ModulesResponse:
+      type: object
+      required: [modules]
+      properties:
+        modules:
+          type: array
+          items: { $ref: "#/components/schemas/ModuleStatus" }
+    ModuleStatus:
+      type: object
+      required: [name, state]
+      properties:
+        name: { type: string }
+        state: { type: string, enum: [ready, degraded] }
+        reason: { type: string }
+    AuditListResponse:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/AuditEntry" }
+        next_cursor:
+          type: string
+          description: Present exactly when the page was full; pass back as ?cursor=.
+    AuditEntry:
+      type: object
+      required: [id, project_id, actor_kind, actor_id, action, target_kind, target_id, before, after, created_at]
+      properties:
+        id: { type: string }
+        project_id: { type: [string, "null"] }
+        actor_kind: { type: string }
+        actor_id: { type: [string, "null"] }
+        action: { type: string }
+        target_kind: { type: string }
+        target_id: { type: string }
+        before: {}
+        after: {}
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+    StreamEventType:
+      type: string
+      description: The SSE `event:` names (contracts §5.1).
+      enum:
+        - run.state
+        - run.activity
+        - run.step
+        - run.usage
+        - run.elicitation
+        - ticket.updated
+        - board.updated
+        - triage.created
+        - trigger.fired
+        - notification.updated
+        - wiki.proposed
+        - provision.step
+        - module.degraded
+    StreamFrame:
+      type: object
+      description: The `data:` payload of every SSE frame.
+      required: [topic, payload]
+      properties:
+        topic: { type: string }
+        payload: {}
