@@ -22,19 +22,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
 // Kernel owns the subsystems every module and service shares. Subsystems are added one story at a
 // time; each one is a field here plus an accessor, and nothing else in the shape changes. The
-// accessors that contracts §1 lists but that have no subsystem yet — Bus (S04),
-// Scheduler (S05), Secrets and Audit (S07), SSE (S06) — are deliberately absent rather than
+// accessors that contracts §1 lists but that have no subsystem yet — Scheduler (S05),
+// Secrets and Audit (S07), SSE (S06) — are deliberately absent rather than
 // stubbed, so that no caller can be written against a stub that later changes meaning.
 type Kernel struct {
 	logger      *slog.Logger
 	mux         *http.ServeMux
 	store       *store.Store
+	bus         *bus.Bus
 	stopTimeout time.Duration
 
 	eventSources      *registry[ports.EventSource]
@@ -72,6 +74,11 @@ type Options struct {
 	// the kernel — wiring stays in cmd (architecture §2.1). Nil is tolerated only for tests
 	// that exercise the kernel without a database; modules may assume it is set.
 	Store *store.Store
+	// Bus is the persist-then-dispatch event bus (D-13). cmd/lexicode constructs it over the
+	// same store and starts it after Init, once every module's subscriptions exist. Nil is
+	// tolerated only for tests that exercise the kernel without one; modules may assume it is
+	// set.
+	Bus *bus.Bus
 }
 
 // New builds a kernel and registers the routes the kernel itself owns.
@@ -94,6 +101,7 @@ func New(opts Options) *Kernel {
 		logger:            logger,
 		mux:               mux,
 		store:             opts.Store,
+		bus:               opts.Bus,
 		stopTimeout:       timeout,
 		eventSources:      newRegistry[ports.EventSource]("event source"),
 		forges:            newRegistry[ports.ForgeProvider]("forge"),
@@ -115,6 +123,11 @@ func (k *Kernel) Logger() *slog.Logger { return k.logger }
 // Store is the open, migrated database (contracts §1). It is the one shared persistence handle:
 // repositories, transactions and migrations all hang off it.
 func (k *Kernel) Store() *store.Store { return k.store }
+
+// Bus is the persist-then-dispatch event bus (contracts §1, D-13): sources publish through it,
+// modules and services subscribe to it during Init. cmd/lexicode starts it after Init and stops
+// it after the modules, so subscriptions exist before recovery and outlive module drains.
+func (k *Kernel) Bus() *bus.Bus { return k.bus }
 
 // Mux is the HTTP mux modules and services register routes on.
 //

@@ -17,6 +17,7 @@ import (
 
 	"github.com/spruce/lexicode/internal/config"
 	"github.com/spruce/lexicode/internal/kernel"
+	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
@@ -95,7 +96,8 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	}
 
 	mux := http.NewServeMux()
-	k := kernel.New(kernel.Options{Logger: logger, Mux: mux, Store: st})
+	b := bus.New(bus.Options{Store: st, Logger: logger})
+	k := kernel.New(kernel.Options{Logger: logger, Mux: mux, Store: st, Bus: b})
 
 	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
 	// stories that build them (architecture §3.1); each is one line here.
@@ -110,11 +112,23 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// Modules stop after everything else this function does, in reverse registration order, with
 	// their own deadline (kernel.StopTimeout). A deferred call is what makes that true on the
 	// serve-error path as well as on the signal path. The signal context is cancelled by then, so
-	// shutdown runs on a fresh one.
+	// shutdown runs on a fresh one. The bus stops after the modules: publishers drain before the
+	// queues close, and anything still pending is recovered on the next boot (D-13).
 	defer func() {
 		k.Stop(context.Background())
+		busCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := b.Stop(busCtx); err != nil {
+			logger.Warn("event bus did not stop cleanly", slog.String("error", err.Error()))
+		}
 		logger.Info("stopped")
 	}()
+
+	// Boot recovery: re-dispatch events a previous process persisted but never finished
+	// dispatching (D-13). After Init, so that every module's subscriptions exist.
+	if err := b.Start(ctx); err != nil {
+		return err
+	}
 
 	srv := &http.Server{
 		Handler:           newHandler(logger, mux),
