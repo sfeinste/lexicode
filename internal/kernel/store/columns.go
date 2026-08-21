@@ -110,3 +110,39 @@ func scanColumn(row rowScanner) (domain.Column, error) {
 	c.AutoStartDelegate = autoStart != 0
 	return c, nil
 }
+
+// Delete removes a column. Tickets still referencing it make this an ErrForeignKey (deletes
+// are RESTRICT, D-2) — the service moves them to a destination column first, in the same
+// transaction.
+func (r *ColumnsRepo) Delete(ctx context.Context, id string) error {
+	res, err := r.h.w.ExecContext(ctx, `DELETE FROM columns WHERE id = ?`, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	return errIfNone(res)
+}
+
+// TicketCounts returns, per column ID, how many tickets a project's columns hold. Archived
+// tickets count too: they still reference the column (soft delete keeps the row), so they are
+// what the delete guardrail must account for. Columns with no tickets are absent from the map.
+func (r *ColumnsRepo) TicketCounts(ctx context.Context, projectID string) (map[string]int64, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT column_id, COUNT(*) FROM tickets
+		WHERE project_id = ?
+		GROUP BY column_id`, projectID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var n int64
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, mapErr(err)
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}

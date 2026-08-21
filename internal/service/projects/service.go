@@ -31,6 +31,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/httpx"
 	"github.com/spruce/lexicode/internal/kernel/store"
+	"github.com/spruce/lexicode/internal/service/board"
 )
 
 // keyPattern is the project-key shape from the schema comment (data model §2): an uppercase
@@ -157,9 +158,8 @@ var defaultColors = []string{"#7c5cff", "#00a884", "#ff8a3d", "#5b8def", "#d16ba
 
 // CreateProject inserts a project and makes the creator its owner and first member. A duplicate
 // key comes back as a field-level ValidationError on "key" (S08 acceptance). The settings
-// columns start null — inheriting from workspace — and no board columns are created here:
-// nothing rendered before S09 reads columns, and S09 owns the default column set, so creating a
-// partial set now would only be overwritten by that story.
+// columns start null — inheriting from workspace. The S09 default board columns are created in
+// the same transaction (board.CreateDefaults), so a project is never observable without a board.
 func (s *Service) CreateProject(ctx context.Context, in CreateInput) (domain.Project, error) {
 	in.Key = strings.ToUpper(strings.TrimSpace(in.Key))
 	in.Name = strings.TrimSpace(in.Name)
@@ -190,7 +190,18 @@ func (s *Service) CreateProject(ctx context.Context, in CreateInput) (domain.Pro
 		if err := tx.Projects().Create(ctx, &p); err != nil {
 			return err
 		}
-		return tx.Projects().AddMember(ctx, p.ID, in.OwnerID)
+		if err := tx.Projects().AddMember(ctx, p.ID, in.OwnerID); err != nil {
+			return err
+		}
+		// The S09 default board, in the same transaction: a project is never observable
+		// without its columns. Covered by the project.create audit entry below.
+		cols := board.DefaultColumns(p.ID, now)
+		for i := range cols {
+			if err := tx.Columns().Create(ctx, &cols[i]); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if errors.Is(err, store.ErrUnique) {
 		return domain.Project{}, &ValidationError{Fields: []httpx.FieldError{

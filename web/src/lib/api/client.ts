@@ -21,6 +21,11 @@ export type ProjectOverview = components["schemas"]["ProjectOverview"];
 export type InheritedInt = components["schemas"]["InheritedInt"];
 export type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
 export type UpdateProjectRequest = components["schemas"]["UpdateProjectRequest"];
+export type Column = components["schemas"]["Column"];
+export type ColumnCategory = components["schemas"]["ColumnCategory"];
+export type ColumnListResponse = components["schemas"]["ColumnListResponse"];
+export type CreateColumnRequest = components["schemas"]["CreateColumnRequest"];
+export type UpdateColumnRequest = components["schemas"]["UpdateColumnRequest"];
 export type WorkspaceSettings = components["schemas"]["WorkspaceSettings"];
 export type UpdateWorkspaceSettingsRequest =
   components["schemas"]["UpdateWorkspaceSettingsRequest"];
@@ -140,6 +145,28 @@ export const projectsApi = {
     api<Project>("PATCH", `/projects/${encodeURIComponent(key)}`, { body }),
   overview: (key: string, signal?: AbortSignal) =>
     api<ProjectOverview>("GET", `/projects/${encodeURIComponent(key)}/overview`, { signal }),
+};
+
+export const columnsApi = {
+  list: (projectKey: string, signal?: AbortSignal) =>
+    api<ColumnListResponse>(
+      "GET",
+      `/projects/${encodeURIComponent(projectKey)}/columns`,
+      { signal },
+    ),
+  create: (projectKey: string, body: CreateColumnRequest) =>
+    api<Column>("POST", `/projects/${encodeURIComponent(projectKey)}/columns`, { body }),
+  update: (id: string, body: UpdateColumnRequest) =>
+    api<Column>("PATCH", `/columns/${encodeURIComponent(id)}`, { body }),
+  remove: (id: string, destinationColumnId?: string) =>
+    api<void>(
+      "DELETE",
+      `/columns/${encodeURIComponent(id)}${
+        destinationColumnId
+          ? `?destination_column_id=${encodeURIComponent(destinationColumnId)}`
+          : ""
+      }`,
+    ),
 };
 
 export const workspaceApi = {

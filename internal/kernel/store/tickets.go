@@ -153,3 +153,36 @@ func scanTicket(row rowScanner) (domain.Ticket, error) {
 	tk.ArchivedAt = strPtr(archived)
 	return tk, nil
 }
+
+// MoveAllToColumn moves every ticket (archived ones included — they must not keep a foreign key
+// into a column being deleted) from one column to the end of another, preserving their relative
+// order, and returns how many moved. The offset arithmetic runs on values read before the
+// UPDATE, so the statement never chases its own writes; call it inside a transaction with the
+// column mutation it accompanies.
+func (r *TicketsRepo) MoveAllToColumn(ctx context.Context, fromColumnID, toColumnID, now string) (int64, error) {
+	var minFrom, maxTo sql.NullFloat64
+	if err := r.h.r.QueryRowContext(ctx,
+		`SELECT MIN(position) FROM tickets WHERE column_id = ?`, fromColumnID).Scan(&minFrom); err != nil {
+		return 0, mapErr(err)
+	}
+	if !minFrom.Valid {
+		return 0, nil // nothing to move
+	}
+	if err := r.h.r.QueryRowContext(ctx,
+		`SELECT MAX(position) FROM tickets WHERE column_id = ?`, toColumnID).Scan(&maxTo); err != nil {
+		return 0, mapErr(err)
+	}
+	offset := maxTo.Float64 + 1 - minFrom.Float64 // maxTo is 0 when the destination is empty
+	res, err := r.h.w.ExecContext(ctx, `
+		UPDATE tickets SET column_id = ?, position = position + ?, updated_at = ?
+		WHERE column_id = ?`,
+		toColumnID, offset, now, fromColumnID)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return n, nil
+}

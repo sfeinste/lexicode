@@ -2,10 +2,10 @@
  * Project settings — `/p/:key/settings` (UI spec §5.11): a left rail of sections, one
  * scrollable pane each, autosave with an inline saved indicator, no global Save button.
  *
- * S08 lands the shell and the General section. The other §5.11 sections are rendered in the
- * rail but disabled until their owning stories arrive (Board → S09, Wiki → S17-ish,
- * Repository → S14, and so on) — rendering them disabled keeps the §5.11 geography visible
- * from day one without dead links.
+ * S08 landed the shell and the General section; S09 the Board section (columns, categories,
+ * WIP, auto-start). The other §5.11 sections are rendered in the rail but disabled until
+ * their owning stories arrive (Wiki → S17-ish, Repository → S14, and so on) — rendering them
+ * disabled keeps the §5.11 geography visible from day one without dead links.
  *
  * The three inheritable settings (daily budget, context threshold, verification days) live
  * here under General for now; later stories may move budget/wiki fields into their §5.11
@@ -19,12 +19,13 @@ import { SaveStatus } from "../../../components/SaveStatus/SaveStatus";
 import type { InheritedInt, Project, UpdateProjectRequest } from "../../../lib/api/client";
 import { useProjectQuery, useUpdateProject } from "../../../lib/api/projectQueries";
 import { useAutosave } from "../../../lib/autosave";
+import { BoardSection } from "./BoardSection";
 import styles from "./settings.module.css";
 
 /** The §5.11 rail. Sections without an owning story yet render disabled. */
 const SECTIONS: Array<{ id: string; label: string; enabled: boolean }> = [
   { id: "general", label: "General", enabled: true },
-  { id: "board", label: "Board", enabled: false },
+  { id: "board", label: "Board", enabled: true },
   { id: "wiki", label: "Wiki", enabled: false },
   { id: "repository", label: "Repository", enabled: false },
   { id: "agents", label: "Agents", enabled: false },
@@ -74,7 +75,11 @@ export function ProjectSettingsPage() {
         )}
       </nav>
       <div className={styles.pane}>
-        <GeneralSection project={project.data} />
+        {section === "board" ? (
+          <BoardSection projectKey={key} />
+        ) : (
+          <GeneralSection project={project.data} />
+        )}
       </div>
     </div>
   );

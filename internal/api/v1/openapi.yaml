@@ -211,6 +211,92 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/columns:
+    get:
+      operationId: listColumns
+      summary: >
+        A project's board columns in board order, with ticket counts. Names are display
+        strings; automation keys off `category` (plan rule 3), never the name.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The column list. Every project has at least backlog, running and done.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ColumnListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createColumn
+      summary: >
+        Add a column at the end of the board. Category is chosen at creation (and editable
+        later) — it is what automation reads.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateColumnRequest" }
+      responses:
+        "201":
+          description: The created column.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Column" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /columns/{id}:
+    patch:
+      operationId: updateColumn
+      summary: >
+        Patch a column: rename, category, WIP limit (null clears), auto_start_delegate,
+        reorder via `after_id` (null = move to the front, a column id = place after it).
+        Changing the category of the project's last backlog/running/done column is a 409
+        `last_category_column` problem naming the category.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateColumnRequest" }
+      responses:
+        "200":
+          description: The updated column.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Column" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteColumn
+      summary: >
+        Delete a column. If it holds tickets, `destination_column_id` names the column that
+        receives them (same board, not the column itself) and the move happens in the delete's
+        transaction; omitting it is a 400 `validation_failed` naming the field. Deleting the
+        project's last backlog/running/done column is a 409 `last_category_column` problem
+        naming the category.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: destination_column_id
+          in: query
+          schema: { type: string }
+          description: Where the column's tickets go. Required when the column holds tickets.
+      responses:
+        "204": { description: Deleted (and tickets moved, when a destination was given). }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /workspace/settings:
     get:
       operationId: getWorkspaceSettings
@@ -299,7 +385,7 @@ components:
         RFC 9457 problem details. `type` is a slug, not a URL. Slugs in use today:
         setup_required, already_setup, invalid_credentials, session_expired, unauthenticated,
         forbidden, invite_invalid, invite_expired, email_taken, not_found, invalid_request,
-        validation_failed, internal.
+        validation_failed, last_category_column, internal.
       required: [type, title, status]
       properties:
         type: { type: string }
@@ -496,6 +582,59 @@ components:
         id: { type: string }
         display_name: { type: string }
         avatar_color: { type: string }
+    ColumnCategory:
+      type: string
+      description: >
+        The stable key automation reads (brief D2 / plan rule 3). Code branches on this, never
+        on a column's user-facing name.
+      enum: [backlog, ready, running, review, done, canceled]
+    Column:
+      type: object
+      required:
+        [id, project_id, name, category, position, wip_limit, auto_start_delegate,
+         ticket_count, created_at, updated_at]
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        name: { type: string, description: A display string; renaming changes nothing functional. }
+        category: { $ref: "#/components/schemas/ColumnCategory" }
+        position:
+          type: integer
+          description: Gap-spaced board ordering; treat as opaque and sort by it.
+        wip_limit: { type: [integer, "null"], description: Null means no limit. }
+        auto_start_delegate:
+          type: boolean
+          description: >
+            Tickets moved into this column automatically start their delegate agent — agent
+            runs cost money, so the UI requires an explicit confirm to enable it.
+        ticket_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ColumnListResponse:
+      type: object
+      required: [columns]
+      properties:
+        columns:
+          type: array
+          items: { $ref: "#/components/schemas/Column" }
+    CreateColumnRequest:
+      type: object
+      required: [name, category]
+      properties:
+        name: { type: string }
+        category: { $ref: "#/components/schemas/ColumnCategory" }
+    UpdateColumnRequest:
+      type: object
+      description: >
+        Every field optional; absent = unchanged. `wip_limit` accepts an explicit null to
+        clear the limit. `after_id` reorders: null moves the column to the front, a column id
+        places it immediately after that column.
+      properties:
+        name: { type: string }
+        category: { $ref: "#/components/schemas/ColumnCategory" }
+        wip_limit: { type: [integer, "null"] }
+        auto_start_delegate: { type: boolean }
+        after_id: { type: [string, "null"] }
     WorkspaceSettings:
       type: object
       required:

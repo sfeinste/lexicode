@@ -176,6 +176,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{key}/columns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A project's board columns in board order, with ticket counts. Names are display strings; automation keys off `category` (plan rule 3), never the name. */
+        get: operations["listColumns"];
+        put?: never;
+        /** Add a column at the end of the board. Category is chosen at creation (and editable later) — it is what automation reads. */
+        post: operations["createColumn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/columns/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a column. If it holds tickets, `destination_column_id` names the column that receives them (same board, not the column itself) and the move happens in the delete's transaction; omitting it is a 400 `validation_failed` naming the field. Deleting the project's last backlog/running/done column is a 409 `last_category_column` problem naming the category. */
+        delete: operations["deleteColumn"];
+        options?: never;
+        head?: never;
+        /** Patch a column: rename, category, WIP limit (null clears), auto_start_delegate, reorder via `after_id` (null = move to the front, a column id = place after it). Changing the category of the project's last backlog/running/done column is a 409 `last_category_column` problem naming the category. */
+        patch: operations["updateColumn"];
+        trace?: never;
+    };
     "/workspace/settings": {
         parameters: {
             query?: never;
@@ -232,7 +268,7 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description RFC 9457 problem details. `type` is a slug, not a URL. Slugs in use today: setup_required, already_setup, invalid_credentials, session_expired, unauthenticated, forbidden, invite_invalid, invite_expired, email_taken, not_found, invalid_request, validation_failed, internal. */
+        /** @description RFC 9457 problem details. `type` is a slug, not a URL. Slugs in use today: setup_required, already_setup, invalid_credentials, session_expired, unauthenticated, forbidden, invite_invalid, invite_expired, email_taken, not_found, invalid_request, validation_failed, last_category_column, internal. */
         Problem: {
             type: string;
             title: string;
@@ -378,6 +414,44 @@ export interface components {
             id: string;
             display_name: string;
             avatar_color: string;
+        };
+        /**
+         * @description The stable key automation reads (brief D2 / plan rule 3). Code branches on this, never on a column's user-facing name.
+         * @enum {string}
+         */
+        ColumnCategory: "backlog" | "ready" | "running" | "review" | "done" | "canceled";
+        Column: {
+            id: string;
+            project_id: string;
+            /** @description A display string; renaming changes nothing functional. */
+            name: string;
+            category: components["schemas"]["ColumnCategory"];
+            /** @description Gap-spaced board ordering; treat as opaque and sort by it. */
+            position: number;
+            /** @description Null means no limit. */
+            wip_limit: number | null;
+            /** @description Tickets moved into this column automatically start their delegate agent — agent runs cost money, so the UI requires an explicit confirm to enable it. */
+            auto_start_delegate: boolean;
+            ticket_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ColumnListResponse: {
+            columns: components["schemas"]["Column"][];
+        };
+        CreateColumnRequest: {
+            name: string;
+            category: components["schemas"]["ColumnCategory"];
+        };
+        /** @description Every field optional; absent = unchanged. `wip_limit` accepts an explicit null to clear the limit. `after_id` reorders: null moves the column to the front, a column id places it immediately after that column. */
+        UpdateColumnRequest: {
+            name?: string;
+            category?: components["schemas"]["ColumnCategory"];
+            wip_limit?: number | null;
+            auto_start_delegate?: boolean;
+            after_id?: string | null;
         };
         WorkspaceSettings: {
             default_branch: string;
@@ -725,6 +799,120 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    listColumns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The column list. Every project has at least backlog, running and done. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ColumnListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    createColumn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateColumnRequest"];
+            };
+        };
+        responses: {
+            /** @description The created column. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Column"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    deleteColumn: {
+        parameters: {
+            query?: {
+                /** @description Where the column's tickets go. Required when the column holds tickets. */
+                destination_column_id?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted (and tickets moved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    updateColumn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateColumnRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated column. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Column"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
         };
     };
     getWorkspaceSettings: {
