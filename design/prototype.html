@@ -1,0 +1,1750 @@
+<title>Lexicode Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+/* ============================================================
+   Lexicode Console — interactive design prototype
+   Dark-committed app chrome. Light is an in-app product toggle,
+   not a response to the host theme: this is a mockup of a dark
+   developer tool, so it paints its own ground either way.
+   ============================================================ */
+
+:root{
+  --bg:#0b0d10;
+  --surface:#121519;
+  --surface-2:#181c22;
+  --surface-3:#1f242b;
+  --border:#232830;
+  --border-strong:#39414d;
+  --text:#e6e9ef;
+  --text-2:#98a2b0;
+  --text-3:#68727e;
+
+  --accent:#6c7cff;
+  --accent-dim:#6c7cff26;
+  --running:#3fb8d4;
+  --needs:#e0a33e;
+  --ok:#3fb37f;
+  --fail:#e05563;
+  --halt:#a072e0;
+  --muted:#68727e;
+
+  --shadow:0 8px 24px -8px #00000099;
+  --r:5px;
+
+  --sans:"IBM Plex Sans",ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+:root[data-theme="light"]{
+  --bg:#f6f7f9;
+  --surface:#ffffff;
+  --surface-2:#f1f3f6;
+  --surface-3:#e6e9ee;
+  --border:#dfe3e9;
+  --border-strong:#b4bcc7;
+  --text:#161a20;
+  --text-2:#5b6572;
+  --text-3:#89939f;
+  --accent:#4a5ae8;
+  --accent-dim:#4a5ae81f;
+  --running:#1789a5;
+  --needs:#a97314;
+  --ok:#1f8558;
+  --fail:#c8384a;
+  --halt:#7a49bf;
+  --muted:#89939f;
+  --shadow:0 8px 24px -10px #0f172a30;
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  font-size:13px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font:inherit;color:inherit;}
+button{background:none;border:none;cursor:pointer;padding:0;}
+a{color:var(--accent);text-decoration:none;}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px;}
+::selection{background:var(--accent-dim);}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+
+/* ---------- primitives ---------- */
+.mono{font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;}
+.lbl{
+  font-size:10px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--text-3);
+}
+.t2{color:var(--text-2);}
+.t3{color:var(--text-3);}
+.num{font-variant-numeric:tabular-nums;}
+.row{display:flex;align-items:center;gap:8px;}
+.col{display:flex;flex-direction:column;}
+.grow{flex:1;min-width:0;}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hr{height:1px;background:var(--border);border:0;margin:0;}
+.scrollx{overflow-x:auto;}
+
+.card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r);
+}
+.pad{padding:14px 16px;}
+
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  height:28px;padding:0 10px;border-radius:var(--r);
+  border:1px solid var(--border-strong);background:var(--surface-2);
+  color:var(--text);font-size:12px;font-weight:500;
+  transition:background .12s ease-out,border-color .12s ease-out;
+}
+.btn:hover{background:var(--surface-3);}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+.btn.primary:hover{filter:brightness(1.1);}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--text-2);}
+.btn.ghost:hover{background:var(--surface-2);color:var(--text);}
+.btn.sm{height:24px;padding:0 8px;font-size:11px;}
+.btn.ok{border-color:#3fb37f55;color:var(--ok);}
+.btn.fail{border-color:#e0556355;color:var(--fail);}
+
+.kbd{
+  font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:3px;
+  background:var(--surface-3);border:1px solid var(--border);color:var(--text-3);
+}
+
+.chip{
+  display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;
+  border-radius:3px;background:var(--surface-2);border:1px solid var(--border);
+  font-size:11px;color:var(--text-2);white-space:nowrap;
+}
+.chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-dim);}
+
+/* status: colour AND glyph, never colour alone */
+.st{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;white-space:nowrap;}
+.st .g{font-size:11px;line-height:1;}
+.st-queued,.st-canceled,.st-noaction{color:var(--muted);}
+.st-provisioning,.st-running{color:var(--running);}
+.st-needs,.st-approval{color:var(--needs);}
+.st-completed,.st-ok{color:var(--ok);}
+.st-failed,.st-timeout{color:var(--fail);}
+.st-halt{color:var(--halt);}
+.pulse{animation:pulse 2s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+.bar{display:inline-block;width:100%;height:3px;vertical-align:middle;border-radius:2px;background:var(--surface-3);overflow:hidden;}
+.bar>i{display:block;height:100%;background:var(--accent);}
+
+/* ---------- app frame ---------- */
+#app{display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+
+.topbar{
+  height:40px;flex:0 0 40px;display:flex;align-items:center;gap:14px;
+  padding:0 12px;background:var(--surface);border-bottom:1px solid var(--border);
+}
+.brand{display:flex;align-items:center;gap:7px;font-weight:600;letter-spacing:-.01em;}
+.brand .mark{
+  width:18px;height:18px;border-radius:4px;flex:0 0 18px;
+  background:linear-gradient(135deg,var(--accent),var(--running));
+  display:grid;place-items:center;color:#fff;font-size:10px;font-weight:700;
+}
+.topnav{display:flex;gap:2px;}
+.topnav button{
+  height:24px;padding:0 9px;border-radius:var(--r);font-size:12px;color:var(--text-2);
+}
+.topnav button:hover{background:var(--surface-2);color:var(--text);}
+.topnav button.sel{background:var(--surface-3);color:var(--text);}
+.search{
+  flex:1;max-width:380px;height:26px;display:flex;align-items:center;gap:7px;
+  padding:0 9px;border-radius:var(--r);background:var(--surface-2);
+  border:1px solid var(--border);color:var(--text-3);font-size:12px;cursor:pointer;
+}
+.search:hover{border-color:var(--border-strong);}
+.avatar{
+  width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+  font-size:10px;font-weight:600;color:#fff;flex:0 0 22px;
+}
+
+.main{flex:1;display:flex;min-height:0;}
+
+.rail{
+  width:208px;flex:0 0 208px;background:var(--surface);
+  border-right:1px solid var(--border);display:flex;flex-direction:column;
+  overflow:hidden;
+}
+.rail.mini{width:48px;flex-basis:48px;}
+.rail.mini .rail-txt{display:none;}
+.rail-sec{padding:12px 10px 4px;}
+.rail-item{
+  display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;
+  border-radius:var(--r);color:var(--text-2);font-size:12.5px;cursor:pointer;width:100%;
+  text-align:left;
+}
+.rail-item:hover{background:var(--surface-2);color:var(--text);}
+.rail-item.sel{background:var(--surface-3);color:var(--text);font-weight:500;}
+.dotk{width:7px;height:7px;border-radius:2px;flex:0 0 7px;}
+.rail-needs{margin-top:auto;border-top:1px solid var(--border);padding:8px 10px 10px;}
+.needsrow{
+  display:flex;align-items:center;gap:7px;width:100%;text-align:left;
+  padding:5px 8px;border-radius:var(--r);cursor:pointer;
+}
+.needsrow:hover{background:var(--surface-2);}
+
+.pane{flex:1;display:flex;flex-direction:column;min-width:0;}
+
+.phead{
+  padding:12px 18px 0;background:var(--surface);border-bottom:1px solid var(--border);
+}
+.ptitle{display:flex;align-items:center;gap:10px;}
+.ptitle h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em;}
+.tabs{display:flex;gap:1px;margin-top:11px;}
+.tabs button{
+  height:31px;padding:0 11px;font-size:12.5px;color:var(--text-2);
+  border-bottom:2px solid transparent;border-radius:var(--r) var(--r) 0 0;
+}
+.tabs button:hover{color:var(--text);background:var(--surface-2);}
+.tabs button.sel{color:var(--text);border-bottom-color:var(--accent);font-weight:500;}
+.tabs .cnt{
+  margin-left:6px;font-size:10px;padding:0 5px;border-radius:8px;
+  background:var(--surface-3);color:var(--text-2);
+}
+.tabs .cnt.hot{background:#e0a33e26;color:var(--needs);}
+
+.body{flex:1;overflow:auto;padding:16px 18px 40px;}
+.body.flush{padding:0;}
+
+/* ---------- tables ---------- */
+table.tbl{width:100%;border-collapse:collapse;}
+.tbl th{
+  text-align:left;font-size:10px;font-weight:600;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--text-3);padding:6px 10px;
+  border-bottom:1px solid var(--border);white-space:nowrap;
+}
+.tbl td{padding:0 10px;height:32px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.tbl tbody tr{cursor:pointer;}
+.tbl tbody tr:hover td{background:var(--surface-2);}
+
+/* ---------- needs-you ---------- */
+.needsstrip{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;}
+.ncard{
+  min-width:290px;flex:0 0 290px;background:var(--surface);
+  border:1px solid var(--border);border-left:2px solid var(--needs);
+  border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:7px;
+}
+.ncard.fail{border-left-color:var(--fail);}
+.ncard.halt{border-left-color:var(--halt);}
+.ncard.ok{border-left-color:var(--ok);}
+.flavor{font-size:11.5px;font-weight:600;}
+
+/* ---------- board ---------- */
+.boardbar{
+  display:flex;align-items:center;gap:8px;padding:10px 18px;
+  border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap;
+}
+.lane{
+  margin:14px 18px 0;border:1px solid var(--border);border-left:2px solid var(--needs);
+  border-radius:var(--r);background:var(--surface);
+}
+.lane-h{
+  display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);
+}
+.lane-b{display:flex;gap:10px;padding:10px 12px;overflow-x:auto;}
+.cols{display:flex;gap:12px;padding:14px 18px 24px;overflow-x:auto;align-items:flex-start;}
+.bcol{width:274px;flex:0 0 274px;display:flex;flex-direction:column;gap:8px;}
+.bcol-h{display:flex;align-items:center;gap:7px;padding:0 3px;}
+.bcol-h .n{font-size:12px;font-weight:600;}
+.wip{font-family:var(--mono);font-size:11px;color:var(--text-3);}
+.wip.warn{color:var(--needs);}
+.wip.over{color:var(--fail);}
+.tcard{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+  padding:9px 10px;display:flex;flex-direction:column;gap:6px;cursor:pointer;
+  transition:border-color .12s ease-out;
+}
+.tcard:hover{border-color:var(--border-strong);}
+.tcard .ttl{font-size:12.5px;line-height:1.35;}
+.tcard .meta{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-3);}
+.agentpill{
+  display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px 0 3px;
+  border-radius:9px;background:var(--surface-3);font-size:10.5px;color:var(--text-2);
+}
+.agentpill i{width:12px;height:12px;border-radius:50%;display:inline-block;}
+.diffstat{font-family:var(--mono);font-size:10.5px;}
+.diffstat .a{color:var(--ok);}
+.diffstat .d{color:var(--fail);}
+
+/* ---------- three pane ---------- */
+.p3{display:grid;grid-template-columns:250px minmax(0,1fr) 260px;height:100%;min-height:0;}
+.p3>*{overflow:auto;min-width:0;}
+.p3 .mid{border-left:1px solid var(--border);border-right:1px solid var(--border);}
+.p2{display:grid;grid-template-columns:minmax(0,1fr) 282px;gap:0;height:100%;min-height:0;}
+.p2>*{overflow:auto;min-width:0;}
+.p2 .side{border-left:1px solid var(--border);background:var(--surface);}
+
+/* ---------- run log ---------- */
+.steps{display:flex;flex-direction:column;}
+.step{
+  display:flex;align-items:flex-start;gap:8px;padding:6px 12px;cursor:pointer;
+  border-left:2px solid transparent;font-size:12px;
+}
+.step:hover{background:var(--surface-2);}
+.step.sel{background:var(--surface-2);border-left-color:var(--accent);}
+.step .tm{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--text-3);}
+.segbar{display:flex;height:3px;border-radius:2px;overflow:hidden;width:46px;flex:0 0 46px;opacity:.85;}
+.segbar i{display:block;height:100%;}
+.logline{
+  font-family:var(--mono);font-size:12px;line-height:1.6;padding:1px 0;
+  white-space:pre-wrap;word-break:break-word;
+}
+.logblock{
+  border:1px solid var(--border);border-radius:var(--r);background:var(--surface);
+  margin-bottom:10px;overflow:hidden;
+}
+.logblock>h4{
+  margin:0;font-size:11.5px;font-weight:600;padding:7px 11px;
+  background:var(--surface-2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;
+}
+.logblock .bd{padding:9px 11px;overflow-x:auto;}
+.diffline{font-family:var(--mono);font-size:12px;padding:0 8px;white-space:pre;}
+.diffline.add{background:#3fb37f1c;color:var(--ok);}
+.diffline.del{background:#e055631c;color:var(--fail);}
+.diffline.ctx{color:var(--text-2);}
+
+.approve{
+  border:1px solid var(--needs);background:#e0a33e12;border-radius:var(--r);
+  padding:11px 12px;display:flex;flex-direction:column;gap:9px;margin-bottom:10px;
+}
+.currentstep{
+  display:flex;align-items:center;gap:9px;padding:7px 14px;
+  border-top:1px solid var(--border);background:var(--surface-2);font-size:12px;
+}
+.steer{
+  display:flex;gap:8px;padding:9px 14px;border-top:1px solid var(--border);
+  background:var(--surface);align-items:center;
+}
+.steer input{
+  flex:1;height:28px;padding:0 10px;border-radius:var(--r);
+  background:var(--surface-2);border:1px solid var(--border);
+}
+.steer input:focus{border-color:var(--border-strong);outline:none;}
+
+/* ---------- wiki ---------- */
+.tree{padding:8px;}
+.tnode{
+  display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:var(--r);
+  cursor:pointer;font-size:12.5px;color:var(--text-2);width:100%;text-align:left;
+}
+.tnode:hover{background:var(--surface-2);color:var(--text);}
+.tnode.sel{background:var(--surface-3);color:var(--text);}
+.tnode.child{padding-left:20px;}
+.scope{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;padding:1px 4px;
+  border-radius:3px;border:1px solid var(--border);color:var(--text-3);margin-left:auto;
+}
+.scope.always{color:var(--needs);border-color:#e0a33e55;background:#e0a33e14;}
+.scope.auto{color:var(--running);border-color:#3fb8d455;}
+.scope.paths{color:var(--accent);border-color:#6c7cff55;}
+.scope.never{opacity:.55;}
+.meter{padding:9px 11px;border-bottom:1px solid var(--border);background:var(--surface-2);}
+.prose{max-width:68ch;}
+.prose h2{font-size:15px;margin:22px 0 8px;font-weight:600;}
+.prose h3{font-size:13px;margin:18px 0 6px;font-weight:600;color:var(--text-2);}
+.prose p{margin:0 0 10px;color:var(--text-2);line-height:1.62;}
+.prose ul{margin:0 0 10px;padding-left:18px;color:var(--text-2);line-height:1.62;}
+.prose code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 4px;border-radius:3px;color:var(--text);}
+
+/* ---------- triggers ---------- */
+.rule{
+  border:1px solid var(--border);border-radius:var(--r);background:var(--surface);
+  margin-bottom:10px;overflow:hidden;cursor:pointer;
+}
+.rule:hover{border-color:var(--border-strong);}
+.rule-h{display:flex;align-items:center;gap:9px;padding:10px 13px;}
+.rule-b{padding:0 13px 10px;display:flex;flex-direction:column;gap:3px;}
+.clause{display:flex;gap:9px;font-size:12px;}
+.clause>b{
+  font-size:10px;font-weight:600;letter-spacing:.09em;color:var(--text-3);
+  width:38px;flex:0 0 38px;padding-top:2px;
+}
+.rule-f{
+  display:flex;align-items:center;gap:9px;padding:7px 13px;
+  border-top:1px solid var(--border);background:var(--surface-2);font-size:11px;
+}
+.spark{display:flex;gap:2px;align-items:flex-end;height:12px;}
+.spark i{width:4px;border-radius:1px;display:block;}
+.toggle{
+  width:30px;height:17px;border-radius:9px;background:var(--surface-3);
+  border:1px solid var(--border-strong);position:relative;flex:0 0 30px;cursor:pointer;
+}
+.toggle i{
+  position:absolute;top:1px;left:1px;width:13px;height:13px;border-radius:50%;
+  background:var(--text-3);transition:.12s ease-out;
+}
+.toggle.on{background:var(--accent);border-color:var(--accent);}
+.toggle.on i{left:14px;background:#fff;}
+.builder{display:flex;flex-direction:column;gap:0;}
+.bsec{border:1px solid var(--border);border-radius:var(--r);background:var(--surface);margin-bottom:10px;}
+.bsec>header{
+  padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-2);
+  display:flex;align-items:center;gap:9px;
+}
+.bsec>.bd{padding:11px 12px;display:flex;flex-direction:column;gap:9px;}
+select.f,input.f{
+  height:26px;padding:0 8px;border-radius:var(--r);background:var(--surface-2);
+  border:1px solid var(--border);font-size:12px;
+}
+select.f:focus,input.f:focus{border-color:var(--border-strong);outline:none;}
+.guard{
+  display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--border);
+}
+.guard:first-child{border-top:0;}
+.chain{display:flex;flex-direction:column;gap:0;font-family:var(--mono);font-size:11.5px;}
+.chain .n{display:flex;align-items:center;gap:8px;padding:3px 0;}
+.chain .n.rep{color:var(--halt);}
+.chain .ln{width:1px;height:10px;background:var(--border-strong);margin-left:5px;}
+
+/* ---------- misc ---------- */
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;}
+.stat{display:flex;flex-direction:column;gap:2px;}
+.stat .v{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
+.empty{
+  max-width:360px;margin:64px auto;text-align:center;display:flex;
+  flex-direction:column;gap:9px;align-items:center;
+}
+.empty h3{margin:0;font-size:14px;font-weight:600;}
+.note{
+  border-left:2px solid var(--accent);background:var(--accent-dim);
+  padding:8px 12px;border-radius:0 var(--r) var(--r) 0;font-size:12px;color:var(--text-2);
+}
+.overlay{
+  position:fixed;inset:0;background:#000000aa;display:grid;place-items:center;z-index:50;
+  padding:24px;
+}
+.sheet{
+  background:var(--surface);border:1px solid var(--border-strong);border-radius:8px;
+  box-shadow:var(--shadow);max-width:560px;width:100%;max-height:80vh;overflow:auto;
+}
+.klist{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px;}
+.klist div{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px;color:var(--text-2);}
+.klist div span{margin-left:auto;}
+
+@media (max-width:1180px){
+  .p3{grid-template-columns:220px minmax(0,1fr);}
+  .p3>.right{display:none;}
+}
+@media (max-width:900px){
+  .rail{width:48px;flex-basis:48px;}
+  .rail .rail-txt{display:none;}
+  .p2{grid-template-columns:minmax(0,1fr);}
+  .p2>.side{display:none;}
+}
+</style>
+
+<div id="app"></div>
+
+<script>
+/* ============================================================
+   Fake data. Realistic enough to judge density and hierarchy.
+   ============================================================ */
+const AG = {
+  dev:      {id:'dev',      name:'Dev',       color:'#6c7cff', role:'Implements tickets, opens PRs', model:'claude-opus-5', autonomy:'Auto with gates', runs:34, ok:82, spend:38.10},
+  reviewer: {id:'reviewer', name:'Reviewer',  color:'#a072e0', role:'Reviews PRs, never writes code', model:'claude-opus-5', autonomy:'Auto', runs:41, ok:95, spend:11.40},
+  docs:     {id:'docs',     name:'Docs',      color:'#3fb37f', role:'Writes and maintains the wiki', model:'claude-sonnet-4-6', autonomy:'Approve each action', runs:9, ok:89, spend:2.75},
+  architect:{id:'architect',name:'Architect', color:'#e0a33e', role:'Technical design before implementation', model:'claude-opus-5', autonomy:'Suggest', runs:6, ok:100, spend:6.20}
+};
+
+const PROJECTS = [
+  {key:'PAY', name:'Payments Service', color:'#6c7cff', repo:'acme/payments-svc', branch:'main',
+   sha:'a91f0c2', shaMsg:'fix: retry budget on 429', open:14, running:3, needs:3, spend:47.20, cap:120, last:'2m ago',
+   desc:'Charge, refund and payout APIs. Stripe-backed. Owns the idempotency layer.'},
+  {key:'WEB', name:'Marketing Web', color:'#3fb37f', repo:'acme/www', branch:'main',
+   sha:'3ce8811', shaMsg:'chore: bump next to 15.2', open:8, running:1, needs:1, spend:6.80, cap:60, last:'21m ago',
+   desc:'Public site and docs. Next.js, deployed on push to main.'},
+  {key:'INF', name:'Infra', color:'#e0a33e', repo:'acme/infra', branch:'main',
+   sha:'77b21de', shaMsg:'terraform: split rds module', open:5, running:0, needs:0, spend:0.00, cap:60, last:'4h ago',
+   desc:'Terraform, CI pipelines, container images.'}
+];
+
+const COLS = [
+  {id:'backlog', name:'Backlog',     cat:'backlog'},
+  {id:'ready',   name:'Ready',       cat:'ready',   auto:true},
+  {id:'running', name:'Agent working',cat:'running', wip:4},
+  {id:'review',  name:'In review',   cat:'review'},
+  {id:'done',    name:'Done',        cat:'done'}
+];
+
+const TICKETS = [
+  {key:'PAY-14', col:'running', st:'needs', title:'Add idempotency keys to the charge API',
+   agent:'dev', assignee:'SF', pr:219, add:142, del:18, ac:[1,1,1,0,0],
+   flavor:'Answer a question', ask:'Should replayed requests return the original 201 response body, or a 200 with a replayed flag?', ago:'12m'},
+  {key:'PAY-21', col:'running', st:'running', title:'Backfill payout ledger for June',
+   agent:'dev', assignee:'SF', add:64, del:3, ac:[1,0,0]},
+  {key:'PAY-19', col:'running', st:'running', title:'Document the refund state machine',
+   agent:'docs', assignee:'JD', ac:[1,1,0]},
+  {key:'PAY-08', col:'review', st:'needs', title:'Rate limit the webhook receiver',
+   agent:'reviewer', assignee:'SF', pr:214, add:88, del:12, ac:[1,1,1,1],
+   flavor:'Review output', ask:'Reviewer finished: 2 findings, 1 marked probable bug.', ago:'38m'},
+  {key:'PAY-23', col:'review', st:'halt', title:'Normalise currency rounding across providers',
+   agent:'dev', assignee:'JD', pr:221, add:310, del:96, ac:[1,1,0,0],
+   flavor:'Fix a failure', ask:'Loop guard stopped this chain after 3 agent-caused re-triggers.', ago:'1h'},
+  {key:'PAY-25', col:'ready', st:null, title:'Emit structured audit events on refund', agent:'dev', assignee:'SF', ac:[0,0,0]},
+  {key:'PAY-26', col:'ready', st:null, title:'Retry budget for provider 5xx', agent:null, assignee:'JD', ac:[0,0]},
+  {key:'PAY-27', col:'backlog', st:null, title:'Split the charge handler into command + effect', agent:null, assignee:null, ac:[]},
+  {key:'PAY-28', col:'backlog', st:null, title:'Drop the legacy /v1/charge alias', agent:null, assignee:null, ac:[]},
+  {key:'PAY-30', col:'backlog', st:null, title:'Sandbox mode for provider webhooks', agent:null, assignee:null, ac:[]},
+  {key:'PAY-04', col:'done', st:'completed', title:'Move Stripe keys into the secret store', agent:'dev', assignee:'SF', pr:208, add:41, del:60, ac:[1,1]},
+  {key:'PAY-06', col:'done', st:'completed', title:'Add contract tests for the payout API', agent:'dev', assignee:'JD', pr:210, add:220, del:4, ac:[1,1,1]}
+];
+
+const TRIAGE = [
+  {key:'PAY-31', title:'CI failed on main: payout contract test flaking',
+   src:'trigger', srcName:'CI failed → file a ticket', run:482, ago:'25m'},
+  {key:'PAY-32', title:'Reviewer flagged: unbounded retry in webhook receiver',
+   src:'agent', srcName:'Reviewer on PR #214', run:479, ago:'40m'}
+];
+
+const RUNS = [
+  {id:494, agent:'dev', ticket:'PAY-14', trigger:null, st:'needs', dur:'6m 12s', cost:1.42, tok:'84.2k', started:'12m ago', pr:219},
+  {id:493, agent:'reviewer', ticket:'PAY-08', trigger:'Review new PRs', st:'completed', dur:'2m 41s', cost:0.31, tok:'22.8k', started:'38m ago', pr:214},
+  {id:492, agent:'dev', ticket:'PAY-23', trigger:'Address review comments', st:'halt', dur:'0s', cost:0.00, tok:'0', started:'1h ago', pr:221},
+  {id:490, agent:'dev', ticket:'PAY-21', trigger:null, st:'running', dur:'3m 04s', cost:0.88, tok:'51.1k', started:'3m ago'},
+  {id:489, agent:'docs', ticket:'PAY-19', trigger:null, st:'running', dur:'1m 18s', cost:0.21, tok:'14.0k', started:'1m ago'},
+  {id:487, agent:'dev', ticket:'PAY-23', trigger:'Address review comments', st:'completed', dur:'4m 55s', cost:1.10, tok:'66.3k', started:'1h ago', pr:221},
+  {id:485, agent:'reviewer', ticket:'PAY-23', trigger:'Review new PRs', st:'completed', dur:'2m 02s', cost:0.28, tok:'19.4k', started:'1h ago', pr:221},
+  {id:482, agent:'dev', ticket:null, trigger:'CI failed → file a ticket', st:'failed', dur:'0m 51s', cost:0.09, tok:'6.2k', started:'25m ago'},
+  {id:481, agent:'dev', ticket:'PAY-23', trigger:null, st:'completed', dur:'8m 30s', cost:2.05, tok:'118k', started:'2h ago', pr:221},
+  {id:478, agent:'architect', ticket:'PAY-27', trigger:null, st:'canceled', dur:'1m 10s', cost:0.14, tok:'9.1k', started:'3h ago'}
+];
+
+const STEPS = [
+  {n:'Provision container', st:'completed', t:'4.1s', seg:[70,0,30], kind:'provision'},
+  {n:'Read 23 files', st:'completed', t:'12.4s', seg:[5,55,40], kind:'group', count:23},
+  {n:'Load project context', st:'completed', t:'0.9s', seg:[10,80,10], kind:'context'},
+  {n:'Plan', st:'completed', t:'8.2s', seg:[4,92,4], kind:'plan'},
+  {n:'Edit 6 files', st:'completed', t:'31.8s', seg:[3,61,36], kind:'edit', count:6},
+  {n:'Run test suite', st:'failed', t:'44.0s', seg:[2,8,90], kind:'bash'},
+  {n:'Ask the human', st:'needs', t:'—', seg:[0,100,0], kind:'ask'},
+  {n:'Fix and re-run', st:'queued', t:'—', seg:[0,0,0], kind:'pending'},
+  {n:'Open pull request', st:'queued', t:'—', seg:[0,0,0], kind:'pending'}
+];
+
+const WIKI = [
+  {slug:'conventions', title:'Engineering conventions', scope:'always', owner:'SF', verified:'2026-11-01', words:640, kids:[
+    {slug:'commits', title:'Commit and PR conventions', scope:'always', owner:'SF', verified:'2026-11-01', words:310},
+    {slug:'testing', title:'Testing expectations', scope:'auto', owner:'JD', verified:'2026-09-15', words:420}
+  ]},
+  {slug:'payments-domain', title:'Payments domain model', scope:'auto', owner:'JD', verified:'2026-10-01', words:1240, kids:[
+    {slug:'refund-sm', title:'Refund state machine', scope:'auto', owner:'JD', verified:'2026-10-01', words:880, proposed:true}
+  ]},
+  {slug:'infra-runbook', title:'Deployment runbook', scope:'paths', owner:'SF', verified:'2026-06-01', words:890, paths:'infra/**', stale:true},
+  {slug:'onboarding', title:'Team onboarding', scope:'never', owner:'JD', verified:'2027-01-01', words:520}
+];
+
+const TRIGGERS = [
+  {id:'t1', on:true, name:'Review new PRs', ev:'pull_request', types:['opened','ready_for_review'], filt:'branch main',
+   ifs:['author is an agent','files changed < 400'], then:'run agent Reviewer',
+   fired:18, outcome:{ok:14, noaction:3, halt:1}, last:'2h ago', suppress:'@reviewer-bot'},
+  {id:'t2', on:true, name:'Address review comments', ev:'pull_request_review', types:['submitted · changes_requested'], filt:'any branch',
+   ifs:['review author is an agent'], then:'run agent Dev on the same branch',
+   fired:11, outcome:{ok:7, noaction:2, halt:1, errored:1}, last:'1h ago', suppress:'@dev-bot'},
+  {id:'t3', on:true, name:'CI failed → file a ticket', ev:'check_suite', types:['completed · failure'], filt:'branch main',
+   ifs:[], then:'create ticket in Triage',
+   fired:4, outcome:{ok:3, errored:1}, last:'25m ago', suppress:'—'},
+  {id:'t4', on:false, name:'Nightly dependency sweep', ev:'schedule', types:['0 3 * * *'], filt:'—',
+   ifs:[], then:'run agent Dev', fired:0, outcome:{}, last:'never', suppress:'—'}
+];
+
+const MEMBERS = {SF:{name:'Spruce',color:'#6c7cff'}, JD:{name:'Jamie',color:'#3fb37f'}};
+
+/* ============================================================
+   State + helpers
+   ============================================================ */
+const S = {
+  view:'home', proj:'PAY', ticket:'PAY-14', run:494, page:'conventions',
+  trig:'t1', agent:'dev', verbosity:'Normal', step:5, mini:false, sheet:null,
+  boardLayout:'board', groupBy:'status'
+};
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const ST = {
+  queued:      {g:'○', c:'queued',       l:'Queued'},
+  provisioning:{g:'◐', c:'provisioning', l:'Provisioning'},
+  running:     {g:'●', c:'running',      l:'Running', pulse:true},
+  needs:       {g:'▲', c:'needs',        l:'Needs you'},
+  approval:    {g:'▲', c:'approval',     l:'Awaiting approval'},
+  completed:   {g:'✓', c:'completed',    l:'Completed'},
+  failed:      {g:'✕', c:'failed',       l:'Failed'},
+  timeout:     {g:'✕', c:'timeout',      l:'Timed out'},
+  canceled:    {g:'⊘', c:'canceled',     l:'Canceled'},
+  halt:        {g:'⊗', c:'halt',         l:'Loop stopped'},
+  noaction:    {g:'—', c:'noaction',     l:'No action'}
+};
+function stat(k, label){
+  const s = ST[k]; if(!s) return '';
+  return `<span class="st st-${s.c}"><span class="g${s.pulse?' pulse':''}">${s.g}</span>${label===false?'':esc(label||s.l)}</span>`;
+}
+const proj = () => PROJECTS.find(p => p.key === S.proj);
+const ag = id => AG[id] || {name:'—', color:'#68727e'};
+function av(init){
+  const m = MEMBERS[init];
+  return `<span class="avatar" style="background:${m?m.color:'#68727e'}" title="${m?esc(m.name):''}">${esc(init)}</span>`;
+}
+function apill(id){
+  const a = ag(id);
+  return `<span class="agentpill"><i style="background:${a.color}"></i>${esc(a.name)}</span>`;
+}
+function diff(add, del){
+  if(add==null) return '';
+  return `<span class="diffstat"><span class="a">+${add}</span> <span class="d">−${del}</span></span>`;
+}
+const go = (v, o={}) => { Object.assign(S, o, {view:v}); render(); window.scrollTo(0,0); };
+
+/* all needs-you items across projects, one row per blocked thing */
+function needsAll(){
+  const rows = TICKETS.filter(t => ['needs','halt'].includes(t.st)).map(t => ({
+    proj:'PAY', key:t.key, title:t.title, agent:t.agent,
+    flavor:t.st==='halt'?'Loop stopped':t.flavor, ask:t.ask,
+    ago:t.ago, kind:t.st==='halt'?'halt':(t.flavor==='Review output'?'ok':'needs')
+  }));
+  rows.push({proj:'WEB', key:'WEB-3', title:'Rewrite the pricing page copy', agent:'docs',
+    flavor:'Approve a plan', ask:'Docs wants to restructure 4 sections before writing.', ago:'55m', kind:'needs'});
+  return rows;
+}
+
+/* ============================================================
+   Chrome
+   ============================================================ */
+const TABS = [
+  ['overview','Overview'], ['board','Board'], ['triage','Triage'], ['wiki','Wiki'],
+  ['runs','Runs'], ['agents','Agents'], ['triggers','Triggers'], ['settings','Settings']
+];
+const PROJ_VIEWS = ['overview','board','triage','ticket','wiki','runs','run','agents','agent','triggers','trigger','settings'];
+
+function topbar(){
+  return `<div class="topbar">
+    <div class="brand"><span class="mark">◈</span>Lexicode</div>
+    <div class="topnav">
+      <button data-act="go" data-v="home" class="${S.view==='home'?'sel':''}">Home</button>
+      <button data-act="go" data-v="inbox" class="${S.view==='inbox'?'sel':''}">Inbox <span class="chip" style="height:16px;padding:0 5px;margin-left:4px;color:var(--needs);border-color:#e0a33e55">${needsAll().length}</span></button>
+    </div>
+    <button class="search" data-act="sheet" data-s="cmd"><span>⌕</span><span class="grow" style="text-align:left">Search or run a command…</span><span class="kbd">⌘K</span></button>
+    <div class="grow"></div>
+    <button class="btn ghost sm" data-act="theme">◐ Theme</button>
+    <button class="btn ghost sm" data-act="sheet" data-s="keys">?</button>
+    ${av('SF')}
+  </div>`;
+}
+
+function rail(){
+  const n = needsAll();
+  return `<div class="rail${S.mini?' mini':''}">
+    <div class="rail-sec">
+      <div class="lbl rail-txt" style="padding:0 8px 6px">Projects</div>
+      ${PROJECTS.map(p => `
+        <button class="rail-item ${S.proj===p.key&&PROJ_VIEWS.includes(S.view)?'sel':''}" data-act="proj" data-k="${p.key}">
+          <span class="dotk" style="background:${p.color}"></span>
+          <span class="rail-txt trunc grow">${esc(p.name)}</span>
+          ${p.running?`<span class="rail-txt st st-running"><span class="g pulse">●</span>${p.running}</span>`:''}
+        </button>`).join('')}
+      <button class="rail-item" data-act="sheet" data-s="newproj"><span style="width:7px;text-align:center">+</span><span class="rail-txt">New project</span></button>
+    </div>
+    <div class="rail-needs">
+      <div class="lbl rail-txt" style="padding:0 8px 6px;color:var(--needs)">Needs you · ${n.length}</div>
+      ${n.slice(0,4).map(x => `
+        <button class="needsrow" data-act="open-needs" data-k="${x.key}">
+          <span class="dotk" style="background:var(--${x.kind==='halt'?'halt':x.kind==='fail'?'fail':x.kind==='ok'?'ok':'needs'})"></span>
+          <span class="rail-txt col grow" style="gap:0">
+            <span class="mono trunc" style="font-size:11px">${esc(x.key)}</span>
+            <span class="t3 trunc" style="font-size:10.5px">${esc(x.flavor)}</span>
+          </span>
+        </button>`).join('')}
+      ${n.length>4?`<button class="needsrow rail-txt t3" data-act="go" data-v="inbox" style="font-size:11px;padding-left:23px">+${n.length-4} more →</button>`:''}
+    </div>
+  </div>`;
+}
+
+function projHeader(){
+  const p = proj();
+  const counts = {triage:TRIAGE.length, runs:RUNS.filter(r=>['needs','failed','halt'].includes(r.st)).length};
+  const cur = S.view==='ticket'?'board' : S.view==='run'?'runs' : S.view==='agent'?'agents' : S.view==='trigger'?'triggers' : S.view;
+  return `<div class="phead">
+    <div class="ptitle">
+      <span class="dotk" style="background:${p.color};width:9px;height:9px"></span>
+      <span class="mono t3">${esc(p.key)}</span>
+      <h1>${esc(p.name)}</h1>
+      <span class="chip mono">${esc(p.repo)}</span>
+      <div class="grow"></div>
+      <span class="t3" style="font-size:11.5px">updated ${esc(p.last)}</span>
+    </div>
+    <div class="tabs">
+      ${TABS.map(([v,l]) => {
+        const c = counts[v];
+        return `<button data-act="go" data-v="${v}" class="${cur===v?'sel':''}">${l}${c?`<span class="cnt${v==='runs'||v==='triage'?' hot':''}">${c}</span>`:''}</button>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   Screens
+   ============================================================ */
+function vHome(){
+  const n = needsAll();
+  return `<div class="body">
+    <div class="row" style="margin-bottom:9px">
+      <div class="lbl" style="color:var(--needs)">Needs you</div>
+      <span class="t3" style="font-size:11.5px">${n.length} items blocked on a human, across ${PROJECTS.length} projects</span>
+      <div class="grow"></div>
+      <button class="btn sm" data-act="go" data-v="inbox">Open inbox</button>
+    </div>
+    <div class="needsstrip" style="margin-bottom:22px">
+      ${n.map(x => ncard(x)).join('')}
+    </div>
+
+    <div class="lbl" style="margin-bottom:9px">Projects</div>
+    <div class="card scrollx">
+      <table class="tbl">
+        <thead><tr>
+          <th>Project</th><th>Repository</th><th>Open</th><th>Running</th>
+          <th>Needs you</th><th>Spend today</th><th>Last activity</th>
+        </tr></thead>
+        <tbody>${PROJECTS.map(p => `
+          <tr data-act="proj" data-k="${p.key}">
+            <td><span class="row"><span class="dotk" style="background:${p.color}"></span><b style="font-weight:500">${esc(p.name)}</b><span class="mono t3">${esc(p.key)}</span></span></td>
+            <td class="mono t2">${esc(p.repo)}</td>
+            <td class="num t2">${p.open}</td>
+            <td>${p.running?stat('running', p.running+(p.running===1?' agent':' agents')):'<span class="t3">—</span>'}</td>
+            <td>${p.needs?`<span class="st st-needs"><span class="g">▲</span>${p.needs}</span>`:'<span class="t3">—</span>'}</td>
+            <td><span class="row" style="gap:7px"><span class="mono">$${p.spend.toFixed(2)}</span><span class="bar" style="width:44px"><i style="width:${Math.round(p.spend/p.cap*100)}%;background:${p.spend/p.cap>0.7?'var(--needs)':'var(--accent)'}"></i></span><span class="t3 mono">/ $${p.cap}</span></span></td>
+            <td class="t3">${esc(p.last)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="note" style="margin-top:14px">Spend and the running count sit in the project list, not behind a detail panel. The billing unit belongs where it is scannable.</div>
+  </div>`;
+}
+
+function ncard(x){
+  const actions = {
+    'Answer a question':'Answer', 'Approve a plan':'Approve',
+    'Review output':'View diff', 'Loop stopped':'Inspect chain'
+  };
+  const hue = x.kind==='halt'?'halt':x.kind==='fail'?'fail':x.kind==='ok'?'ok':'needs';
+  return `<div class="ncard ${x.kind==='halt'?'halt':x.kind==='fail'?'fail':x.kind==='ok'?'ok':''}">
+    <div class="row">
+      <span class="mono t3" style="font-size:11px">${esc(x.proj)}</span>
+      <span class="mono" style="font-size:11px">${esc(x.key)}</span>
+      <div class="grow"></div>
+      <span class="t3" style="font-size:11px">${esc(x.ago)}</span>
+    </div>
+    <div class="trunc" style="font-size:12.5px">${esc(x.title)}</div>
+    <div class="flavor" style="color:var(--${hue})">${esc(x.flavor)}</div>
+    <div class="t2" style="font-size:11.5px;line-height:1.5">${esc(x.ask)}</div>
+    <div class="row" style="margin-top:2px">
+      ${apill(x.agent)}
+      <div class="grow"></div>
+      <button class="btn sm primary" data-act="open-needs" data-k="${x.key}">${actions[x.flavor]||'Open'}</button>
+    </div>
+  </div>`;
+}
+
+function vInbox(){
+  const n = needsAll();
+  return `<div class="body">
+    <div class="row" style="margin-bottom:4px"><h2 style="margin:0;font-size:15px">Inbox</h2>
+      <span class="t3" style="font-size:11.5px">${n.length} blocked · approvals first · one row per run, updated in place</span></div>
+    <div class="t3" style="font-size:11.5px;margin-bottom:14px">Answer, approve or dismiss without leaving this screen.</div>
+    ${PROJECTS.filter(p => n.some(x=>x.proj===p.key)).map(p => `
+      <div class="lbl" style="margin:16px 0 7px"><span class="dotk" style="background:${p.color};display:inline-block;margin-right:6px"></span>${esc(p.name)}</div>
+      <div class="card">
+        ${n.filter(x=>x.proj===p.key).map((x,i) => `
+          <div class="row pad" style="padding:11px 14px;${i?'border-top:1px solid var(--border)':''}">
+            <span class="dotk" style="background:var(--${x.kind==='halt'?'halt':x.kind==='fail'?'fail':x.kind==='ok'?'ok':'needs'})"></span>
+            <span class="mono t2" style="width:64px;font-size:11.5px">${esc(x.key)}</span>
+            <span class="col grow" style="gap:1px">
+              <span class="trunc">${esc(x.title)}</span>
+              <span class="t3" style="font-size:11.5px"><b style="color:var(--${x.kind==='halt'?'halt':x.kind==='fail'?'fail':x.kind==='ok'?'ok':'needs'});font-weight:600">${esc(x.flavor)}</b> · ${esc(x.ask)}</span>
+            </span>
+            ${apill(x.agent)}
+            <span class="t3" style="font-size:11px;width:40px;text-align:right">${esc(x.ago)}</span>
+            <button class="btn sm" data-act="open-needs" data-k="${x.key}">Open</button>
+            <button class="btn sm ok">Approve</button>
+          </div>`).join('')}
+      </div>`).join('')}
+  </div>`;
+}
+
+function vOverview(){
+  const p = proj();
+  return `<div class="body">
+    <div class="card pad" style="margin-bottom:14px">
+      <div class="row" style="align-items:flex-start;gap:22px;flex-wrap:wrap">
+        <div class="col grow" style="gap:7px;min-width:240px">
+          <div class="lbl">About</div>
+          <div class="t2" style="max-width:60ch;line-height:1.6">${esc(p.desc)}</div>
+          <div class="row" style="margin-top:4px;gap:10px;flex-wrap:wrap">
+            <span class="chip mono">⎇ ${esc(p.branch)}</span>
+            <span class="chip mono">${esc(p.sha)} · ${esc(p.shaMsg)}</span>
+            <span class="chip">Owner ${av('SF')}</span>
+          </div>
+        </div>
+        <div class="row" style="gap:26px;align-items:flex-start">
+          <div class="stat"><span class="lbl">Open</span><span class="v">${p.open}</span></div>
+          <div class="stat"><span class="lbl">Running</span><span class="v" style="color:var(--running)">${p.running}</span></div>
+          <div class="stat"><span class="lbl">Needs you</span><span class="v" style="color:var(--needs)">${p.needs}</span></div>
+          <div class="stat"><span class="lbl">Spend today</span><span class="v">$${p.spend.toFixed(2)}</span>
+            <span class="bar" style="width:88px;margin-top:3px"><i style="width:${Math.round(p.spend/p.cap*100)}%"></i></span>
+            <span class="t3 mono" style="font-size:10.5px">ceiling $${p.cap}</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="grid3">
+      <div class="card">
+        <div class="row pad" style="padding:10px 14px;border-bottom:1px solid var(--border)"><span class="lbl">Recent runs</span><div class="grow"></div><button class="btn ghost sm" data-act="go" data-v="runs">All →</button></div>
+        ${RUNS.slice(0,6).map(r => `
+          <div class="row" style="padding:7px 14px;border-bottom:1px solid var(--border);cursor:pointer" data-act="run" data-k="${r.id}">
+            ${stat(r.st, false)}
+            <span class="mono t3" style="font-size:11px">#${r.id}</span>
+            <span class="grow trunc" style="font-size:12px">${esc(ag(r.agent).name)} · ${esc(r.ticket||'no ticket')}</span>
+            <span class="mono t3" style="font-size:10.5px">$${r.cost.toFixed(2)}</span>
+          </div>`).join('')}
+      </div>
+      <div class="card">
+        <div class="row pad" style="padding:10px 14px;border-bottom:1px solid var(--border)"><span class="lbl">Pinned docs</span><div class="grow"></div><button class="btn ghost sm" data-act="go" data-v="wiki">Wiki →</button></div>
+        ${WIKI.slice(0,4).map(w => `
+          <div class="row" style="padding:8px 14px;border-bottom:1px solid var(--border);cursor:pointer" data-act="page" data-k="${w.slug}">
+            <span class="grow trunc" style="font-size:12px">${esc(w.title)}</span>
+            <span class="scope ${w.scope}">${w.scope.toUpperCase()}</span>
+          </div>`).join('')}
+      </div>
+      <div class="card">
+        <div class="row pad" style="padding:10px 14px;border-bottom:1px solid var(--border)"><span class="lbl">Activity</span></div>
+        ${[
+          ['⚡','Trigger <b>Review new PRs</b> fired on PR #219','2m'],
+          ['▲','<b>Dev</b> asked a question on PAY-14','12m'],
+          ['✓','<b>Reviewer</b> completed on PR #214 — 2 findings','38m'],
+          ['⊗','Loop guard stopped the chain on PR #221','1h'],
+          ['📄','<b>Docs</b> proposed a wiki page: Refund state machine','1h']
+        ].map(([g,t,a]) => `
+          <div class="row" style="padding:7px 14px;border-bottom:1px solid var(--border)">
+            <span class="t3" style="width:12px">${g}</span>
+            <span class="grow t2 trunc" style="font-size:12px">${t}</span>
+            <span class="t3" style="font-size:11px">${a}</span>
+          </div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function tcard(t){
+  const ac = t.ac||[];
+  const doneAc = ac.filter(Boolean).length;
+  return `<div class="tcard" data-act="ticket" data-k="${t.key}">
+    <div class="row">
+      <span class="mono t3" style="font-size:11px">${esc(t.key)}</span>
+      <div class="grow"></div>
+      ${t.st?stat(t.st, t.st==='needs'?(t.flavor||'Needs you'):undefined):''}
+    </div>
+    <div class="ttl">${esc(t.title)}</div>
+    ${ac.length?`<div class="row" style="gap:6px">
+      <span class="bar" style="width:52px"><i style="width:${Math.round(doneAc/ac.length*100)}%;background:var(--ok)"></i></span>
+      <span class="t3" style="font-size:10.5px">${doneAc}/${ac.length} acceptance criteria</span></div>`:''}
+    <div class="meta">
+      ${t.agent?apill(t.agent):'<span class="t3" style="font-size:10.5px">no delegate</span>'}
+      ${t.assignee?`<span class="t3">→</span>${av(t.assignee)}`:''}
+      <div class="grow"></div>
+      ${diff(t.add, t.del)}
+      ${t.pr?`<span class="mono t3" style="font-size:10.5px">#${t.pr}</span>`:''}
+    </div>
+  </div>`;
+}
+
+function vBoard(){
+  const blocked = TICKETS.filter(t => ['needs','halt'].includes(t.st));
+  return `<div class="body flush" style="display:flex;flex-direction:column">
+    <div class="boardbar">
+      <div class="row" style="gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:2px">
+        <button class="btn sm ${S.boardLayout==='board'?'primary':'ghost'}" data-act="layout" data-k="board">Board</button>
+        <button class="btn sm ${S.boardLayout==='list'?'primary':'ghost'}" data-act="layout" data-k="list">List</button>
+      </div>
+      <span class="chip">Group by <b style="color:var(--text);margin-left:3px">status</b> ▾</span>
+      <span class="chip on">Delegate: any</span>
+      <span class="chip">Label ▾</span>
+      <span class="chip">Priority ▾</span>
+      <div class="grow"></div>
+      <span class="chip">Display <span class="kbd">⇧V</span></span>
+      <button class="btn sm primary">+ New ticket <span class="kbd" style="background:#ffffff2e;border-color:transparent;color:#fff">C</span></button>
+    </div>
+
+    ${blocked.length?`<div class="lane">
+      <div class="lane-h">
+        <span class="st st-needs"><span class="g">▲</span></span>
+        <b style="font-size:12.5px">Needs you</b>
+        <span class="t3" style="font-size:11.5px">${blocked.length} tickets waiting on a human · pinned, always first</span>
+      </div>
+      <div class="lane-b">${blocked.map(tcard).join('')}</div>
+    </div>`:''}
+
+    ${S.boardLayout==='board' ? `<div class="cols">
+      ${COLS.map(c => {
+        const items = TICKETS.filter(t => t.col===c.id);
+        const over = c.wip && items.length > c.wip;
+        const at = c.wip && items.length === c.wip;
+        return `<div class="bcol">
+          <div class="bcol-h">
+            <span class="n">${esc(c.name)}</span>
+            <span class="t3 num" style="font-size:11px">${items.length}</span>
+            ${c.wip?`<span class="wip ${over?'over':at?'warn':''}">${items.length}/${c.wip}${at||over?' · enforced':''}</span>`:''}
+            <div class="grow"></div>
+            ${c.auto?`<span class="chip" style="color:var(--needs);border-color:#e0a33e55;height:18px;font-size:10px">⚡ auto-runs delegate</span>`:''}
+            <button class="btn ghost sm" style="padding:0 5px">+</button>
+          </div>
+          ${items.map(tcard).join('') || `<div class="t3" style="font-size:11.5px;padding:12px 4px">Nothing here.</div>`}
+        </div>`;
+      }).join('')}
+    </div>` : `<div style="padding:14px 18px">
+      <div class="card scrollx"><table class="tbl">
+        <thead><tr><th></th><th>Key</th><th>Title</th><th>Column</th><th>Delegate</th><th>Assignee</th><th>Diff</th><th>PR</th></tr></thead>
+        <tbody>${TICKETS.map(t => `<tr data-act="ticket" data-k="${t.key}">
+          <td>${t.st?stat(t.st,false):''}</td>
+          <td class="mono t2">${esc(t.key)}</td>
+          <td class="trunc">${esc(t.title)}</td>
+          <td class="t2">${esc((COLS.find(c=>c.id===t.col)||{}).name)}</td>
+          <td>${t.agent?apill(t.agent):'<span class="t3">—</span>'}</td>
+          <td>${t.assignee?av(t.assignee):'<span class="t3">—</span>'}</td>
+          <td>${diff(t.add,t.del)||'<span class="t3">—</span>'}</td>
+          <td class="mono t3">${t.pr?'#'+t.pr:'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`}
+
+    <div style="padding:0 18px 22px">
+      <div class="note">Dragging a card never starts an agent. Starting is <span class="kbd">D</span>, the Run button, or a trigger — except in a column explicitly marked <b>auto-runs delegate</b>, which says so on its header.</div>
+    </div>
+  </div>`;
+}
+
+function vTicket(){
+  const t = TICKETS.find(x=>x.key===S.ticket) || TICKETS[0];
+  const a = ag(t.agent);
+  const ac = ['Replayed requests return the original response','Keys expire after 24h','Concurrent duplicates are serialised','Contract tests cover the replay path','Runbook updated'];
+  return `<div class="body flush"><div class="p2">
+    <div style="padding:18px 22px 40px">
+      <div class="row t3 mono" style="font-size:11.5px;margin-bottom:8px">
+        <button class="btn ghost sm" data-act="go" data-v="board">← Board</button>
+        <span>${esc(t.key)}</span>
+      </div>
+      <h2 style="margin:0 0 14px;font-size:18px;font-weight:600;letter-spacing:-.01em;max-width:58ch">${esc(t.title)}</h2>
+
+      <div class="prose" style="margin-bottom:18px">
+        <p>Charges are currently non-idempotent: a client retry after a timeout can double-charge. Accept an <code>Idempotency-Key</code> header on <code>POST /v1/charges</code>, persist the request fingerprint and the response, and replay on a repeat key.</p>
+      </div>
+
+      <div class="lbl" style="margin-bottom:7px">Acceptance criteria</div>
+      <div class="card" style="margin-bottom:18px">
+        ${ac.map((x,i) => `<div class="row" style="padding:7px 12px;${i?'border-top:1px solid var(--border)':''}">
+          <span style="color:var(--${(t.ac||[])[i]?'ok':'text-3'})">${(t.ac||[])[i]?'☑':'☐'}</span>
+          <span class="${(t.ac||[])[i]?'t3':''}" style="font-size:12.5px;${(t.ac||[])[i]?'text-decoration:line-through':''}">${esc(x)}</span>
+        </div>`).join('')}
+      </div>
+      <div class="note" style="margin-bottom:20px">Acceptance criteria are a first-class field, not part of the description. They get injected into the run prompt and checked off in the run summary — which is what makes the output checkable instead of just plausible.</div>
+
+      <div class="lbl" style="margin-bottom:9px">Activity</div>
+      <div class="col" style="gap:10px">
+        ${streamItem('SF','created the ticket and delegated to Dev','2h ago')}
+
+        <div class="card" style="border-left:2px solid ${a.color}">
+          <div class="row pad" style="padding:10px 13px">
+            ${apill(t.agent)}
+            <span class="t3" style="font-size:11.5px">run #494 · 6m 12s · $1.42</span>
+            <div class="grow"></div>
+            ${stat(t.st==='needs'?'needs':'running')}
+            <button class="btn sm" data-act="run" data-k="494">Open run →</button>
+          </div>
+          <div class="hr"></div>
+          <div class="pad" style="padding:11px 13px;display:flex;flex-direction:column;gap:8px">
+            <div class="t2" style="font-size:12px"><b style="color:var(--text)">Plan</b> — add a middleware that fingerprints the body, store in <code style="font-family:var(--mono);font-size:11px">idempotency_records</code>, replay on hit. 6 files.</div>
+            <div class="row t3 mono" style="font-size:11px;gap:14px">
+              <span>Read 23 files</span><span>Edited 6</span><span class="st st-failed"><span class="g">✕</span>2 tests failing</span>
+            </div>
+            <div class="approve" style="margin:0">
+              <div class="row"><span class="st st-needs"><span class="g">▲</span></span><b style="font-size:12px">Dev is asking a question</b><div class="grow"></div><span class="t3" style="font-size:11px">12m ago</span></div>
+              <div class="t2" style="font-size:12.5px;line-height:1.6">${esc(t.ask||'')}</div>
+              <div class="row"><input class="f grow" placeholder="Answer…" style="height:28px"><button class="btn sm primary">Send</button></div>
+            </div>
+          </div>
+        </div>
+
+        ${streamItem('system','⚡ Trigger <b>Review new PRs</b> matched but took no action — PR is still draft','40m ago')}
+        ${streamItem('JD','Careful with the 24h expiry — Stripe keeps keys for 24h too, so we should not out-live them.','25m ago')}
+      </div>
+
+      <div class="card" style="margin-top:14px;padding:10px 12px">
+        <input class="f" style="width:100%;height:30px;border:0;background:transparent" placeholder="Comment, or @mention an agent to start a run…">
+      </div>
+    </div>
+
+    <div class="side" style="padding:16px 16px 40px">
+      ${sideRow('Status', `<span class="chip">Agent working</span>`)}
+      ${sideRow('Priority', `<span class="chip">High</span>`)}
+      <div class="hr" style="margin:10px 0"></div>
+      ${sideRow('Assignee', `${av(t.assignee||'SF')} <span style="font-size:12px">${esc((MEMBERS[t.assignee]||{}).name||'Spruce')}</span>`)}
+      ${sideRow('Delegate', `${apill(t.agent)}`)}
+      <div class="t3" style="font-size:11px;line-height:1.5;margin:2px 0 10px">Two fields, never one. The human stays accountable and gets the notifications; the agent does the work.</div>
+      <div class="hr" style="margin:10px 0"></div>
+      ${sideRow('Labels', `<span class="chip">api</span><span class="chip">reliability</span>`)}
+      ${sideRow('Pull request', t.pr?`<a class="mono" href="#" onclick="return false">#${t.pr}</a> <span class="st st-failed"><span class="g">✕</span>checks</span>`:'<span class="t3">—</span>')}
+      ${sideRow('Branch', `<span class="mono t2" style="font-size:11px">dev/PAY-14-idempotency</span><button class="btn ghost sm" title="Copy checkout command">⧉</button>`)}
+      <div class="hr" style="margin:10px 0"></div>
+      ${sideRow('Created', `<span class="t2">2h ago by ${av('SF')}</span>`)}
+    </div>
+  </div></div>`;
+}
+function sideRow(k, v){
+  return `<div class="row" style="align-items:flex-start;padding:5px 0"><span class="lbl" style="width:82px;flex:0 0 82px;padding-top:3px">${k}</span><span class="row grow" style="flex-wrap:wrap;gap:6px">${v}</span></div>`;
+}
+function streamItem(who, txt, ago){
+  return `<div class="row" style="align-items:flex-start;gap:9px;padding:2px 0">
+    ${who==='system'?'<span class="t3" style="width:22px;text-align:center">⚙</span>':av(who)}
+    <span class="grow t2" style="font-size:12.5px;line-height:1.55">${txt}</span>
+    <span class="t3" style="font-size:11px;white-space:nowrap">${ago}</span>
+  </div>`;
+}
+
+function vTriage(){
+  return `<div class="body">
+    <div class="row" style="margin-bottom:4px"><h2 style="margin:0;font-size:15px">Triage</h2>
+      <span class="t3" style="font-size:11.5px">${TRIAGE.length} items · everything a trigger or an agent created lands here, never straight on the board</span></div>
+    <div class="row t3" style="font-size:11.5px;margin-bottom:14px;gap:14px">
+      <span><span class="kbd">1</span> accept</span><span><span class="kbd">2</span> duplicate</span>
+      <span><span class="kbd">3</span> decline</span><span><span class="kbd">H</span> snooze until new activity</span>
+    </div>
+    <div class="card">
+      ${TRIAGE.map((t,i) => `<div class="row pad" style="padding:12px 14px;${i?'border-top:1px solid var(--border)':''}">
+        <span class="mono t2" style="width:64px">${esc(t.key)}</span>
+        <span class="col grow" style="gap:2px">
+          <span>${esc(t.title)}</span>
+          <span class="t3" style="font-size:11.5px">Created by ${t.src==='trigger'?'trigger':'agent'} <b style="color:var(--text-2);font-weight:500">${esc(t.srcName)}</b> from run #${t.run} · ${esc(t.ago)}</span>
+        </span>
+        <button class="btn sm ok">Accept</button>
+        <button class="btn sm">Duplicate</button>
+        <button class="btn sm fail">Decline</button>
+        <button class="btn ghost sm">Snooze</button>
+      </div>`).join('')}
+    </div>
+    <div class="note" style="margin-top:14px">Provenance is the reason this screen exists. Once triggers and agents can file tickets, a board without a quarantine queue is a firehose inside a week.</div>
+  </div>`;
+}
+
+/* ---------- wiki ---------- */
+function flatWiki(){
+  const out = [];
+  WIKI.forEach(w => { out.push({...w, depth:0}); (w.kids||[]).forEach(k => out.push({...k, depth:1})); });
+  return out;
+}
+function vWiki(){
+  const all = flatWiki();
+  const pg = all.find(w => w.slug===S.page) || all[0];
+  const always = all.filter(w => w.scope==='always');
+  const words = always.reduce((s,w)=>s+w.words,0);
+  const tokens = Math.round(words*1.32);
+  const pct = Math.min(100, Math.round(tokens/4000*100));
+  return `<div class="body flush"><div class="p3">
+    <div>
+      <div class="meter">
+        <div class="row" style="margin-bottom:5px"><span class="lbl">Always-on context</span><div class="grow"></div><span class="mono t2" style="font-size:11px">~${(tokens/1000).toFixed(1)}k tok</span></div>
+        <span class="bar"><i style="width:${pct}%;background:${pct>70?'var(--needs)':'var(--accent)'}"></i></span>
+        <div class="t3" style="font-size:10.5px;margin-top:4px">${always.length} pages · ${words} words · budget 4k</div>
+      </div>
+      <div style="padding:8px 8px 0">
+        <div class="search" style="max-width:none;width:100%"><span>⌕</span><span class="grow" style="text-align:left">Search the wiki</span><span class="kbd">/</span></div>
+      </div>
+      <div class="tree">
+        ${all.map(w => `<button class="tnode ${w.depth?'child':''} ${pg.slug===w.slug?'sel':''}" data-act="page" data-k="${w.slug}"
+          style="${w.proposed?'border:1px dashed var(--border-strong)':''}">
+          <span class="t3" style="font-size:10px">${w.depth?'└':'▸'}</span>
+          <span class="trunc">${esc(w.title)}</span>
+          ${w.proposed?'<span class="scope" style="color:var(--accent);border-color:#6c7cff66">PROPOSED</span>':`<span class="scope ${w.scope}">${w.scope.toUpperCase()}</span>`}
+        </button>`).join('')}
+        <button class="tnode" style="color:var(--text-3);margin-top:6px">+ New page</button>
+      </div>
+    </div>
+
+    <div class="mid" style="padding:18px 24px 40px">
+      ${pg.proposed?`<div class="approve" style="border-color:var(--accent);background:var(--accent-dim)">
+        <div class="row"><b style="font-size:12px">Docs proposed this page after run #489</b><div class="grow"></div><span class="t3" style="font-size:11px">1h ago</span></div>
+        <div class="t2" style="font-size:12px;line-height:1.55">Agents propose; humans accept. Nothing is ever written to the wiki automatically.</div>
+        <div class="row"><button class="btn sm primary">Accept</button><button class="btn sm">Edit first</button><button class="btn ghost sm">Dismiss</button></div>
+      </div>`:''}
+      <div class="row" style="margin-bottom:6px;flex-wrap:wrap">
+        <h2 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">${esc(pg.title)}</h2>
+        <div class="grow"></div>
+        <button class="btn sm">Edit</button>
+      </div>
+      <div class="row" style="margin-bottom:18px;flex-wrap:wrap;gap:8px">
+        <span class="chip">${av(pg.owner)} owner</span>
+        <span class="chip" style="${pg.stale?'color:var(--fail);border-color:#e0556355':''}">verified until ${esc(pg.verified)}${pg.stale?' · expired':''}</span>
+        <span class="chip"><span class="scope ${pg.scope}" style="margin:0">${pg.scope.toUpperCase()}</span>${pg.paths?`<span class="mono" style="font-size:10.5px">${esc(pg.paths)}</span>`:''}</span>
+      </div>
+      ${pg.stale?`<div class="note" style="border-left-color:var(--fail);background:#e0556314;margin-bottom:16px">Verification expired. An <b>always</b>-scoped page whose verification lapses is demoted to <b>auto</b> and flagged rather than silently steering every run with stale instructions.</div>`:''}
+      <div class="prose">
+        <p>${esc(pg.title)} — the conventions below are loaded into agent runs on this project. Keep them to pitfalls, rationale and conventions that differ from tool defaults; cut anything an agent can read straight off the codebase.</p>
+        <h2>Branch and commit</h2>
+        <ul>
+          <li>Branch names are <code>{agent}/{ticket-key}-{slug}</code>.</li>
+          <li>Conventional commits. The ticket key goes in the body, not the subject.</li>
+          <li>Never force-push a branch that already has a review on it.</li>
+        </ul>
+        <h2>Pull requests</h2>
+        <ul>
+          <li>Under 400 changed lines. Split rather than explain.</li>
+          <li>The description states intent, not a diff summary — the diff is already there.</li>
+          <li>Test changes get read with suspicion: an assertion loosened to make a suite pass is a defect, not a fix.</li>
+        </ul>
+        <h2>What not to do</h2>
+        <ul>
+          <li>Do not add a dependency without saying why in the PR body.</li>
+          <li>Do not touch <code>infra/</code> from a feature ticket.</li>
+        </ul>
+      </div>
+
+      <div class="hr" style="margin:26px 0 14px"></div>
+      <div class="lbl" style="margin-bottom:9px">Backlinks</div>
+      <div class="col" style="gap:9px;max-width:68ch">
+        ${[['PAY-14','…following the <b>Engineering conventions</b> page, the branch is dev/PAY-14-idempotency and the PR stays under 400 lines.'],
+           ['Deployment runbook','Before a release, confirm the change follows <b>Engineering conventions</b> — particularly the force-push rule.']]
+          .map(([src,txt]) => `<div class="card pad" style="padding:9px 12px">
+            <div class="mono t3" style="font-size:11px;margin-bottom:3px">${esc(src)}</div>
+            <div class="t2" style="font-size:12px;line-height:1.55">${txt}</div>
+          </div>`).join('')}
+        <button class="btn ghost sm" style="align-self:flex-start">▸ Unlinked mentions (3)</button>
+      </div>
+    </div>
+
+    <div class="right" style="padding:16px 14px">
+      <div class="lbl" style="margin-bottom:8px">On this page</div>
+      <div class="col" style="gap:5px;margin-bottom:20px">
+        ${['Branch and commit','Pull requests','What not to do'].map(h=>`<a href="#" onclick="return false" class="t2" style="font-size:12px">${h}</a>`).join('')}
+      </div>
+      <div class="lbl" style="margin-bottom:8px">Agent scope</div>
+      <div class="col" style="gap:4px">
+        ${[['always','Loaded into every run'],['auto','Retrieved when the task matches'],['paths','Loaded when a matching file is touched'],['manual','Only when @mentioned'],['never','Human-only, never sent']].map(([k,d])=>`
+          <label class="row" style="align-items:flex-start;gap:7px;padding:5px 6px;border-radius:var(--r);background:${pg.scope===k?'var(--surface-2)':'transparent'}">
+            <span style="color:var(--${pg.scope===k?'accent':'text-3'})">${pg.scope===k?'◉':'○'}</span>
+            <span class="col" style="gap:1px">
+              <span class="scope ${k}" style="margin:0;align-self:flex-start">${k.toUpperCase()}</span>
+              <span class="t3" style="font-size:11px">${d}</span>
+            </span>
+          </label>`).join('')}
+      </div>
+    </div>
+  </div></div>`;
+}
+
+/* ---------- runs ---------- */
+function vRuns(){
+  return `<div class="body">
+    <div class="row" style="margin-bottom:12px;flex-wrap:wrap">
+      <span class="chip on">Needs attention</span>
+      <span class="chip">All</span><span class="chip">Running</span><span class="chip">Failed</span>
+      <span class="chip">Agent ▾</span><span class="chip">Trigger ▾</span>
+      <div class="grow"></div>
+      <span class="t3" style="font-size:11.5px">${RUNS.length} runs · $${RUNS.reduce((s,r)=>s+r.cost,0).toFixed(2)} today</span>
+    </div>
+    <div class="card scrollx">
+      <table class="tbl">
+        <thead><tr><th>Status</th><th>Run</th><th>Agent</th><th>Ticket</th><th>Started by</th><th>Duration</th><th>Tokens</th><th>Cost</th><th>Started</th></tr></thead>
+        <tbody>${RUNS.map(r => `<tr data-act="run" data-k="${r.id}">
+          <td>${stat(r.st)}</td>
+          <td class="mono t2">#${r.id}</td>
+          <td>${apill(r.agent)}</td>
+          <td class="mono t2">${esc(r.ticket||'—')}</td>
+          <td class="t2" style="font-size:12px">${r.trigger?`⚡ ${esc(r.trigger)}`:'<span class="t3">manual</span>'}</td>
+          <td class="mono t2">${esc(r.dur)}</td>
+          <td class="mono t3">${esc(r.tok)}</td>
+          <td class="mono">$${r.cost.toFixed(2)}</td>
+          <td class="t3">${esc(r.started)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+const SEGC = ['var(--muted)','var(--accent)','var(--running)'];
+function vRun(){
+  const r = RUNS.find(x=>x.id===S.run) || RUNS[0];
+  const a = ag(r.agent);
+  if(r.st==='halt') return vRunHalt(r);
+  const sel = STEPS[S.step] || STEPS[0];
+  return `<div class="body flush" style="display:flex;flex-direction:column;min-height:0">
+    <div class="row" style="padding:10px 18px;border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap">
+      <button class="btn ghost sm" data-act="go" data-v="runs">← Runs</button>
+      <span class="mono">#${r.id}</span>
+      ${apill(r.agent)}
+      <span class="chip">${esc(a.autonomy)}</span>
+      <span class="t2" style="font-size:12px">on <a href="#" onclick="return false" data-act="ticket" data-k="${r.ticket}">${esc(r.ticket||'no ticket')}</a></span>
+      <div class="grow"></div>
+      ${stat(r.st)}
+      <span class="mono t3" style="font-size:11px">${esc(r.dur)} · $${r.cost.toFixed(2)}</span>
+    </div>
+
+    <div class="p3" style="flex:1;min-height:0">
+      <div>
+        <div class="lbl" style="padding:10px 12px 6px">Steps</div>
+        <div class="steps">
+          ${STEPS.map((s,i) => `<button class="step ${i===S.step?'sel':''}" data-act="step" data-k="${i}" style="width:100%">
+            <span class="row" style="width:100%">
+              ${stat(s.st, false)}
+              <span class="grow trunc" style="text-align:left">${esc(s.n)}${s.kind==='group'?' <span class="t3">▸</span>':''}</span>
+              ${s.seg[0]+s.seg[1]+s.seg[2]?`<span class="segbar">${s.seg.map((w,j)=>`<i style="width:${w}%;background:${SEGC[j]}"></i>`).join('')}</span>`:'<span class="segbar" style="background:var(--surface-3)"></span>'}
+              <span class="tm" style="width:38px;text-align:right">${esc(s.t)}</span>
+            </span>
+          </button>`).join('')}
+        </div>
+        <div style="padding:10px 12px">
+          <div class="row t3" style="font-size:10px;gap:10px;margin-bottom:12px">
+            <span class="row" style="gap:4px"><i style="width:8px;height:3px;background:var(--muted);display:block"></i>queued</span>
+            <span class="row" style="gap:4px"><i style="width:8px;height:3px;background:var(--accent);display:block"></i>model</span>
+            <span class="row" style="gap:4px"><i style="width:8px;height:3px;background:var(--running);display:block"></i>tool</span>
+          </div>
+          <div class="lbl" style="margin-bottom:5px">Detail level</div>
+          <div class="row" style="gap:2px">
+            ${['Summary','Normal','Verbose'].map(v=>`<button class="btn sm ${S.verbosity===v?'primary':''}" data-act="verb" data-k="${v}">${v}</button>`).join('')}
+          </div>
+          <div class="t3" style="font-size:10.5px;margin-top:6px;line-height:1.45">Defaults to Summary once four or more runs are in flight.</div>
+        </div>
+      </div>
+
+      <div class="mid" style="padding:14px 16px 20px">
+        ${(sel.st==='needs'||r.st==='needs')?`<div class="approve">
+          <div class="row"><span class="st st-needs"><span class="g">▲</span>Dev is asking a question</span><div class="grow"></div><span class="t3" style="font-size:11px">12m ago</span></div>
+          <div class="t2" style="font-size:12.5px;line-height:1.6">Should replayed requests return the original 201 response body, or a 200 with a <span class="mono">replayed: true</span> flag? The Stripe convention is the former; our own webhook receiver does the latter.</div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <button class="btn sm primary">Original 201</button>
+            <button class="btn sm">200 + flag</button>
+            <input class="f grow" placeholder="Or answer in your own words…" style="min-width:180px">
+          </div>
+          <div class="t3" style="font-size:11px">Approval rows appear inline while you are watching, and escalate to the inbox when you are not. Both, not one.</div>
+        </div>`:''}
+
+        ${sel.kind==='group'?`<div class="logblock">
+          <h4>${stat('completed',false)} Read 23 files <span class="t3" style="font-weight:400">grouped — 23 consecutive reads collapsed into one row</span><div class="grow"></div><button class="btn ghost sm">Expand all</button></h4>
+          <div class="bd">
+            ${['src/api/charge.ts','src/api/charge.test.ts','src/db/idempotency.ts','src/middleware/index.ts','src/types/api.d.ts'].map(f=>`<div class="logline t2">Read <span style="color:var(--text)">${esc(f)}</span></div>`).join('')}
+            <div class="logline t3">… 18 more</div>
+          </div>
+        </div>`:''}
+
+        ${sel.kind==='edit'?`<div class="logblock">
+          <h4>${stat('completed',false)} Edit src/middleware/idempotency.ts<div class="grow"></div><span class="t3 mono" style="font-weight:400">1 of 6</span></h4>
+          <div class="bd" style="padding:0">
+            ${[['ctx','  const key = req.header("Idempotency-Key");'],
+               ['add','+ if (key) {'],
+               ['add','+   const hit = await store.find(key, fingerprint(req.body));'],
+               ['add','+   if (hit) return res.status(hit.status).json(hit.body);'],
+               ['add','+ }'],
+               ['del','- // TODO: idempotency'],
+               ['ctx','  return next();']].map(([k,l])=>`<div class="diffline ${k}">${esc(l)}</div>`).join('')}
+          </div>
+        </div>
+        <div class="t3" style="font-size:11.5px;margin-bottom:12px">An edit renders as a diff hunk. A shell call renders as a terminal block. A read renders as one line. Raw JSON is never a default rendering.</div>`:''}
+
+        ${sel.kind==='bash'?`<div class="logblock">
+          <h4>${stat('failed',false)} npm test <span class="t3 mono" style="font-weight:400">exit 1</span><div class="grow"></div><span class="t3" style="font-weight:400">auto-expanded because it failed</span></h4>
+          <div class="bd">
+            <div class="logline">$ npm test</div>
+            <div class="logline t2">  PASS  src/db/idempotency.test.ts</div>
+            <div class="logline t2">  PASS  src/middleware/index.test.ts</div>
+            <div class="logline" style="color:var(--fail)">  FAIL  src/api/charge.test.ts</div>
+            <div class="logline t2">    ● replays the original response</div>
+            <div class="logline t2">      Expected: 201  Received: 200</div>
+            <div class="logline t2">      at charge.test.ts:88</div>
+            <div class="logline" style="color:var(--fail)">Tests: 2 failed, 142 passed</div>
+          </div>
+        </div>`:''}
+
+        ${['provision','context','plan','pending'].includes(sel.kind)?`<div class="logblock">
+          <h4>${stat(sel.st,false)} ${esc(sel.n)}</h4>
+          <div class="bd">
+            ${sel.kind==='provision'?`
+              <div class="logline t2">✓ Pulled cached image acme/payments-svc:agent</div>
+              <div class="logline t2">✓ Cloned repo at a91f0c2</div>
+              <div class="logline t2">✓ Created branch dev/PAY-14-idempotency</div>
+              <div class="logline t2">✓ Ran setup script (npm ci — 2.1s, cached)</div>
+              <div class="logline t3">Messages typed during provisioning are queued and sent once ready. Never a blank spinner.</div>`
+            : sel.kind==='context'?`
+              <div class="logline t2">+ Engineering conventions <span class="t3">(always)</span></div>
+              <div class="logline t2">+ Commit and PR conventions <span class="t3">(always)</span></div>
+              <div class="logline t2">+ Payments domain model <span class="t3">(auto — matched "idempotency, charge")</span></div>
+              <div class="logline t2">+ CLAUDE.md <span class="t3">(repo file)</span></div>
+              <div class="logline t3">2,140 words · ~2.8k tokens</div>`
+            : sel.kind==='plan'?`
+              <div class="logline t2">1. Add fingerprint() over method + path + body</div>
+              <div class="logline t2">2. Create idempotency_records table + migration</div>
+              <div class="logline t2">3. Middleware: look up, replay on hit, record on miss</div>
+              <div class="logline t2">4. Serialise concurrent duplicates with an advisory lock</div>
+              <div class="logline t2">5. Contract test for the replay path</div>`
+            : `<div class="logline t3">Not started.</div>`}
+          </div>
+        </div>`:''}
+      </div>
+
+      <div class="right" style="padding:14px 13px">
+        <div class="lbl" style="margin-bottom:7px">Context loaded</div>
+        <div class="col" style="gap:5px;margin-bottom:8px">
+          ${[['Engineering conventions','always'],['Commit and PR conventions','always'],['Payments domain model','auto · matched “idempotency”'],['CLAUDE.md','repo file']].map(([t,w])=>`
+            <div class="card" style="padding:7px 9px">
+              <div class="trunc" style="font-size:12px">${esc(t)}</div>
+              <div class="t3" style="font-size:10.5px">${esc(w)}</div>
+            </div>`).join('')}
+        </div>
+        <div class="t3" style="font-size:10.5px;line-height:1.5;margin-bottom:18px">Exactly what steered this run, and why each page loaded. This is the answer to “why did the agent ignore my instructions.”</div>
+
+        <div class="lbl" style="margin-bottom:7px">Cost</div>
+        <div class="col" style="gap:6px;margin-bottom:18px">
+          ${[['Input','71.0k','$0.89'],['Output','13.2k','$0.49'],['Cached read','48.1k','$0.04']].map(([k,t,c])=>`
+            <div class="row"><span class="t2" style="font-size:12px">${k}</span><div class="grow"></div><span class="mono t3" style="font-size:11px">${t}</span><span class="mono" style="font-size:11.5px;width:48px;text-align:right">${c}</span></div>`).join('')}
+          <div class="hr"></div>
+          <div class="row"><b style="font-size:12px;font-weight:600">Total</b><div class="grow"></div><span class="mono">$1.42</span></div>
+        </div>
+
+        <div class="lbl" style="margin-bottom:7px">Sandbox</div>
+        <div class="col" style="gap:4px">
+          ${[['Container','payments-agent:3f20'],['Branch','dev/PAY-14-idempotency'],['Network','allow-list · 6 hosts'],['Identity','@dev-bot']].map(([k,v])=>`
+            <div class="row"><span class="t3" style="font-size:11px">${k}</span><div class="grow"></div><span class="mono t2" style="font-size:10.5px">${esc(v)}</span></div>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <div class="currentstep">
+      ${stat('running',false)}
+      <span class="mono">Step 6/9 — running the test suite in src/api</span>
+      <div class="grow"></div>
+      <span class="t3" style="font-size:11px">the run writes this line itself · action + specific item</span>
+    </div>
+    <div class="steer">
+      <input placeholder="Send a message to this run…">
+      <span class="t3" style="font-size:11px">Applied after the current step</span>
+      <button class="btn sm">Stop</button>
+      <button class="btn sm">Take over</button>
+    </div>
+  </div>`;
+}
+
+function vRunHalt(r){
+  return `<div class="body">
+    <div class="row" style="margin-bottom:14px">
+      <button class="btn ghost sm" data-act="go" data-v="runs">← Runs</button>
+      <span class="mono">#${r.id}</span>${apill(r.agent)}
+      <div class="grow"></div>${stat('halt')}
+    </div>
+    <div class="card pad" style="border-left:2px solid var(--halt);max-width:720px">
+      <div class="row" style="margin-bottom:10px"><b style="font-size:13px">Loop guard stopped this chain</b><div class="grow"></div><span class="t3" style="font-size:11.5px">depth limit 3 · PR #221</span></div>
+      <div class="t2" style="font-size:12.5px;line-height:1.6;margin-bottom:16px;max-width:62ch">
+        Dev pushed, which re-opened the review, which requested changes, which started Dev again. Three agent-caused re-triggers on the same pull request is the configured ceiling, so nothing further was started.
+      </div>
+      <div class="lbl" style="margin-bottom:8px">The cycle you built</div>
+      <div class="chain" style="margin-bottom:18px">
+        ${[['run #481','Dev implemented the change','ok'],
+           ['PR #221 updated','pushed 4 commits','ev'],
+           ['run #485','Reviewer requested changes','ok'],
+           ['run #487','Dev addressed comments','ok'],
+           ['PR #221 updated','pushed 2 commits','ev'],
+           ['run #492','would have started Reviewer','rep']].map(([n,d,k],i,arr)=>`
+          <div class="n ${k==='rep'?'rep':''}">
+            <span style="color:var(--${k==='ok'?'ok':k==='rep'?'halt':'text-3'})">${k==='rep'?'⊗':k==='ev'?'↳':'●'}</span>
+            <span style="width:130px">${esc(n)}</span>
+            <span class="t3">${esc(d)}</span>
+          </div>
+          ${i<arr.length-1?'<span class="ln"></span>':''}`).join('')}
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn sm primary">Review PR #221 yourself</button>
+        <button class="btn sm" data-act="trigger" data-k="t2">Edit the trigger</button>
+        <button class="btn sm">Raise the depth limit for this PR</button>
+      </div>
+    </div>
+    <div class="note" style="margin-top:14px;max-width:720px">Every automation product either bans cascades outright or lets you discover them on the invoice. Rendering the causal chain turns “your automation was throttled” into “here is the cycle you built.”</div>
+  </div>`;
+}
+
+/* ---------- agents ---------- */
+function vAgents(){
+  return `<div class="body">
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0;font-size:15px">Agents</h2>
+      <span class="t3" style="font-size:11.5px">a name, a directive, a set of permissions, and its own git identity</span>
+      <div class="grow"></div><button class="btn sm primary">+ Add agent</button>
+    </div>
+    <div class="grid2">
+      ${Object.values(AG).map(a => `<div class="card" style="cursor:pointer;border-left:2px solid ${a.color}" data-act="agent" data-k="${a.id}">
+        <div class="pad" style="padding:13px 15px">
+          <div class="row" style="margin-bottom:6px">
+            <span class="dotk" style="background:${a.color};width:9px;height:9px;border-radius:50%"></span>
+            <b style="font-size:13.5px">${esc(a.name)}</b>
+            <div class="grow"></div>
+            <span class="toggle on"><i></i></span>
+          </div>
+          <div class="t2" style="font-size:12px;margin-bottom:10px">${esc(a.role)}</div>
+          <div class="row" style="gap:7px;flex-wrap:wrap;margin-bottom:11px">
+            <span class="chip mono">${esc(a.model)}</span>
+            <span class="chip" style="color:var(--needs);border-color:#e0a33e55">${esc(a.autonomy)}</span>
+          </div>
+          <div class="row" style="gap:20px">
+            <div class="stat"><span class="lbl">Runs / wk</span><span class="v" style="font-size:14px">${a.runs}</span></div>
+            <div class="stat"><span class="lbl">Succeeded</span><span class="v" style="font-size:14px;color:var(--ok)">${a.ok}%</span></div>
+            <div class="stat"><span class="lbl">Spend / wk</span><span class="v" style="font-size:14px">$${a.spend.toFixed(2)}</span></div>
+          </div>
+        </div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function vAgent(){
+  const a = ag(S.agent);
+  const perms = [
+    ['Read files',1],['Edit files', a.id!=='reviewer'?1:0],['Run commands',1],
+    ['Push branches', a.id!=='reviewer'?1:0],['Open pull requests', a.id==='dev'?1:0],
+    ['Comment on pull requests',1],['Submit reviews', a.id==='reviewer'?1:0],
+    ['Create wiki pages', a.id==='docs'?1:0],['Merge', 0]
+  ];
+  const dial = ['Suggest','Approve each action','Auto with gates','Auto'];
+  return `<div class="body" style="max-width:840px">
+    <div class="row" style="margin-bottom:16px">
+      <button class="btn ghost sm" data-act="go" data-v="agents">← Agents</button>
+      <span class="dotk" style="background:${a.color};width:10px;height:10px;border-radius:50%"></span>
+      <h2 style="margin:0;font-size:16px">${esc(a.name)}</h2>
+      <span class="t3" style="font-size:12px">${esc(a.role)}</span>
+    </div>
+
+    <div class="bsec"><header><span class="lbl">Identity</span></header><div class="bd">
+      <div class="row" style="gap:20px;flex-wrap:wrap">
+        <div class="col" style="gap:3px"><span class="lbl">Commit author</span><span class="mono">${esc(a.name)} Agent &lt;${a.id}-bot@acme.dev&gt;</span></div>
+        <div class="col" style="gap:3px"><span class="lbl">GitHub identity</span><span class="mono">@${a.id}-bot</span></div>
+      </div>
+      <div class="note">Events caused by <span class="mono">@${a.id}-bot</span> do not re-trigger this agent. Distinct identities are what make actor suppression, blame and “who wrote this line” work at all.</div>
+    </div></div>
+
+    <div class="bsec"><header><span class="lbl">Directive</span><div class="grow"></div><span class="t3 mono" style="font-size:11px">312 tokens</span><button class="btn ghost sm">History</button></header>
+      <div class="bd"><div class="card mono" style="padding:11px 13px;line-height:1.65;color:var(--text-2);white-space:pre-wrap;font-size:11.5px">${esc(a.id==='reviewer'
+        ? `You review pull requests. You do not write code — you have no write access and should not propose patches inline.\n\nReport only findings that would change a merge decision. Tag each finding: BUG (will break at runtime), RISK (works but will bite), NOTE (informational).\n\nDo not comment on formatting, naming, or anything a linter covers.\n\nRun independent passes for correctness, security and data integrity, then deduplicate before posting a single review.`
+        : `You implement tickets. Read the acceptance criteria first and treat them as the definition of done.\n\nWork on the branch you were given. Keep the diff under 400 lines — if it will not fit, stop and propose a split instead.\n\nRun the test suite before opening a PR. If a test fails, fix the code, never the assertion.\n\nWhen the ticket is ambiguous in a way that changes the design, ask. Do not guess and note the guess.`)}</div></div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:10px">
+      <div class="bsec" style="margin:0"><header><span class="lbl">Permissions</span><span class="t3" style="font-size:11px">enforced</span></header><div class="bd" style="gap:3px">
+        ${perms.map(([p,on])=>`<label class="row" style="gap:8px;padding:2px 0">
+          <span style="color:var(--${on?'accent':'text-3'})">${on?'☑':'☐'}</span>
+          <span style="font-size:12.5px;${on?'':'color:var(--text-3)'}">${esc(p)}</span>
+          ${p==='Merge'?'<span class="t3" style="font-size:10.5px;margin-left:auto">humans only</span>':''}
+        </label>`).join('')}
+        <div class="t3" style="font-size:10.5px;line-height:1.5;margin-top:6px">Checkboxes constrain. The directive above only steers. A reviewer with <b>Edit files</b> unchecked cannot write code — that is stronger than telling it not to.</div>
+      </div></div>
+
+      <div class="bsec" style="margin:0"><header><span class="lbl">Autonomy</span><span class="t3" style="font-size:11px">ordered by risk</span></header><div class="bd" style="gap:2px">
+        ${dial.map(d=>`<label class="row" style="gap:8px;padding:5px 7px;border-radius:var(--r);background:${a.autonomy===d?'var(--surface-2)':'transparent'}">
+          <span style="color:var(--${a.autonomy===d?'accent':'text-3'})">${a.autonomy===d?'◉':'○'}</span>
+          <span style="font-size:12.5px">${esc(d)}</span>
+        </label>`).join('')}
+        <div class="hr" style="margin:8px 0"></div>
+        <div class="row"><span class="t2" style="font-size:12px">Max concurrent runs</span><div class="grow"></div><input class="f mono" value="2" style="width:52px;text-align:center"></div>
+        <div class="row"><span class="t2" style="font-size:12px">Daily spend cap</span><div class="grow"></div><input class="f mono" value="$40" style="width:64px;text-align:center"></div>
+      </div></div>
+    </div>
+
+    <div class="bsec"><header><span class="lbl">Context preview</span><span class="t3" style="font-size:11px">what every run of this agent sees</span><div class="grow"></div><span class="mono t2" style="font-size:11px">~3.1k tokens</span></header>
+      <div class="bd" style="gap:5px">
+        ${[['Project guidance','settings','480 w'],['Engineering conventions','wiki · always','640 w'],['Commit and PR conventions','wiki · always','310 w'],['CLAUDE.md','repo file','520 w'],['Directive','this agent','312 tok']].map(([n,s,w])=>`
+          <div class="row"><span style="font-size:12.5px">${esc(n)}</span><span class="t3" style="font-size:11px;margin-left:8px">${esc(s)}</span><div class="grow"></div><span class="mono t3" style="font-size:11px">${esc(w)}</span></div>`).join('')}
+        <span class="bar" style="margin-top:6px"><i style="width:62%"></i></span>
+        <div class="t3" style="font-size:10.5px">62% of the 5k always-on budget. Cut what the agent can read off the codebase; keep pitfalls, rationale and conventions that differ from defaults.</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------- triggers ---------- */
+function sparkline(o){
+  const map = {ok:'var(--ok)', noaction:'var(--muted)', halt:'var(--halt)', errored:'var(--fail)'};
+  const out = [];
+  Object.entries(o).forEach(([k,n]) => { for(let i=0;i<n;i++) out.push(map[k]); });
+  return `<span class="spark">${out.map(c=>`<i style="height:${8+Math.round(Math.random()*4)}px;background:${c}"></i>`).join('')}</span>`;
+}
+function vTriggers(){
+  return `<div class="body">
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0;font-size:15px">Triggers</h2>
+      <span class="t3" style="font-size:11.5px">rule rows, not a canvas — a rule should read like a sentence</span>
+      <div class="grow"></div><button class="btn sm primary">+ Add trigger</button>
+    </div>
+    ${TRIGGERS.map(t => `<div class="rule" data-act="trigger" data-k="${t.id}">
+      <div class="rule-h">
+        <span style="color:var(--${t.on?'needs':'text-3'})">⚡</span>
+        <b style="font-size:13px">${esc(t.name)}</b>
+        <div class="grow"></div>
+        <span class="toggle ${t.on?'on':''}"><i></i></span>
+        <span class="t3" style="font-size:11px;width:34px">${t.on?'on':'off'}</span>
+      </div>
+      <div class="rule-b">
+        <div class="clause"><b>When</b><span class="t2"><span class="mono">${esc(t.ev)}</span> ${t.types.map(x=>`<span class="chip" style="height:18px;font-size:10.5px">${esc(x)}</span>`).join(' ')} <span class="t3">· ${esc(t.filt)}</span></span></div>
+        ${t.ifs.length?`<div class="clause"><b>If</b><span class="t2">${t.ifs.map(esc).join(' <span class="t3">and</span> ')}</span></div>`:''}
+        <div class="clause"><b>Then</b><span class="t2">${esc(t.then)}</span></div>
+      </div>
+      <div class="rule-f">
+        <span class="t2">Fired <b class="num" style="color:var(--text)">${t.fired}×</b></span>
+        ${t.fired?sparkline(t.outcome):'<span class="t3">never run</span>'}
+        <span class="t3">${Object.entries(t.outcome).map(([k,n])=>`${n} ${({ok:'ok',noaction:'no action',halt:'loop stopped',errored:'errored'})[k]}`).join(' · ')}</span>
+        <div class="grow"></div>
+        <span class="t3">Ignores events from <span class="mono">${esc(t.suppress)}</span></span>
+        <span class="t3">last ${esc(t.last)}</span>
+      </div>
+    </div>`).join('')}
+    <div class="note" style="margin-top:6px">“No action” is its own outcome class with its own colour. <i>The rule fired but nothing happened</i> is the most common confusion in every automation product, and naming it solves most of it.</div>
+  </div>`;
+}
+
+function vTrigger(){
+  const t = TRIGGERS.find(x=>x.id===S.trig) || TRIGGERS[0];
+  const guards = [
+    ['Actor suppression', 1, `Ignore events caused by <span class="mono">${esc(t.suppress)}</span> — this agent's own identity`],
+    ['Debounce', 1, 'Collapse a burst of pushes on the same PR into one run · <span class="mono">90s</span>'],
+    ['Cancel in progress', 1, 'A new push supersedes the running review rather than queueing behind it'],
+    ['Depth limit', 1, 'Stop after <span class="mono">3</span> agent-caused re-triggers on the same pull request'],
+    ['Budget ceiling', 1, 'Stop when this rule has spent <span class="mono">$25</span> in a day · inherited from project']
+  ];
+  return `<div class="body" style="max-width:820px">
+    <div class="row" style="margin-bottom:16px">
+      <button class="btn ghost sm" data-act="go" data-v="triggers">← Triggers</button>
+      <h2 style="margin:0;font-size:16px">${esc(t.name)}</h2>
+      <div class="grow"></div>
+      <span class="toggle ${t.on?'on':''}"><i></i></span>
+      <button class="btn sm">Save</button>
+    </div>
+
+    <div class="builder">
+      <div class="bsec"><header><b style="font-size:10px;letter-spacing:.09em;color:var(--needs)">WHEN</b><span class="t3" style="font-size:11.5px">the event, then which activities, then filters</span></header>
+        <div class="bd">
+          <div class="row" style="flex-wrap:wrap;gap:7px">
+            <select class="f"><option>pull_request</option><option>pull_request_review</option><option>check_suite</option><option>issue_comment</option><option>ticket</option><option>run</option><option>schedule</option></select>
+            <span class="t3">→</span>
+            <span class="chip on">opened</span><span class="chip on">ready_for_review</span>
+            <span class="chip">synchronize</span><span class="chip">closed</span>
+            <button class="btn ghost sm">+</button>
+          </div>
+          <div class="note" style="border-left-color:var(--needs);background:#e0a33e12">
+            <b>opened</b> fires once, when the PR is created. <b>synchronize</b> fires on every push — that is where runaway chains live. This rule uses <b>opened</b> only.
+          </div>
+          <div class="row" style="gap:7px;flex-wrap:wrap">
+            <span class="lbl" style="width:46px">Filters</span>
+            <span class="chip">branch <b style="color:var(--text);margin-left:3px">main</b></span>
+            <span class="chip">paths <b style="color:var(--text);margin-left:3px">any</b></span>
+            <button class="btn ghost sm">+ filter</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bsec"><header><b style="font-size:10px;letter-spacing:.09em;color:var(--accent)">IF</b><span class="t3" style="font-size:11.5px">conditions, no expression language</span></header>
+        <div class="bd">
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <select class="f"><option>PR author</option><option>Files changed</option><option>Base branch</option><option>Labels</option><option>PR body</option></select>
+            <select class="f"><option>(text) is an agent</option><option>(text) contains</option><option>(text) equals</option></select>
+            <input class="f" value="" placeholder="—" style="width:120px" disabled>
+          </div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <select class="f"><option>Files changed</option></select>
+            <select class="f"><option>(number) less than</option><option>(number) greater than</option></select>
+            <input class="f mono" value="400" style="width:80px">
+          </div>
+          <div class="row" style="gap:12px">
+            <button class="btn ghost sm">+ And</button>
+            <button class="btn sm">Add Or group</button>
+            <span class="t3" style="font-size:11px">Or is a heavier button on purpose — it is rarer and easier to get wrong.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="bsec"><header><b style="font-size:10px;letter-spacing:.09em;color:var(--ok)">THEN</b></header>
+        <div class="bd">
+          <div class="row" style="gap:7px;flex-wrap:wrap">
+            <select class="f"><option>Run an agent</option><option>Create a ticket in Triage</option><option>Move a ticket</option><option>Post a comment</option><option>Send a notification</option></select>
+            <select class="f"><option>Reviewer</option><option>Dev</option><option>Docs</option><option>Architect</option></select>
+          </div>
+          <input class="f" style="width:100%" value="Review PR {{pr.number}} against the acceptance criteria on {{ticket.key}}.">
+          <span class="t3" style="font-size:11px">Interpolation only. Never control flow inside a string.</span>
+        </div>
+      </div>
+
+      <div class="bsec"><header><span class="lbl">Loop protection</span><span class="t3" style="font-size:11.5px">all five on by default</span></header>
+        <div class="bd" style="gap:0">
+          ${guards.map(([n,on,d])=>`<div class="guard">
+            <span class="toggle ${on?'on':''}" style="margin-top:2px"><i></i></span>
+            <span class="col" style="gap:1px"><b style="font-size:12.5px;font-weight:600">${esc(n)}</b><span class="t3" style="font-size:11.5px">${d}</span></span>
+          </div>`).join('')}
+          <div class="guard"><span style="width:30px;text-align:center;color:var(--text-3)">⌦</span>
+            <span class="col" style="gap:1px"><b style="font-size:12.5px;font-weight:600">Escape token</b>
+            <span class="t3" style="font-size:11.5px">A PR body containing <span class="mono">skip-agents</span> is ignored by every trigger on this project.</span></span></div>
+        </div>
+      </div>
+
+      <div class="bsec" style="border-color:var(--border-strong)">
+        <header><span class="lbl">Backtest</span><div class="grow"></div><button class="btn sm primary">Run backtest</button></header>
+        <div class="bd">
+          <div class="row"><span class="st st-completed"><span class="g">✓</span></span><b style="font-size:12.5px">This rule would have fired 7 times in the last 7 days.</b></div>
+          <div class="card" style="padding:0;overflow:hidden">
+            ${[['PR #219 opened','Aug 21, 09:12','would run Reviewer','ok'],
+               ['PR #221 opened','Aug 20, 16:40','would run Reviewer','ok'],
+               ['PR #220 opened','Aug 20, 11:02','skipped — 612 files changed','noaction'],
+               ['PR #218 ready_for_review','Aug 19, 14:20','would run Reviewer','ok'],
+               ['PR #217 opened','Aug 19, 09:55','skipped — author is human','noaction']].map(([e,d,r,k],i)=>`
+              <div class="row" style="padding:6px 11px;${i?'border-top:1px solid var(--border)':''}">
+                <span class="mono t2" style="width:190px;font-size:11px">${esc(e)}</span>
+                <span class="t3 mono" style="width:120px;font-size:11px">${esc(d)}</span>
+                <span class="${k==='ok'?'t2':'t3'}" style="font-size:11.5px">${esc(r)}</span>
+              </div>`).join('')}
+          </div>
+          <span class="t3" style="font-size:11px">Replays the project's real event history against the rule as written. Nothing is executed.</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function vSettings(){
+  const secs = [
+    ['General','Name, key prefix, description, colour, archive'],
+    ['Board','Columns and their categories, WIP limits, auto-start, default view'],
+    ['Wiki','Default agent scope, verification period, repo sync path, context threshold'],
+    ['Repository','Repo, default branch, branch template, setup script, secrets, network policy'],
+    ['Agents','Project-wide guidance, per-agent defaults'],
+    ['Triggers','Rules and the trigger audit log'],
+    ['Members & access','Roles, invites, which identity an agent acts as'],
+    ['Notifications','Who gets pinged on needs-input and failed'],
+    ['Danger zone','Transfer, archive, delete']
+  ];
+  return `<div class="body" style="max-width:840px">
+    <h2 style="margin:0 0 14px;font-size:15px">Project settings</h2>
+    <div class="grid2" style="margin-bottom:16px">
+      ${secs.map(([n,d])=>`<div class="card pad" style="padding:12px 14px;cursor:pointer">
+        <div style="font-size:13px;font-weight:500;margin-bottom:3px;${n==='Danger zone'?'color:var(--fail)':''}">${esc(n)}</div>
+        <div class="t3" style="font-size:11.5px;line-height:1.5">${esc(d)}</div>
+      </div>`).join('')}
+    </div>
+    <div class="bsec"><header><span class="lbl">Repository</span><span class="t3" style="font-size:11px">autosaved</span></header><div class="bd">
+      ${[['Repository','acme/payments-svc'],['Default branch','main'],['Branch template','{agent}/{ticket-key}-{slug}']].map(([k,v])=>`
+        <div class="row"><span class="lbl" style="width:130px">${k}</span><input class="f mono grow" value="${esc(v)}"></div>`).join('')}
+      <div class="row"><span class="lbl" style="width:130px">Network policy</span>
+        <div class="row" style="gap:2px"><button class="btn sm">None</button><button class="btn sm primary">Allow-list</button><button class="btn sm">Open</button></div>
+        <span class="t3" style="font-size:11px">6 hosts</span></div>
+      <div class="row"><span class="lbl" style="width:130px">Daily ceiling</span><input class="f mono" value="$120" style="width:90px">
+        <span class="t3" style="font-size:11px">Inherited from workspace: <span class="mono">$100</span>. <a href="#" onclick="return false">Reset to default</a></span></div>
+      <div class="note">Every project setting with a workspace default shows the inherited value inline rather than hiding it. That one pattern removes most settings confusion in tools shaped like this.</div>
+    </div></div>
+  </div>`;
+}
+
+/* ---------- sheets ---------- */
+function sheet(){
+  if(!S.sheet) return '';
+  let inner = '';
+  if(S.sheet==='keys'){
+    const K = [['⌘K','command palette'],['⌘J','ask an agent'],['/','search'],['?','shortcuts'],
+      ['G then B','board'],['G then W','wiki'],['G then R','runs'],['G then A','agents'],
+      ['G then T','triage'],['G then I','inbox'],['C','new ticket'],['⌘⇧O','sub-ticket'],
+      ['J / K','move'],['Space','peek'],['S','status'],['P','priority'],
+      ['A','assign to a human'],['D','delegate to an agent'],['L','labels'],['E','edit'],
+      ['⌘B','board / list'],['⇧V','display options'],['f','next failure in a log'],['1 2 3 H','triage actions']];
+    inner = `<div class="pad"><div class="row" style="margin-bottom:12px"><b>Keyboard</b><div class="grow"></div><button class="btn ghost sm" data-act="closesheet">✕</button></div>
+      <div class="klist">${K.map(([k,d])=>`<div>${esc(d)}<span class="kbd">${esc(k)}</span></div>`).join('')}</div>
+      <div class="note" style="margin-top:14px"><span class="kbd">D</span> for delegate sitting beside <span class="kbd">A</span> for assign is the keyboard-level expression of the two-field model. It restates the product's thesis every time someone presses it.</div></div>`;
+  } else if(S.sheet==='cmd'){
+    inner = `<div class="pad" style="padding:0">
+      <div class="row" style="padding:12px 14px;border-bottom:1px solid var(--border)"><span class="t3">⌕</span><input class="f grow" style="border:0;background:transparent" placeholder="Type a command or search…" autofocus><button class="btn ghost sm" data-act="closesheet">Esc</button></div>
+      ${[['Delegate PAY-26 to…','⌘K'],['Run agent on the current ticket',''],['Go to Board','G B'],['New trigger from template',''],['Open run #494',''],['Search the wiki for “idempotency”','']].map((x,i)=>`
+        <div class="row" style="padding:9px 14px;${i?'border-top:1px solid var(--border)':''};${i===0?'background:var(--surface-2)':''}"><span style="font-size:12.5px">${esc(x[0])}</span><div class="grow"></div><span class="kbd">${esc(x[1])}</span></div>`).join('')}
+      <div class="row" style="padding:8px 14px;border-top:1px solid var(--border)"><span class="t3" style="font-size:11px">⌘K is deterministic actions. ⌘J talks to an agent. Two palettes, on purpose.</span></div>
+    </div>`;
+  } else {
+    inner = `<div class="pad">
+      <div class="row" style="margin-bottom:14px"><b>New project</b><div class="grow"></div><button class="btn ghost sm" data-act="closesheet">✕</button></div>
+      <div class="empty" style="margin:20px auto 8px">
+        <h3>Connect a repository to get started</h3>
+        <p class="t3" style="margin:0;font-size:12px;line-height:1.6">We'll import your issues, docs and agent instructions automatically.</p>
+        <button class="btn primary" style="margin-top:8px">Connect GitHub repo</button>
+        <a href="#" onclick="return false" style="font-size:12px">Start from a template</a>
+      </div>
+      <div class="note">One gate, everything else dimmed. On connect the empty state becomes a loading state: issues import, detected <span class="mono">AGENTS.md</span> and <span class="mono">CLAUDE.md</span> seed wiki pages at the right scope, two triggers arrive pre-filled and switched off, and the Overview is written from the README.</div>
+    </div>`;
+  }
+  return `<div class="overlay" data-act="closesheet"><div class="sheet" onclick="event.stopPropagation()">${inner}</div></div>`;
+}
+
+/* ============================================================
+   Render + events
+   ============================================================ */
+const VIEWS = {home:vHome, inbox:vInbox, overview:vOverview, board:vBoard, ticket:vTicket,
+  triage:vTriage, wiki:vWiki, runs:vRuns, run:vRun, agents:vAgents, agent:vAgent,
+  triggers:vTriggers, trigger:vTrigger, settings:vSettings};
+
+function render(){
+  const inProject = PROJ_VIEWS.includes(S.view);
+  $('#app').innerHTML = topbar() + `<div class="main">` + rail() +
+    `<div class="pane">${inProject ? projHeader() : ''}${(VIEWS[S.view]||vHome)()}</div>` +
+    `</div>` + sheet();
+}
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if(!el) return;
+  const a = el.dataset.act, k = el.dataset.k, v = el.dataset.v;
+  if(a==='go') go(v);
+  else if(a==='proj') go('overview', {proj:k});
+  else if(a==='ticket') go('ticket', {ticket:k});
+  else if(a==='run') go('run', {run:+k, step:5});
+  else if(a==='page') go('wiki', {page:k});
+  else if(a==='agent') go('agent', {agent:k});
+  else if(a==='trigger') go('trigger', {trig:k});
+  else if(a==='step'){ S.step = +k; render(); }
+  else if(a==='verb'){ S.verbosity = k; render(); }
+  else if(a==='layout'){ S.boardLayout = k; render(); }
+  else if(a==='sheet'){ S.sheet = el.dataset.s; render(); }
+  else if(a==='closesheet'){ S.sheet = null; render(); }
+  else if(a==='theme'){
+    const cur = document.documentElement.getAttribute('data-theme');
+    document.documentElement.setAttribute('data-theme', cur==='light' ? 'dark' : 'light');
+  }
+  else if(a==='open-needs'){
+    if(k==='PAY-23') go('run', {run:492});
+    else if(k==='WEB-3') go('overview', {proj:'WEB'});
+    else go('ticket', {ticket:k, proj:'PAY'});
+  }
+});
+
+let goPrefix = false;
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName||'').toLowerCase();
+  if(tag==='input' || tag==='textarea' || tag==='select') return;
+  if(e.key==='Escape'){ if(S.sheet){ S.sheet=null; render(); } return; }
+  if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); S.sheet='cmd'; render(); return; }
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.key==='?'){ S.sheet='keys'; render(); return; }
+  if(e.key.toLowerCase()==='g'){ goPrefix = true; setTimeout(()=>goPrefix=false, 1400); return; }
+  if(goPrefix){
+    goPrefix = false;
+    const m = {b:'board', w:'wiki', r:'runs', a:'agents', t:'triage', s:'settings', h:'home', i:'inbox', g:'triggers'};
+    const v = m[e.key.toLowerCase()];
+    if(v) go(v);
+  }
+});
+
+render();
+</script>

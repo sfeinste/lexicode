@@ -1,0 +1,23 @@
+# build output
+/lexicode
+/dist/
+/web/dist/
+/web/node_modules/
+node_modules/
+
+# local state
+*.db
+*.db-wal
+*.db-shm
+.lexicode/
+master.key
+
+# os / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# go
+/vendor/
+coverage.out
