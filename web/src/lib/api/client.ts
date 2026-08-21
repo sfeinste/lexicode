@@ -14,6 +14,16 @@ export type User = components["schemas"]["User"];
 export type Invite = components["schemas"]["Invite"];
 export type ModuleStatus = components["schemas"]["ModuleStatus"];
 export type AuditListResponse = components["schemas"]["AuditListResponse"];
+export type Project = components["schemas"]["Project"];
+export type ProjectListItem = components["schemas"]["ProjectListItem"];
+export type ProjectListResponse = components["schemas"]["ProjectListResponse"];
+export type ProjectOverview = components["schemas"]["ProjectOverview"];
+export type InheritedInt = components["schemas"]["InheritedInt"];
+export type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
+export type UpdateProjectRequest = components["schemas"]["UpdateProjectRequest"];
+export type WorkspaceSettings = components["schemas"]["WorkspaceSettings"];
+export type UpdateWorkspaceSettingsRequest =
+  components["schemas"]["UpdateWorkspaceSettingsRequest"];
 
 export const API_BASE = "/api/v1";
 
@@ -114,6 +124,29 @@ export const authApi = {
 export const systemApi = {
   modules: (signal?: AbortSignal) =>
     api<components["schemas"]["ModulesResponse"]>("GET", "/system/modules", { signal }),
+};
+
+export const projectsApi = {
+  list: (opts?: { archived?: boolean }, signal?: AbortSignal) =>
+    api<ProjectListResponse>(
+      "GET",
+      opts?.archived ? "/projects?archived=1" : "/projects",
+      { signal },
+    ),
+  create: (body: CreateProjectRequest) => api<Project>("POST", "/projects", { body }),
+  get: (key: string, signal?: AbortSignal) =>
+    api<Project>("GET", `/projects/${encodeURIComponent(key)}`, { signal }),
+  update: (key: string, body: UpdateProjectRequest) =>
+    api<Project>("PATCH", `/projects/${encodeURIComponent(key)}`, { body }),
+  overview: (key: string, signal?: AbortSignal) =>
+    api<ProjectOverview>("GET", `/projects/${encodeURIComponent(key)}/overview`, { signal }),
+};
+
+export const workspaceApi = {
+  settings: (signal?: AbortSignal) =>
+    api<WorkspaceSettings>("GET", "/workspace/settings", { signal }),
+  update: (body: UpdateWorkspaceSettingsRequest) =>
+    api<WorkspaceSettings>("PUT", "/workspace/settings", { body }),
 };
 
 export const auditApi = {

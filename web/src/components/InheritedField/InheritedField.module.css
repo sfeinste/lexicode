@@ -1,0 +1,45 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+.inheritance {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+
+.value {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.action {
+  color: var(--accent);
+  font-size: var(--fs-mono);
+  transition: opacity var(--ease-state);
+}
+
+.action:hover {
+  opacity: 0.85;
+  text-decoration: underline;
+}

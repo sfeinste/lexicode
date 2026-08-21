@@ -140,3 +140,74 @@ func scanProject(row rowScanner) (domain.Project, error) {
 	p.ArchivedAt = strPtr(archived)
 	return p, nil
 }
+
+// ProjectStats is the Home-table read model for one project (UI spec §5.1): live counts, spend
+// since a caller-chosen instant, and the newest timestamp across the project's activity. It is
+// a read shape, not a table, so it lives here rather than in domain.
+type ProjectStats struct {
+	ProjectID       string
+	OpenTickets     int64
+	RunningAgents   int64
+	NeedsYou        int64
+	SpendTodayCents int64
+	LastActivity    string
+}
+
+// Stats computes ProjectStats for every project in one query. sinceUTC is the RFC3339 instant
+// "spend today" starts at (the service passes UTC midnight). Open tickets are those in columns
+// whose CATEGORY is not done/canceled — by category, never by column name (plan rule 3).
+// RunningAgents counts live runs (queued/provisioning/running); NeedsYou counts runs blocked on
+// a human (needs_input/awaiting_approval). LastActivity is the newest of the project's own
+// updated_at, its tickets' updated_at, its runs' queued_at and its events' created_at — RFC3339
+// UTC strings sort chronologically, so MAX over text is correct.
+func (r *ProjectsRepo) Stats(ctx context.Context, sinceUTC string) (map[string]ProjectStats, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT p.id,
+			(SELECT COUNT(*) FROM tickets t JOIN columns c ON c.id = t.column_id
+				WHERE t.project_id = p.id AND c.category NOT IN (?, ?)),
+			(SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id AND r.state IN (?, ?, ?)),
+			(SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id AND r.state IN (?, ?)),
+			(SELECT COALESCE(SUM(r.cost_cents), 0) FROM runs r
+				WHERE r.project_id = p.id AND r.queued_at >= ?),
+			MAX(p.updated_at,
+				COALESCE((SELECT MAX(t.updated_at) FROM tickets t WHERE t.project_id = p.id), ''),
+				COALESCE((SELECT MAX(r.queued_at) FROM runs r WHERE r.project_id = p.id), ''),
+				COALESCE((SELECT MAX(e.created_at) FROM events e WHERE e.project_id = p.id), ''))
+		FROM projects p`,
+		string(domain.CategoryDone), string(domain.CategoryCanceled),
+		string(domain.RunQueued), string(domain.RunProvisioning), string(domain.RunRunning),
+		string(domain.RunNeedsInput), string(domain.RunAwaitingApproval),
+		sinceUTC)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]ProjectStats{}
+	for rows.Next() {
+		var s ProjectStats
+		if err := rows.Scan(&s.ProjectID, &s.OpenTickets, &s.RunningAgents, &s.NeedsYou,
+			&s.SpendTodayCents, &s.LastActivity); err != nil {
+			return nil, err
+		}
+		out[s.ProjectID] = s
+	}
+	return out, rows.Err()
+}
+
+// AgentCount returns how many agents a project has (Overview About card).
+func (r *ProjectsRepo) AgentCount(ctx context.Context, projectID string) (int64, error) {
+	var n int64
+	err := r.h.r.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM agents WHERE project_id = ?`, projectID).Scan(&n)
+	return n, mapErr(err)
+}
+
+// RunsSince counts a project's runs queued at or after sinceUTC (Overview "runs today").
+func (r *ProjectsRepo) RunsSince(ctx context.Context, projectID, sinceUTC string) (int64, error) {
+	var n int64
+	err := r.h.r.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runs WHERE project_id = ? AND queued_at >= ?`,
+		projectID, sinceUTC).Scan(&n)
+	return n, mapErr(err)
+}

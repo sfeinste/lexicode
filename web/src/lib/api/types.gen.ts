@@ -123,6 +123,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Projects with Home-table stats (UI spec §5.1), oldest first. Archived projects are excluded unless ?archived=1. */
+        get: operations["listProjects"];
+        put?: never;
+        /** Create a project; the caller becomes owner and first member. A duplicate or malformed key is a 400 `validation_failed` problem naming the `key` field. Settings columns start null (inherit from workspace); board columns arrive with S09. */
+        post: operations["createProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One project, with its settings resolved against the workspace defaults. */
+        get: operations["getProject"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch a project. Absent fields are unchanged. The inheritable settings (daily_budget_cents, context_threshold_tokens, verification_days) are tri-state: a number overrides the workspace default, an explicit null reverts to inherit. `archived` true/false archives and unarchives. */
+        patch: operations["updateProject"];
+        trace?: never;
+    };
+    "/projects/{key}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Overview About card (UI spec §5.2) — the fields that exist through S08. `repo` is null until a repository is connected (S14); recent runs, pinned pages and the activity feed arrive with their stories. */
+        get: operations["projectOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The single workspace_settings row (owner only). */
+        get: operations["getWorkspaceSettings"];
+        /** Update the workspace settings (owner only). Absent fields are unchanged, so the settings screen can autosave one control at a time. Projects whose settings columns are null follow the new values immediately. */
+        put: operations["updateWorkspaceSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -230,6 +301,108 @@ export interface components {
             note?: string;
             /** Format: date-time */
             created_at: string;
+        };
+        /** @description One inheritable project setting resolved against the workspace default (data model §1): `value` is the effective value, `inherited` is whether the project column is null, and `workspace_value` is the live workspace default — everything the InheritedField control needs without recomputing. */
+        InheritedInt: {
+            value: number;
+            inherited: boolean;
+            workspace_value: number;
+        };
+        ProjectSettings: {
+            daily_budget_cents: components["schemas"]["InheritedInt"];
+            context_threshold_tokens: components["schemas"]["InheritedInt"];
+            verification_days: components["schemas"]["InheritedInt"];
+        };
+        Project: {
+            id: string;
+            /** @description Uppercase, 2–10 chars: [A-Z][A-Z0-9]{1,9}. */
+            key: string;
+            name: string;
+            description: string;
+            color: string;
+            owner_id: string;
+            agent_guidance: string;
+            /** Format: date-time */
+            archived_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            settings: components["schemas"]["ProjectSettings"];
+        };
+        /** @description The Home-table counters (UI spec §5.1). */
+        ProjectStats: {
+            open_tickets: number;
+            running_agents: number;
+            needs_you: number;
+            spend_today_cents: number;
+            /** Format: date-time */
+            last_activity: string;
+        };
+        ProjectListItem: components["schemas"]["Project"] & {
+            stats: components["schemas"]["ProjectStats"];
+        };
+        ProjectListResponse: {
+            projects: components["schemas"]["ProjectListItem"][];
+        };
+        CreateProjectRequest: {
+            key: string;
+            name: string;
+            description?: string;
+            /** @description #rrggbb; defaults from a palette when omitted. */
+            color?: string;
+        };
+        /** @description Every field optional; absent = unchanged. The three inheritable settings accept an explicit null to revert to inheriting the workspace default. */
+        UpdateProjectRequest: {
+            name?: string;
+            description?: string;
+            color?: string;
+            owner_id?: string;
+            agent_guidance?: string;
+            archived?: boolean;
+            daily_budget_cents?: number | null;
+            context_threshold_tokens?: number | null;
+            verification_days?: number | null;
+        };
+        ProjectOverview: {
+            project: components["schemas"]["Project"];
+            owner: components["schemas"]["ProjectOwner"];
+            /** @description Null until a repository is connected (S14). */
+            repo: Record<string, never> | null;
+            agent_count: number;
+            open_tickets: number;
+            runs_today: number;
+            spend_today_cents: number;
+        };
+        ProjectOwner: {
+            id: string;
+            display_name: string;
+            avatar_color: string;
+        };
+        WorkspaceSettings: {
+            default_branch: string;
+            default_branch_template: string;
+            /** @enum {string} */
+            default_network_policy: "none" | "allowlist" | "open";
+            default_daily_budget_cents: number;
+            default_context_threshold_tokens: number;
+            default_verification_days: number;
+            max_concurrent_containers: number;
+            poll_interval_seconds: number;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description Every field optional; absent = unchanged. */
+        UpdateWorkspaceSettingsRequest: {
+            default_branch?: string;
+            default_branch_template?: string;
+            /** @enum {string} */
+            default_network_policy?: "none" | "allowlist" | "open";
+            default_daily_budget_cents?: number;
+            default_context_threshold_tokens?: number;
+            default_verification_days?: number;
+            max_concurrent_containers?: number;
+            poll_interval_seconds?: number;
         };
         /**
          * @description The SSE `event:` names (contracts §5.1).
@@ -422,6 +595,185 @@ export interface operations {
                 };
             };
             401: components["responses"]["Problem"];
+        };
+    };
+    listProjects: {
+        parameters: {
+            query?: {
+                /** @description Include archived projects. */
+                archived?: "1" | "true";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The project list. Empty list, never null. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    createProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description The created project. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+        };
+    };
+    getProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The project. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    updateProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated project. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    projectOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The About card data. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectOverview"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getWorkspaceSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The workspace settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSettings"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    updateWorkspaceSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWorkspaceSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated workspace settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSettings"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
         };
     };
     auditList: {

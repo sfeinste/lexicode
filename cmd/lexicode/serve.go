@@ -23,6 +23,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
+	"github.com/spruce/lexicode/internal/service/projects"
 	webui "github.com/spruce/lexicode/web"
 )
 
@@ -110,6 +111,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	k := kernel.New(kernel.Options{
 		Logger: logger, Mux: mux, Store: st, Bus: b, Auth: authSvc, Audit: auditW, SSE: hub,
 	})
+
+	// Services (architecture §2.1: wiring happens here and only here). Each service registers
+	// its own routes against the shared mux; auth guards are applied per route inside Routes.
+	projectsSvc := projects.New(projects.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
+	projectsSvc.Routes(mux, authSvc)
 
 	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
 	// stories that build them (architecture §3.1); each is one line here.

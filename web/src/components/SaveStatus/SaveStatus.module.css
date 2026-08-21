@@ -1,0 +1,13 @@
+.root {
+  min-width: 60px;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+
+.saved {
+  color: var(--ok);
+}
+
+.error {
+  color: var(--fail);
+}

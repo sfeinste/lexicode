@@ -14,6 +14,13 @@
   text-transform: uppercase;
 }
 
+.sectionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .quiet {
   color: var(--text-3);
 }
@@ -29,4 +36,248 @@
 
 .cta:hover {
   opacity: 0.9;
+}
+
+.cta:disabled {
+  opacity: 0.6;
+}
+
+.smallCta {
+  composes: cta;
+  padding: 3px 10px;
+  font-size: var(--fs-mono);
+}
+
+.secondaryButton {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-2);
+  transition: background var(--ease-state);
+}
+
+.secondaryButton:hover {
+  background: var(--surface-2);
+}
+
+/* ------------------------------------------------------------------ table ---- */
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-body);
+}
+
+.table th {
+  padding: 0 12px;
+  height: var(--row-height);
+  text-align: left;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 0 12px;
+  height: var(--row-height);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.row {
+  cursor: pointer;
+  transition: background var(--ease-state);
+}
+
+.row:hover,
+.row:focus-visible {
+  background: var(--surface-2);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+
+.quietCell {
+  color: var(--text-3);
+}
+
+.colorDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.projectName {
+  font-weight: 500;
+}
+
+.projectKey {
+  margin-left: 8px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+
+.ceiling {
+  color: var(--text-3);
+}
+
+.running {
+  color: var(--running);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--running);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.needsYou {
+  color: var(--needs-you);
+  font-weight: 600;
+}
+
+/* ----------------------------------------------------------------- dialog ---- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 40;
+}
+
+.dialog {
+  width: min(440px, calc(100vw - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+}
+
+.dialogTitle {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.field input,
+.field textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+
+.field input:focus,
+.field textarea:focus {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.keyInput {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.fieldHint {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: 400;
+}
+
+.fieldError {
+  color: var(--fail);
+  font-size: var(--fs-mono);
+  font-weight: 400;
+}
+
+.swatches {
+  display: flex;
+  gap: 8px;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  transition: transform var(--ease-state);
+}
+
+.swatch:hover {
+  transform: scale(1.1);
+}
+
+.swatch[data-selected] {
+  border-color: var(--text);
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }

@@ -1,0 +1,66 @@
+.root {
+  padding: 20px 24px;
+  max-width: 560px;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.lede {
+  margin: 6px 0 18px;
+  color: var(--text-3);
+}
+
+.quiet {
+  color: var(--text-3);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.field input,
+.field select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-body);
+  max-width: 320px;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: 400;
+}

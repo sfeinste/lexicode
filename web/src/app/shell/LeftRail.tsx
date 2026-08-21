@@ -8,6 +8,7 @@
  */
 import { Link } from "@tanstack/react-router";
 
+import { useProjectsQuery } from "../../lib/api/projectQueries";
 import styles from "./shell.module.css";
 
 /** The §2.1 cap: at most 5 needs-you rows in the rail, the rest behind "+N more". */
@@ -20,8 +21,9 @@ interface NeedsYouRow {
 }
 
 export function LeftRail({ collapsed }: { collapsed: boolean }) {
-  // Wired when the APIs exist; the layout logic below is real from day one.
-  const projects: Array<{ key: string; name: string }> = [];
+  // Projects wired to GET /projects (S08); the needs-you feed arrives in S28.
+  const projectsQuery = useProjectsQuery();
+  const projects = projectsQuery.data?.projects ?? [];
   const needsYou: NeedsYouRow[] = [];
 
   const shown = needsYou.slice(0, NEEDS_YOU_RAIL_CAP);

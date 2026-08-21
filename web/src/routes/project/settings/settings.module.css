@@ -1,0 +1,151 @@
+.root {
+  display: flex;
+  gap: 0;
+  min-height: 100%;
+}
+
+.rail {
+  width: 176px;
+  flex: none;
+  padding: 20px 8px 20px 16px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.railLink {
+  padding: 5px 8px;
+  border-radius: 5px;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  transition: background var(--ease-state);
+}
+
+.railLink:hover {
+  background: var(--surface-2);
+}
+
+.railLink[data-active] {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.railDisabled {
+  padding: 5px 8px;
+  color: var(--text-3);
+  font-size: var(--fs-body);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pane {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 24px;
+  max-width: 640px;
+}
+
+.paneHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.paneTitle {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.field input,
+.field textarea,
+.fields input,
+.fields textarea,
+.fields select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-body);
+  max-width: 320px;
+}
+
+.field input:focus,
+.field textarea:focus,
+.fields input:focus,
+.fields textarea:focus,
+.fields select:focus {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.fields input:disabled {
+  color: var(--text-3);
+}
+
+.field textarea {
+  max-width: 480px;
+}
+
+.colorInput {
+  width: 48px;
+  height: 28px;
+  padding: 2px;
+}
+
+.archiveRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.secondaryButton {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-2);
+  transition: background var(--ease-state);
+}
+
+.secondaryButton:hover {
+  background: var(--surface-2);
+}
+
+.dangerButton {
+  padding: 5px 12px;
+  border: 1px solid var(--fail);
+  border-radius: 5px;
+  color: var(--fail);
+  transition: background var(--ease-state);
+}
+
+.dangerButton:hover {
+  background: color-mix(in srgb, var(--fail) 12%, transparent);
+}
+
+.quiet {
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+  font-weight: 400;
+}

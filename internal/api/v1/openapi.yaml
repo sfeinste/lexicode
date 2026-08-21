@@ -1,4 +1,4 @@
-# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S06).
+# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S08).
 #
 # This file is the source of truth for request/response shapes (contracts §5). The frontend's
 # TypeScript types are generated from it: `make api-types` regenerates
@@ -117,6 +117,132 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ModulesResponse" }
         "401": { $ref: "#/components/responses/Problem" }
+  /projects:
+    get:
+      operationId: listProjects
+      summary: >
+        Projects with Home-table stats (UI spec §5.1), oldest first. Archived projects are
+        excluded unless ?archived=1.
+      parameters:
+        - name: archived
+          in: query
+          schema: { type: string, enum: ["1", "true"] }
+          description: Include archived projects.
+      responses:
+        "200":
+          description: The project list. Empty list, never null.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createProject
+      summary: >
+        Create a project; the caller becomes owner and first member. A duplicate or malformed
+        key is a 400 `validation_failed` problem naming the `key` field. Settings columns start
+        null (inherit from workspace); board columns arrive with S09.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProjectRequest" }
+      responses:
+        "201":
+          description: The created project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /projects/{key}:
+    get:
+      operationId: getProject
+      summary: One project, with its settings resolved against the workspace defaults.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    patch:
+      operationId: updateProject
+      summary: >
+        Patch a project. Absent fields are unchanged. The inheritable settings
+        (daily_budget_cents, context_threshold_tokens, verification_days) are tri-state:
+        a number overrides the workspace default, an explicit null reverts to inherit.
+        `archived` true/false archives and unarchives.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateProjectRequest" }
+      responses:
+        "200":
+          description: The updated project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/overview:
+    get:
+      operationId: projectOverview
+      summary: >
+        The Overview About card (UI spec §5.2) — the fields that exist through S08. `repo` is
+        null until a repository is connected (S14); recent runs, pinned pages and the activity
+        feed arrive with their stories.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The About card data.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectOverview" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /workspace/settings:
+    get:
+      operationId: getWorkspaceSettings
+      summary: The single workspace_settings row (owner only).
+      responses:
+        "200":
+          description: The workspace settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceSettings" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+    put:
+      operationId: updateWorkspaceSettings
+      summary: >
+        Update the workspace settings (owner only). Absent fields are unchanged, so the
+        settings screen can autosave one control at a time. Projects whose settings columns
+        are null follow the new values immediately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateWorkspaceSettingsRequest" }
+      responses:
+        "200":
+          description: The updated workspace settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceSettings" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
   /audit:
     get:
       operationId: auditList
@@ -266,6 +392,139 @@ components:
         after: {}
         note: { type: string }
         created_at: { type: string, format: date-time }
+    InheritedInt:
+      type: object
+      description: >
+        One inheritable project setting resolved against the workspace default (data model §1):
+        `value` is the effective value, `inherited` is whether the project column is null, and
+        `workspace_value` is the live workspace default — everything the InheritedField control
+        needs without recomputing.
+      required: [value, inherited, workspace_value]
+      properties:
+        value: { type: integer }
+        inherited: { type: boolean }
+        workspace_value: { type: integer }
+    ProjectSettings:
+      type: object
+      required: [daily_budget_cents, context_threshold_tokens, verification_days]
+      properties:
+        daily_budget_cents: { $ref: "#/components/schemas/InheritedInt" }
+        context_threshold_tokens: { $ref: "#/components/schemas/InheritedInt" }
+        verification_days: { $ref: "#/components/schemas/InheritedInt" }
+    Project:
+      type: object
+      required:
+        [id, key, name, description, color, owner_id, agent_guidance, archived_at,
+         created_at, updated_at, settings]
+      properties:
+        id: { type: string }
+        key: { type: string, description: "Uppercase, 2–10 chars: [A-Z][A-Z0-9]{1,9}." }
+        name: { type: string }
+        description: { type: string }
+        color: { type: string }
+        owner_id: { type: string }
+        agent_guidance: { type: string }
+        archived_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        settings: { $ref: "#/components/schemas/ProjectSettings" }
+    ProjectStats:
+      type: object
+      description: The Home-table counters (UI spec §5.1).
+      required: [open_tickets, running_agents, needs_you, spend_today_cents, last_activity]
+      properties:
+        open_tickets: { type: integer }
+        running_agents: { type: integer }
+        needs_you: { type: integer }
+        spend_today_cents: { type: integer }
+        last_activity: { type: string, format: date-time }
+    ProjectListItem:
+      allOf:
+        - { $ref: "#/components/schemas/Project" }
+        - type: object
+          required: [stats]
+          properties:
+            stats: { $ref: "#/components/schemas/ProjectStats" }
+    ProjectListResponse:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items: { $ref: "#/components/schemas/ProjectListItem" }
+    CreateProjectRequest:
+      type: object
+      required: [key, name]
+      properties:
+        key: { type: string }
+        name: { type: string }
+        description: { type: string }
+        color: { type: string, description: "#rrggbb; defaults from a palette when omitted." }
+    UpdateProjectRequest:
+      type: object
+      description: >
+        Every field optional; absent = unchanged. The three inheritable settings accept an
+        explicit null to revert to inheriting the workspace default.
+      properties:
+        name: { type: string }
+        description: { type: string }
+        color: { type: string }
+        owner_id: { type: string }
+        agent_guidance: { type: string }
+        archived: { type: boolean }
+        daily_budget_cents: { type: [integer, "null"] }
+        context_threshold_tokens: { type: [integer, "null"] }
+        verification_days: { type: [integer, "null"] }
+    ProjectOverview:
+      type: object
+      required:
+        [project, owner, repo, agent_count, open_tickets, runs_today, spend_today_cents]
+      properties:
+        project: { $ref: "#/components/schemas/Project" }
+        owner: { $ref: "#/components/schemas/ProjectOwner" }
+        repo:
+          type: [object, "null"]
+          description: Null until a repository is connected (S14).
+        agent_count: { type: integer }
+        open_tickets: { type: integer }
+        runs_today: { type: integer }
+        spend_today_cents: { type: integer }
+    ProjectOwner:
+      type: object
+      required: [id, display_name, avatar_color]
+      properties:
+        id: { type: string }
+        display_name: { type: string }
+        avatar_color: { type: string }
+    WorkspaceSettings:
+      type: object
+      required:
+        [default_branch, default_branch_template, default_network_policy,
+         default_daily_budget_cents, default_context_threshold_tokens,
+         default_verification_days, max_concurrent_containers, poll_interval_seconds,
+         updated_at]
+      properties:
+        default_branch: { type: string }
+        default_branch_template: { type: string }
+        default_network_policy: { type: string, enum: [none, allowlist, open] }
+        default_daily_budget_cents: { type: integer }
+        default_context_threshold_tokens: { type: integer }
+        default_verification_days: { type: integer }
+        max_concurrent_containers: { type: integer }
+        poll_interval_seconds: { type: integer }
+        updated_at: { type: string, format: date-time }
+    UpdateWorkspaceSettingsRequest:
+      type: object
+      description: Every field optional; absent = unchanged.
+      properties:
+        default_branch: { type: string }
+        default_branch_template: { type: string }
+        default_network_policy: { type: string, enum: [none, allowlist, open] }
+        default_daily_budget_cents: { type: integer }
+        default_context_threshold_tokens: { type: integer }
+        default_verification_days: { type: integer }
+        max_concurrent_containers: { type: integer }
+        poll_interval_seconds: { type: integer }
     StreamEventType:
       type: string
       description: The SSE `event:` names (contracts §5.1).

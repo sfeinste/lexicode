@@ -7,6 +7,7 @@
 import { Link, Outlet, useParams } from "@tanstack/react-router";
 
 import { TabBadge } from "../../components/TabBadge/TabBadge";
+import { useProjectQuery } from "../../lib/api/projectQueries";
 import styles from "./shell.module.css";
 
 const TABS: Array<{ label: string; to: string; exact?: boolean; count?: number }> = [
@@ -21,14 +22,13 @@ const TABS: Array<{ label: string; to: string; exact?: boolean; count?: number }
 
 export function ProjectLayout() {
   const { key } = useParams({ from: "/shell/p/$key" });
+  const project = useProjectQuery(key);
 
   return (
     <div className={styles.project}>
       <header className={styles.projectHeader}>
         <span className={styles.projectKey}>{key}</span>
-        <span className={styles.projectName}>
-          {/* The project name arrives with GET /projects (S08). */}
-        </span>
+        <span className={styles.projectName}>{project.data?.name ?? ""}</span>
         <span className={styles.projectMeta}>
           <Link
             to="/p/$key/settings"
