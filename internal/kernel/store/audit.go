@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 
 	"github.com/spruce/lexicode/internal/domain"
 )
@@ -32,23 +33,73 @@ func (r *AuditRepo) Append(ctx context.Context, e *domain.AuditEntry) error {
 	return mapErr(err)
 }
 
-// Recent returns the newest entries, optionally scoped to a project (empty projectID = all).
-func (r *AuditRepo) Recent(ctx context.Context, projectID string, limit int) ([]domain.AuditEntry, error) {
+// AuditFilter narrows a List. Every field is optional; the zero value lists everything, newest
+// first. Timestamps are RFC3339 UTC strings, compared lexically (D-2: fixed-width timestamps
+// make string order time order).
+type AuditFilter struct {
+	ProjectID  string
+	ActorKind  string
+	ActorID    string
+	Action     string
+	TargetKind string
+	Since      string // created_at >= Since
+	Until      string // created_at <= Until
+	// BeforeCreatedAt/BeforeID are the keyset-pagination cursor: rows strictly older than this
+	// (created_at, id) pair. Both must be set together; they come from the last row of the
+	// previous page.
+	BeforeCreatedAt string
+	BeforeID        string
+	Limit           int // ≤0 means 100
+}
+
+// List returns entries newest first, narrowed by the filter.
+func (r *AuditRepo) List(ctx context.Context, f AuditFilter) ([]domain.AuditEntry, error) {
+	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 	var (
-		rows *sql.Rows
-		err  error
+		where []string
+		args  []any
 	)
-	if projectID == "" {
-		rows, err = r.h.r.QueryContext(ctx,
-			`SELECT `+auditCols+` FROM audit_log ORDER BY created_at DESC, id DESC LIMIT ?`, limit)
-	} else {
-		rows, err = r.h.r.QueryContext(ctx, `
-			SELECT `+auditCols+` FROM audit_log
-			WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, projectID, limit)
+	add := func(cond string, vals ...any) {
+		where = append(where, cond)
+		args = append(args, vals...)
 	}
+	if f.ProjectID != "" {
+		add("project_id = ?", f.ProjectID)
+	}
+	if f.ActorKind != "" {
+		add("actor_kind = ?", f.ActorKind)
+	}
+	if f.ActorID != "" {
+		add("actor_id = ?", f.ActorID)
+	}
+	if f.Action != "" {
+		add("action = ?", f.Action)
+	}
+	if f.TargetKind != "" {
+		add("target_kind = ?", f.TargetKind)
+	}
+	if f.Since != "" {
+		add("created_at >= ?", f.Since)
+	}
+	if f.Until != "" {
+		add("created_at <= ?", f.Until)
+	}
+	if f.BeforeCreatedAt != "" && f.BeforeID != "" {
+		add("(created_at < ? OR (created_at = ? AND id < ?))",
+			f.BeforeCreatedAt, f.BeforeCreatedAt, f.BeforeID)
+	}
+
+	q := `SELECT ` + auditCols + ` FROM audit_log`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY created_at DESC, id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := r.h.r.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -56,27 +107,40 @@ func (r *AuditRepo) Recent(ctx context.Context, projectID string, limit int) ([]
 
 	var out []domain.AuditEntry
 	for rows.Next() {
-		var (
-			e                 domain.AuditEntry
-			actorKind         string
-			projID, actorID   sql.NullString
-			beforeJS, afterJS sql.NullString
-		)
-		err := rows.Scan(&e.ID, &projID, &actorKind, &actorID, &e.Action, &e.TargetKind,
-			&e.TargetID, &beforeJS, &afterJS, &e.Note, &e.CreatedAt)
+		e, err := scanAudit(rows)
 		if err != nil {
 			return nil, mapErr(err)
-		}
-		e.ProjectID = strPtr(projID)
-		e.ActorKind = domain.ActorKind(actorKind)
-		e.ActorID = strPtr(actorID)
-		if beforeJS.Valid {
-			e.Before = json.RawMessage(beforeJS.String)
-		}
-		if afterJS.Valid {
-			e.After = json.RawMessage(afterJS.String)
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Recent returns the newest entries, optionally scoped to a project (empty projectID = all).
+func (r *AuditRepo) Recent(ctx context.Context, projectID string, limit int) ([]domain.AuditEntry, error) {
+	return r.List(ctx, AuditFilter{ProjectID: projectID, Limit: limit})
+}
+
+func scanAudit(rows *sql.Rows) (domain.AuditEntry, error) {
+	var (
+		e                 domain.AuditEntry
+		actorKind         string
+		projID, actorID   sql.NullString
+		beforeJS, afterJS sql.NullString
+	)
+	err := rows.Scan(&e.ID, &projID, &actorKind, &actorID, &e.Action, &e.TargetKind,
+		&e.TargetID, &beforeJS, &afterJS, &e.Note, &e.CreatedAt)
+	if err != nil {
+		return e, err
+	}
+	e.ProjectID = strPtr(projID)
+	e.ActorKind = domain.ActorKind(actorKind)
+	e.ActorID = strPtr(actorID)
+	if beforeJS.Valid {
+		e.Before = json.RawMessage(beforeJS.String)
+	}
+	if afterJS.Valid {
+		e.After = json.RawMessage(afterJS.String)
+	}
+	return e, nil
 }

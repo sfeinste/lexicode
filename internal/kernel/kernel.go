@@ -18,27 +18,30 @@ package kernel
 
 import (
 	"log/slog"
-	"net/http"
 	"sync"
 	"time"
 
+	"github.com/spruce/lexicode/internal/kernel/audit"
 	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/bus"
+	"github.com/spruce/lexicode/internal/kernel/httpx"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
 // Kernel owns the subsystems every module and service shares. Subsystems are added one story at a
 // time; each one is a field here plus an accessor, and nothing else in the shape changes. The
-// accessors that contracts §1 lists but that have no subsystem yet — Scheduler (S05),
-// Secrets and Audit (S07), SSE (S06) — are deliberately absent rather than
-// stubbed, so that no caller can be written against a stub that later changes meaning.
+// accessors that contracts §1 lists but that have no subsystem yet — Scheduler and
+// Secrets — are deliberately absent rather than stubbed, so that no caller can be
+// written against a stub that later changes meaning.
 type Kernel struct {
 	logger      *slog.Logger
-	mux         *http.ServeMux
+	mux         *httpx.Mux
 	store       *store.Store
 	bus         *bus.Bus
 	auth        *auth.Service
+	audit       *audit.Writer
+	sse         *httpx.Hub
 	stopTimeout time.Duration
 
 	eventSources      *registry[ports.EventSource]
@@ -67,8 +70,9 @@ type Kernel struct {
 type Options struct {
 	// Logger is the process logger. Nil means slog.Default().
 	Logger *slog.Logger
-	// Mux is the HTTP mux modules and services register routes on. Nil means a fresh one.
-	Mux *http.ServeMux
+	// Mux is the HTTP mux modules and services register routes on (contracts §1). Nil means a
+	// fresh one with default options.
+	Mux *httpx.Mux
 	// StopTimeout bounds the whole shutdown sequence. Zero means StopTimeout, which is what the
 	// architecture specifies; tests set it lower so that they can observe the deadline.
 	StopTimeout time.Duration
@@ -85,6 +89,13 @@ type Options struct {
 	// itself — today, GET /api/v1/system/modules behind RequireAuth. Nil is tolerated only for
 	// tests that exercise the kernel without a database; cmd/lexicode always sets it.
 	Auth *auth.Service
+	// Audit is the audit-log writer (S06). When set alongside Auth, the kernel serves
+	// GET /api/v1/audit behind RequireAuth + RequireOwner. Nil is tolerated only for tests.
+	Audit *audit.Writer
+	// SSE is the SSE hub (S06). When set alongside Auth, the kernel serves
+	// GET /api/v1/stream behind RequireAuth. cmd/lexicode attaches it to the bus before
+	// bus.Start. Nil is tolerated only for tests.
+	SSE *httpx.Hub
 }
 
 // New builds a kernel and registers the routes the kernel itself owns.
@@ -95,7 +106,7 @@ func New(opts Options) *Kernel {
 	}
 	mux := opts.Mux
 	if mux == nil {
-		mux = http.NewServeMux()
+		mux = httpx.NewMux(httpx.Options{Logger: logger})
 	}
 
 	timeout := opts.StopTimeout
@@ -109,6 +120,8 @@ func New(opts Options) *Kernel {
 		store:             opts.Store,
 		bus:               opts.Bus,
 		auth:              opts.Auth,
+		audit:             opts.Audit,
+		sse:               opts.SSE,
 		stopTimeout:       timeout,
 		eventSources:      newRegistry[ports.EventSource]("event source"),
 		forges:            newRegistry[ports.ForgeProvider]("forge"),
@@ -136,13 +149,18 @@ func (k *Kernel) Store() *store.Store { return k.store }
 // it after the modules, so subscriptions exist before recovery and outlive module drains.
 func (k *Kernel) Bus() *bus.Bus { return k.bus }
 
-// Mux is the HTTP mux modules and services register routes on.
-//
-// Contracts §1 types this as *httpx.Mux. Story S06 introduces kernel/httpx with the middleware
-// chain, problem+json errors and the SSE hub, and changes the return type at that point; until
-// then the stdlib mux that cmd/lexicode already builds is the whole HTTP surface, and adding a
-// wrapper now would be a second thing to migrate.
-func (k *Kernel) Mux() *http.ServeMux { return k.mux }
+// Mux is the HTTP mux modules and services register routes on (contracts §1): net/http 1.22
+// patterns underneath, with httpx's middleware chain (request id, logging, recovery) around
+// every request.
+func (k *Kernel) Mux() *httpx.Mux { return k.mux }
+
+// Audit is the audit-log writer (contracts §1, architecture §14): every service mutation calls
+// Audit().Write, which reads the actor from the request context.
+func (k *Kernel) Audit() *audit.Writer { return k.audit }
+
+// SSE is the SSE hub (contracts §1, §5.1): the one bridge from the bus to connected browser
+// tabs. Handlers never write to it directly.
+func (k *Kernel) SSE() *httpx.Hub { return k.sse }
 
 // ---------------------------------------------------------------- registration -----
 //

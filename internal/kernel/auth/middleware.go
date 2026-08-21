@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/spruce/lexicode/internal/domain"
+	"github.com/spruce/lexicode/internal/kernel/httpx"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
@@ -28,7 +29,7 @@ func (s *Service) SetupGate(next http.Handler) http.Handler {
 			return
 		}
 		if !done {
-			writeProblem(w, http.StatusUnauthorized, "setup_required",
+			httpx.WriteProblem(w, http.StatusUnauthorized, "setup_required",
 				"Setup required", "No user exists yet. Create the owner with POST "+SetupPath+".")
 			return
 		}
@@ -70,12 +71,12 @@ func RequireOwner(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := UserFrom(r.Context())
 		if !ok {
-			writeProblem(w, http.StatusUnauthorized, "unauthenticated",
+			httpx.WriteProblem(w, http.StatusUnauthorized, "unauthenticated",
 				"Not authenticated", "Sign in to use this endpoint.")
 			return
 		}
 		if u.Role != domain.RoleOwner {
-			writeProblem(w, http.StatusForbidden, "forbidden",
+			httpx.WriteProblem(w, http.StatusForbidden, "forbidden",
 				"Owner only", "Only the workspace owner can use this endpoint.")
 			return
 		}
@@ -92,7 +93,7 @@ func (s *Service) RequireProjectMember(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := UserFrom(r.Context())
 		if !ok {
-			writeProblem(w, http.StatusUnauthorized, "unauthenticated",
+			httpx.WriteProblem(w, http.StatusUnauthorized, "unauthenticated",
 				"Not authenticated", "Sign in to use this endpoint.")
 			return
 		}
@@ -110,7 +111,7 @@ func (s *Service) RequireProjectMember(next http.Handler) http.Handler {
 			err = store.ErrNotFound
 		}
 		if errors.Is(err, store.ErrNotFound) {
-			writeProblem(w, http.StatusNotFound, "not_found",
+			httpx.WriteProblem(w, http.StatusNotFound, "not_found",
 				"No such project", "No project matches this path.")
 			return
 		}
@@ -124,7 +125,7 @@ func (s *Service) RequireProjectMember(next http.Handler) http.Handler {
 			return
 		}
 		if !member {
-			writeProblem(w, http.StatusForbidden, "forbidden",
+			httpx.WriteProblem(w, http.StatusForbidden, "forbidden",
 				"Not a project member", "You are not a member of this project.")
 			return
 		}
@@ -157,13 +158,13 @@ func CSRF(next http.Handler) http.Handler {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			o, err := url.Parse(origin)
 			if err != nil || o.Host == "" || o.Host != r.Host {
-				writeProblem(w, http.StatusForbidden, "origin_forbidden",
+				httpx.WriteProblem(w, http.StatusForbidden, "origin_forbidden",
 					"Cross-origin request refused",
 					"This request's Origin does not match the server it was sent to.")
 				return
 			}
 		} else if site := r.Header.Get("Sec-Fetch-Site"); site == "same-site" || site == "cross-site" {
-			writeProblem(w, http.StatusForbidden, "origin_forbidden",
+			httpx.WriteProblem(w, http.StatusForbidden, "origin_forbidden",
 				"Cross-site request refused",
 				"This request was made across sites and is refused.")
 			return

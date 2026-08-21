@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,14 +11,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spruce/lexicode/internal/config"
 	"github.com/spruce/lexicode/internal/kernel"
+	"github.com/spruce/lexicode/internal/kernel/audit"
 	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/bus"
+	"github.com/spruce/lexicode/internal/kernel/httpx"
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
@@ -97,11 +97,19 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		}
 	}
 
-	mux := http.NewServeMux()
+	mux := httpx.NewMux(httpx.Options{Logger: logger})
 	b := bus.New(bus.Options{Store: st, Logger: logger})
 	authSvc := auth.New(auth.Options{Store: st, Logger: logger})
 	authSvc.Routes(mux)
-	k := kernel.New(kernel.Options{Logger: logger, Mux: mux, Store: st, Bus: b, Auth: authSvc})
+	auditW := audit.New(audit.Options{Store: st, Logger: logger})
+	hub := httpx.NewHub(httpx.HubOptions{Logger: logger, Store: st})
+	// The hub subscribes before b.Start so that boot-recovered events reach open tabs too.
+	if err := hub.Attach(b); err != nil {
+		return err
+	}
+	k := kernel.New(kernel.Options{
+		Logger: logger, Mux: mux, Store: st, Bus: b, Auth: authSvc, Audit: auditW, SSE: hub,
+	})
 
 	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
 	// stories that build them (architecture §3.1); each is one line here.
@@ -135,7 +143,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	}
 
 	srv := &http.Server{
-		Handler:           newHandler(logger, mux, authSvc),
+		Handler:           newHandler(mux, authSvc),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
@@ -194,6 +202,9 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	}
 
 	logger.Info("shutting down", slog.Duration("grace", shutdownGrace))
+	// SSE streams never end on their own; close them first or Shutdown would wait its whole
+	// grace period on them.
+	hub.Close()
 	// The signal context is already cancelled here, so shutdown runs on a fresh one.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
@@ -207,19 +218,20 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	return nil
 }
 
-// newHandler wires the surfaces the process has onto the kernel's mux: the routes the kernel and
-// its modules registered during Init, the JSON API namespace fallback, and the embedded SPA.
-// Story S06 replaces this with kernel/httpx and its middleware chain. The "/api/" pattern is a
-// catch-all for the namespace; Go's mux resolves by specificity, so a real endpoint such as
-// /api/v1/system/modules always wins over it regardless of registration order.
+// newHandler assembles the process's HTTP surface on the kernel's httpx mux: the routes the
+// kernel, auth and the modules registered, the JSON API namespace fallback, /healthz and the
+// embedded SPA. The mux itself carries the S06 middleware chain (request id, one log line per
+// request, panic recovery to a 500 problem); this function adds only routes and the /api/
+// namespace wrapping. The "/api/" pattern is a catch-all for the namespace; Go's mux resolves
+// by specificity, so a real endpoint such as /api/v1/system/modules always wins over it.
 //
 // The whole /api/ namespace runs behind two auth-owned checks (S05): CSRF on unsafe methods,
 // and the first-run setup gate — with zero users, everything but POST /api/v1/auth/setup is a
-// 401 "setup_required". Applying them here, around the mux, means a route added by a later
+// 401 "setup_required". Applying them as prefix middleware means a route added by a later
 // story cannot forget them. The SPA and /healthz stay outside both.
-func newHandler(logger *slog.Logger, mux *http.ServeMux, authSvc *auth.Service) http.Handler {
+func newHandler(mux *httpx.Mux, authSvc *auth.Service) http.Handler {
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeProblem(w, http.StatusNotFound, "not_found",
+		httpx.WriteProblem(w, http.StatusNotFound, httpx.TypeNotFound,
 			"No such endpoint",
 			fmt.Sprintf("%s %s is not an endpoint of this server.", r.Method, r.URL.Path))
 	}))
@@ -229,57 +241,6 @@ func newHandler(logger *slog.Logger, mux *http.ServeMux, authSvc *auth.Service) 
 	}))
 	mux.Handle("/", webui.Handler())
 
-	api := auth.CSRF(authSvc.SetupGate(mux))
-	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			api.ServeHTTP(w, r)
-			return
-		}
-		mux.ServeHTTP(w, r)
-	})
-	return requestLogger(logger, root)
-}
-
-func requestLogger(logger *slog.Logger, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		logger.Debug("http request",
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
-			slog.Int("status", rec.status),
-			slog.Duration("duration", time.Since(start)),
-		)
-	})
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	if !s.wroteHeader {
-		s.status = code
-		s.wroteHeader = true
-	}
-	s.ResponseWriter.WriteHeader(code)
-}
-
-// problem is RFC 9457 application/problem+json. Architecture §14 requires a stable "type" slug the
-// frontend can switch on, which is why type is a slug and not a URL.
-type problem struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail,omitempty"`
-}
-
-func writeProblem(w http.ResponseWriter, status int, slug, title, detail string) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(problem{Type: slug, Title: title, Status: status, Detail: detail})
+	mux.UsePrefix("/api/", auth.CSRF, authSvc.SetupGate)
+	return mux
 }

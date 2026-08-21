@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/spruce/lexicode/internal/kernel"
+	"github.com/spruce/lexicode/internal/kernel/httpx"
 )
 
 type modulesBody struct {
@@ -41,7 +42,7 @@ func getModules(t *testing.T, base string) (int, string, modulesBody) {
 // the dashboard from loading (architecture §3).
 func TestStartFailureLeavesTheServerRunningAndReportsDegraded(t *testing.T) {
 	log := &recorder{}
-	mux := http.NewServeMux()
+	mux := httpx.NewMux(httpx.Options{Logger: discardLogger()})
 	k := newKernel(t, kernel.Options{Mux: mux})
 	if err := k.RegisterModule(
 		&noop{name: "docker", log: log},
@@ -96,7 +97,7 @@ func TestStartFailureLeavesTheServerRunningAndReportsDegraded(t *testing.T) {
 
 // TestModulesEndpointIsRegistrationOrdered keeps the list stable for a UI that renders it.
 func TestModulesEndpointIsRegistrationOrdered(t *testing.T) {
-	mux := http.NewServeMux()
+	mux := httpx.NewMux(httpx.Options{Logger: discardLogger()})
 	k := newKernel(t, kernel.Options{Mux: mux})
 	if err := k.RegisterModule(
 		&noop{name: "github", log: &recorder{}},
@@ -121,7 +122,7 @@ func TestModulesEndpointIsRegistrationOrdered(t *testing.T) {
 // TestModulesEndpointWithNoModulesIsAnEmptyArray: a build with no modules registered answers with
 // an empty list, never null.
 func TestModulesEndpointWithNoModulesIsAnEmptyArray(t *testing.T) {
-	mux := http.NewServeMux()
+	mux := httpx.NewMux(httpx.Options{Logger: discardLogger()})
 	newKernel(t, kernel.Options{Mux: mux})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
