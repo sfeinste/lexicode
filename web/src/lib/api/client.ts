@@ -26,6 +26,21 @@ export type ColumnCategory = components["schemas"]["ColumnCategory"];
 export type ColumnListResponse = components["schemas"]["ColumnListResponse"];
 export type CreateColumnRequest = components["schemas"]["CreateColumnRequest"];
 export type UpdateColumnRequest = components["schemas"]["UpdateColumnRequest"];
+export type Ticket = components["schemas"]["Ticket"];
+export type TicketDetail = components["schemas"]["TicketDetail"];
+export type TicketListResponse = components["schemas"]["TicketListResponse"];
+export type CreateTicketRequest = components["schemas"]["CreateTicketRequest"];
+export type UpdateTicketRequest = components["schemas"]["UpdateTicketRequest"];
+export type MoveTicketRequest = components["schemas"]["MoveTicketRequest"];
+export type SubticketsRequest = components["schemas"]["SubticketsRequest"];
+export type Criterion = components["schemas"]["Criterion"];
+export type CreateCriterionRequest = components["schemas"]["CreateCriterionRequest"];
+export type UpdateCriterionRequest = components["schemas"]["UpdateCriterionRequest"];
+export type Label = components["schemas"]["Label"];
+export type LabelListResponse = components["schemas"]["LabelListResponse"];
+export type CreateLabelRequest = components["schemas"]["CreateLabelRequest"];
+export type UpdateLabelRequest = components["schemas"]["UpdateLabelRequest"];
+export type TicketStreamResponse = components["schemas"]["TicketStreamResponse"];
 export type WorkspaceSettings = components["schemas"]["WorkspaceSettings"];
 export type UpdateWorkspaceSettingsRequest =
   components["schemas"]["UpdateWorkspaceSettingsRequest"];
@@ -167,6 +182,64 @@ export const columnsApi = {
           : ""
       }`,
     ),
+};
+
+export const ticketsApi = {
+  list: (projectKey: string, opts?: { archived?: boolean }, signal?: AbortSignal) =>
+    api<TicketListResponse>(
+      "GET",
+      `/projects/${encodeURIComponent(projectKey)}/tickets${opts?.archived ? "?archived=1" : ""}`,
+      { signal },
+    ),
+  create: (projectKey: string, body: CreateTicketRequest) =>
+    api<Ticket>("POST", `/projects/${encodeURIComponent(projectKey)}/tickets`, { body }),
+  get: (id: string, signal?: AbortSignal) =>
+    api<TicketDetail>("GET", `/tickets/${encodeURIComponent(id)}`, { signal }),
+  update: (id: string, body: UpdateTicketRequest) =>
+    api<Ticket>("PATCH", `/tickets/${encodeURIComponent(id)}`, { body }),
+  archive: (id: string, confirmActiveRuns = 0) =>
+    api<void>(
+      "DELETE",
+      `/tickets/${encodeURIComponent(id)}?confirm_active_runs=${confirmActiveRuns}`,
+    ),
+  unarchive: (id: string) =>
+    api<Ticket>("POST", `/tickets/${encodeURIComponent(id)}/unarchive`),
+  move: (id: string, body: MoveTicketRequest) =>
+    api<Ticket>("POST", `/tickets/${encodeURIComponent(id)}/move`, { body }),
+  subtickets: (id: string, body: SubticketsRequest) =>
+    api<TicketListResponse>("POST", `/tickets/${encodeURIComponent(id)}/subtickets`, { body }),
+  stream: (id: string, signal?: AbortSignal) =>
+    api<TicketStreamResponse>("GET", `/tickets/${encodeURIComponent(id)}/stream`, { signal }),
+  addCriterion: (id: string, body: CreateCriterionRequest) =>
+    api<Criterion>("POST", `/tickets/${encodeURIComponent(id)}/criteria`, { body }),
+  attachLabel: (id: string, labelId: string) =>
+    api<void>(
+      "PUT",
+      `/tickets/${encodeURIComponent(id)}/labels/${encodeURIComponent(labelId)}`,
+    ),
+  detachLabel: (id: string, labelId: string) =>
+    api<void>(
+      "DELETE",
+      `/tickets/${encodeURIComponent(id)}/labels/${encodeURIComponent(labelId)}`,
+    ),
+};
+
+export const criteriaApi = {
+  update: (id: string, body: UpdateCriterionRequest) =>
+    api<Criterion>("PATCH", `/criteria/${encodeURIComponent(id)}`, { body }),
+  remove: (id: string) => api<void>("DELETE", `/criteria/${encodeURIComponent(id)}`),
+};
+
+export const labelsApi = {
+  list: (projectKey: string, signal?: AbortSignal) =>
+    api<LabelListResponse>("GET", `/projects/${encodeURIComponent(projectKey)}/labels`, {
+      signal,
+    }),
+  create: (projectKey: string, body: CreateLabelRequest) =>
+    api<Label>("POST", `/projects/${encodeURIComponent(projectKey)}/labels`, { body }),
+  update: (id: string, body: UpdateLabelRequest) =>
+    api<Label>("PATCH", `/labels/${encodeURIComponent(id)}`, { body }),
+  remove: (id: string) => api<void>("DELETE", `/labels/${encodeURIComponent(id)}`),
 };
 
 export const workspaceApi = {

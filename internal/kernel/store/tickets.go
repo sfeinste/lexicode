@@ -186,3 +186,49 @@ func (r *TicketsRepo) MoveAllToColumn(ctx context.Context, fromColumnID, toColum
 	}
 	return n, nil
 }
+
+// ForProjectIncludingArchived returns every ticket of a project, archived included, in board
+// order — the `?archived=1` listing.
+func (r *TicketsRepo) ForProjectIncludingArchived(ctx context.Context, projectID string) ([]domain.Ticket, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+ticketCols+` FROM tickets
+		WHERE project_id = ?
+		ORDER BY column_id, position, id`, projectID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectTickets(rows)
+}
+
+// Children returns a ticket's unarchived sub-tickets, oldest first.
+func (r *TicketsRepo) Children(ctx context.Context, parentID string) ([]domain.Ticket, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+ticketCols+` FROM tickets
+		WHERE parent_id = ? AND archived_at IS NULL
+		ORDER BY created_at, id`, parentID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectTickets(rows)
+}
+
+// CountChildren counts a ticket's sub-tickets, archived included — the one-level invariant
+// (data model §10.1) cares whether children exist at all, not whether they are visible.
+func (r *TicketsRepo) CountChildren(ctx context.Context, parentID string) (int64, error) {
+	var n int64
+	err := r.h.r.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tickets WHERE parent_id = ?`, parentID).Scan(&n)
+	return n, mapErr(err)
+}
+
+// SetPosition rewrites one ticket's position within its column — the renormalisation write.
+func (r *TicketsRepo) SetPosition(ctx context.Context, id string, position float64, now string) error {
+	res, err := r.h.w.ExecContext(ctx,
+		`UPDATE tickets SET position = ?, updated_at = ? WHERE id = ?`, position, now, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	return errIfNone(res)
+}

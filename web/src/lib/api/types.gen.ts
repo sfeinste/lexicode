@@ -212,6 +212,200 @@ export interface paths {
         patch: operations["updateColumn"];
         trace?: never;
     };
+    "/projects/{key}/tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A project's tickets in board order (column, then fractional position). Archived tickets are hidden unless `archived=1`. Each ticket's `category` is derived from its column — status is never stored and never a column name (plan rule 3). */
+        get: operations["listTickets"];
+        put?: never;
+        /** Create a ticket. The key (PAY-14) is allocated atomically from the project's sequence inside the insert transaction — two concurrent creates never collide. Omitting `column_id` lands the ticket in the first backlog-category column. Nesting under a ticket that is itself a sub-ticket is a 409 `subticket_depth` problem. */
+        post: operations["createTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tickets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One ticket with its acceptance criteria, labels and sub-tickets. */
+        get: operations["getTicket"];
+        put?: never;
+        post?: never;
+        /** Archive (soft delete, D-15): archived_at is stamped, active runs are cancelled with reason "ticket archived", history is kept, unarchive restores. `confirm_active_runs` must equal the ticket's current active-run count (default 0); a mismatch is a 409 `active_runs_confirmation` naming the real count. */
+        delete: operations["archiveTicket"];
+        options?: never;
+        head?: never;
+        /** Patch a ticket. `assignee_id` (human, D1) and `delegate_agent_id` (agent, D1) accept an explicit null to clear; `parent_id` null detaches a sub-ticket. Mutating an archived ticket is a 409 `ticket_archived`; violating the one-level sub-ticket rule is a 409 `subticket_depth`. */
+        patch: operations["updateTicket"];
+        trace?: never;
+    };
+    "/tickets/{id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore an archived ticket. 409 `ticket_not_archived` when it is not archived. */
+        post: operations["unarchiveTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tickets/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move a ticket to a column at a fractional position. Send either an explicit `position` (a client that computed the midpoint itself) or `after_ticket_id` (null = top of the column, a ticket id = right after it, absent = end) and the server computes the true float midpoint, renormalising the column when midpoints are exhausted. A move NEVER starts a run (brief D3): when the destination column has auto_start_delegate and the ticket has a delegate, the intent goes through the run scheduler — audited, and a no-op until S22. */
+        post: operations["moveTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tickets/{id}/subtickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create one sub-ticket per title, atomically, in the parent's column — the backing endpoint for selection→sub-tickets. One level only: calling this on a sub-ticket is a 409 `subticket_depth`. */
+        post: operations["createSubtickets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tickets/{id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The unified ticket stream, oldest first — one chronological history, no Comments/Activity split (data model §4.1). Comments (POST) arrive with S12. */
+        get: operations["getTicketStream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tickets/{id}/criteria": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append one acceptance criterion to the ticket's ordered checklist. */
+        post: operations["addCriterion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/criteria/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a criterion from its ticket's checklist. */
+        delete: operations["deleteCriterion"];
+        options?: never;
+        head?: never;
+        /** Patch a criterion: text, note, checked (a human check records the acting user; checked_by_run_id is written by agent runs from S22), and reorder via `after_id` (null = top, a criterion id = right after it). */
+        patch: operations["updateCriterion"];
+        trace?: never;
+    };
+    "/projects/{key}/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A project's labels, sorted by name. Labels are project-scoped. */
+        get: operations["listLabels"];
+        put?: never;
+        /** Create a label with a #rrggbb colour. A duplicate name within the project is a field-level 400. */
+        post: operations["createLabel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/labels/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a label, detaching it from every ticket in the same transaction. */
+        delete: operations["deleteLabel"];
+        options?: never;
+        head?: never;
+        /** Rename or recolour a label; every ticket wearing it follows. */
+        patch: operations["updateLabel"];
+        trace?: never;
+    };
+    "/tickets/{id}/labels/{label_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put a label on a ticket. Idempotent — attaching twice is a no-op. */
+        put: operations["attachLabel"];
+        post?: never;
+        /** Take a label off a ticket. Idempotent — detaching twice is a no-op. */
+        delete: operations["detachLabel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspace/settings": {
         parameters: {
             query?: never;
@@ -478,11 +672,147 @@ export interface components {
             max_concurrent_containers?: number;
             poll_interval_seconds?: number;
         };
+        /** @enum {string} */
+        TicketPriority: "none" | "low" | "medium" | "high" | "urgent";
+        /** @enum {string} */
+        TicketOrigin: "human" | "agent" | "trigger" | "import";
+        /** @description `category` is the ticket's status, derived from its column's category — never stored, never a column name (plan rule 3). `assignee_id` is the accountable human and `delegate_agent_id` the working agent — separate axes, not alternatives (D1). */
+        Ticket: {
+            id: string;
+            project_id: string;
+            seq: number;
+            /** @description 'PAY-14' — allocated atomically at creation. */
+            key: string;
+            title: string;
+            description: string;
+            column_id: string;
+            category: components["schemas"]["ColumnCategory"];
+            /** @description Fractional board ordering; treat as opaque and sort by it. */
+            position: number;
+            priority: components["schemas"]["TicketPriority"];
+            assignee_id: string | null;
+            delegate_agent_id: string | null;
+            parent_id: string | null;
+            pr_number: number | null;
+            pr_state: string | null;
+            branch: string | null;
+            origin: components["schemas"]["TicketOrigin"];
+            created_by_user_id: string | null;
+            created_by_agent_id: string | null;
+            label_ids: string[];
+            /** @description Set = archived (D-15 soft delete). */
+            archived_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        TicketListResponse: {
+            tickets: components["schemas"]["Ticket"][];
+        };
+        TicketDetail: components["schemas"]["Ticket"] & {
+            criteria: components["schemas"]["Criterion"][];
+            labels: components["schemas"]["Label"][];
+            children: components["schemas"]["Ticket"][];
+        };
+        CreateTicketRequest: {
+            title: string;
+            description?: string;
+            priority?: components["schemas"]["TicketPriority"];
+            /** @description Omit to land in the first backlog-category column. */
+            column_id?: string;
+            assignee_id?: string;
+            delegate_agent_id?: string;
+            parent_id?: string;
+        };
+        /** @description Every field optional; absent = unchanged. The nullable fields accept an explicit null to clear (unassign, remove the delegate, detach from parent). */
+        UpdateTicketRequest: {
+            title?: string;
+            description?: string;
+            priority?: components["schemas"]["TicketPriority"];
+            assignee_id?: string | null;
+            delegate_agent_id?: string | null;
+            parent_id?: string | null;
+        };
+        MoveTicketRequest: {
+            column_id: string;
+            /** @description An explicit fractional position, when the client computed it. */
+            position?: number;
+            /** @description Server-side placement: null = top of the column, a ticket id = right after it, absent = end of the column. */
+            after_ticket_id?: string | null;
+        };
+        /** @description One sub-ticket per title. `texts` is accepted as an alias for `titles`. */
+        SubticketsRequest: {
+            titles?: string[];
+            texts?: string[];
+        };
+        /** @description One ordered acceptance-criteria checklist item. A human check stamps checked_by_user_id; an agent check (S22+) stamps checked_by_run_id. */
+        Criterion: {
+            id: string;
+            ticket_id: string;
+            position: number;
+            text: string;
+            checked: boolean;
+            checked_by_run_id: string | null;
+            checked_by_user_id: string | null;
+            note: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CreateCriterionRequest: {
+            text: string;
+        };
+        /** @description Every field optional; absent = unchanged. `after_id` reorders — null = top, a criterion id = right after it. */
+        UpdateCriterionRequest: {
+            text?: string;
+            note?: string;
+            checked?: boolean;
+            after_id?: string | null;
+        };
+        Label: {
+            id: string;
+            project_id: string;
+            name: string;
+            /** @description #rrggbb */
+            color: string;
+        };
+        LabelListResponse: {
+            labels: components["schemas"]["Label"][];
+        };
+        CreateLabelRequest: {
+            name: string;
+            color: string;
+        };
+        /** @description Every field optional; absent = unchanged. */
+        UpdateLabelRequest: {
+            name?: string;
+            color?: string;
+        };
+        /** @description One moment in a ticket's single chronological history (data model §4.1). `payload` carries an `event` verb ("created", "moved", "assigned", "label_added", "criterion_checked", …) plus event-specific details. */
+        TicketStreamEntry: {
+            id: string;
+            ticket_id: string;
+            /** @enum {string} */
+            kind: "comment" | "status_change" | "field_change" | "run" | "pr_event" | "trigger_fired" | "proposal";
+            /** @enum {string} */
+            actor_kind: "human" | "agent" | "trigger" | "system";
+            actor_id: string | null;
+            /** @description Markdown */
+            body: string;
+            payload: unknown;
+            run_id: string | null;
+            edited_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        TicketStreamResponse: {
+            entries: components["schemas"]["TicketStreamEntry"][];
+        };
         /**
-         * @description The SSE `event:` names (contracts §5.1).
+         * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "ticket.updated" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "ticket.created" | "ticket.updated" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;
@@ -909,6 +1239,506 @@ export interface operations {
                 };
             };
             400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    listTickets: {
+        parameters: {
+            query?: {
+                /** @description Include archived tickets. */
+                archived?: "1";
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ticket list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    createTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description The created ticket. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ticket"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    getTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ticket detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    archiveTicket: {
+        parameters: {
+            query?: {
+                /** @description How many active runs the caller confirms will be cancelled. */
+                confirm_active_runs?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    updateTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated ticket. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ticket"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    unarchiveTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The restored ticket. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ticket"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    moveTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description The moved ticket, with its server-assigned position. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ticket"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    createSubtickets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubticketsRequest"];
+            };
+        };
+        responses: {
+            /** @description The created sub-tickets, in input order. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketListResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    getTicketStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every stream entry for the ticket. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketStreamResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    addCriterion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCriterionRequest"];
+            };
+        };
+        responses: {
+            /** @description The created criterion. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Criterion"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    deleteCriterion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    updateCriterion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCriterionRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated criterion. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Criterion"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    listLabels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The label list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    createLabel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLabelRequest"];
+            };
+        };
+        responses: {
+            /** @description The created label. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Label"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    deleteLabel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted and detached everywhere. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    updateLabel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLabelRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated label. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Label"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    attachLabel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                label_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attached (or already attached). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    detachLabel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                label_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detached (or was not attached). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

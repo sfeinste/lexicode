@@ -20,11 +20,13 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/httpx"
+	"github.com/spruce/lexicode/internal/kernel/sched"
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
 	"github.com/spruce/lexicode/internal/service/board"
 	"github.com/spruce/lexicode/internal/service/projects"
+	"github.com/spruce/lexicode/internal/service/tickets"
 	webui "github.com/spruce/lexicode/web"
 )
 
@@ -119,6 +121,13 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	projectsSvc.Routes(mux, authSvc)
 	boardSvc := board.New(board.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
 	boardSvc.Routes(mux, authSvc)
+	// The tickets service talks to the run scheduler only through the sched seam; until S22
+	// lands, sched.Unscheduled is the documented no-op behind column auto-start and
+	// archive-time run cancellation.
+	ticketsSvc := tickets.New(tickets.Options{
+		Store: st, Audit: auditW, Bus: b, Sched: sched.Unscheduled{}, Logger: logger,
+	})
+	ticketsSvc.Routes(mux, authSvc)
 
 	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
 	// stories that build them (architecture §3.1); each is one line here.

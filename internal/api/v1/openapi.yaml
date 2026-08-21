@@ -1,4 +1,4 @@
-# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S08).
+# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S10).
 #
 # This file is the source of truth for request/response shapes (contracts §5). The frontend's
 # TypeScript types are generated from it: `make api-types` regenerates
@@ -293,6 +293,351 @@ paths:
       responses:
         "204": { description: Deleted (and tickets moved, when a destination was given). }
         "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/tickets:
+    get:
+      operationId: listTickets
+      summary: >
+        A project's tickets in board order (column, then fractional position). Archived
+        tickets are hidden unless `archived=1`. Each ticket's `category` is derived from its
+        column — status is never stored and never a column name (plan rule 3).
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - name: archived
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: Include archived tickets.
+      responses:
+        "200":
+          description: The ticket list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createTicket
+      summary: >
+        Create a ticket. The key (PAY-14) is allocated atomically from the project's sequence
+        inside the insert transaction — two concurrent creates never collide. Omitting
+        `column_id` lands the ticket in the first backlog-category column. Nesting under a
+        ticket that is itself a sub-ticket is a 409 `subticket_depth` problem.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTicketRequest" }
+      responses:
+        "201":
+          description: The created ticket.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /tickets/{id}:
+    get:
+      operationId: getTicket
+      summary: One ticket with its acceptance criteria, labels and sub-tickets.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The ticket detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketDetail" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    patch:
+      operationId: updateTicket
+      summary: >
+        Patch a ticket. `assignee_id` (human, D1) and `delegate_agent_id` (agent, D1) accept
+        an explicit null to clear; `parent_id` null detaches a sub-ticket. Mutating an
+        archived ticket is a 409 `ticket_archived`; violating the one-level sub-ticket rule
+        is a 409 `subticket_depth`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateTicketRequest" }
+      responses:
+        "200":
+          description: The updated ticket.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: archiveTicket
+      summary: >
+        Archive (soft delete, D-15): archived_at is stamped, active runs are cancelled with
+        reason "ticket archived", history is kept, unarchive restores. `confirm_active_runs`
+        must equal the ticket's current active-run count (default 0); a mismatch is a 409
+        `active_runs_confirmation` naming the real count.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: confirm_active_runs
+          in: query
+          schema: { type: integer, minimum: 0 }
+          description: How many active runs the caller confirms will be cancelled.
+      responses:
+        "204": { description: Archived. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /tickets/{id}/unarchive:
+    post:
+      operationId: unarchiveTicket
+      summary: Restore an archived ticket. 409 `ticket_not_archived` when it is not archived.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The restored ticket.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /tickets/{id}/move:
+    post:
+      operationId: moveTicket
+      summary: >
+        Move a ticket to a column at a fractional position. Send either an explicit
+        `position` (a client that computed the midpoint itself) or `after_ticket_id` (null =
+        top of the column, a ticket id = right after it, absent = end) and the server
+        computes the true float midpoint, renormalising the column when midpoints are
+        exhausted. A move NEVER starts a run (brief D3): when the destination column has
+        auto_start_delegate and the ticket has a delegate, the intent goes through the run
+        scheduler — audited, and a no-op until S22.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MoveTicketRequest" }
+      responses:
+        "200":
+          description: The moved ticket, with its server-assigned position.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /tickets/{id}/subtickets:
+    post:
+      operationId: createSubtickets
+      summary: >
+        Create one sub-ticket per title, atomically, in the parent's column — the backing
+        endpoint for selection→sub-tickets. One level only: calling this on a sub-ticket is
+        a 409 `subticket_depth`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubticketsRequest" }
+      responses:
+        "201":
+          description: The created sub-tickets, in input order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketListResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /tickets/{id}/stream:
+    get:
+      operationId: getTicketStream
+      summary: >
+        The unified ticket stream, oldest first — one chronological history, no
+        Comments/Activity split (data model §4.1). Comments (POST) arrive with S12.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Every stream entry for the ticket.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketStreamResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /tickets/{id}/criteria:
+    post:
+      operationId: addCriterion
+      summary: Append one acceptance criterion to the ticket's ordered checklist.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCriterionRequest" }
+      responses:
+        "201":
+          description: The created criterion.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Criterion" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /criteria/{id}:
+    patch:
+      operationId: updateCriterion
+      summary: >
+        Patch a criterion: text, note, checked (a human check records the acting user;
+        checked_by_run_id is written by agent runs from S22), and reorder via `after_id`
+        (null = top, a criterion id = right after it).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCriterionRequest" }
+      responses:
+        "200":
+          description: The updated criterion.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Criterion" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteCriterion
+      summary: Remove a criterion from its ticket's checklist.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/labels:
+    get:
+      operationId: listLabels
+      summary: A project's labels, sorted by name. Labels are project-scoped.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The label list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LabelListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createLabel
+      summary: >
+        Create a label with a #rrggbb colour. A duplicate name within the project is a
+        field-level 400.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateLabelRequest" }
+      responses:
+        "201":
+          description: The created label.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Label" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /labels/{id}:
+    patch:
+      operationId: updateLabel
+      summary: Rename or recolour a label; every ticket wearing it follows.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateLabelRequest" }
+      responses:
+        "200":
+          description: The updated label.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Label" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteLabel
+      summary: Delete a label, detaching it from every ticket in the same transaction.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted and detached everywhere. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /tickets/{id}/labels/{label_id}:
+    put:
+      operationId: attachLabel
+      summary: Put a label on a ticket. Idempotent — attaching twice is a no-op.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: label_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Attached (or already attached). }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: detachLabel
+      summary: Take a label off a ticket. Idempotent — detaching twice is a no-op.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: label_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Detached (or was not attached). }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
@@ -664,16 +1009,228 @@ components:
         default_verification_days: { type: integer }
         max_concurrent_containers: { type: integer }
         poll_interval_seconds: { type: integer }
+    TicketPriority:
+      type: string
+      enum: [none, low, medium, high, urgent]
+    TicketOrigin:
+      type: string
+      enum: [human, agent, trigger, import]
+    Ticket:
+      type: object
+      description: >
+        `category` is the ticket's status, derived from its column's category — never stored,
+        never a column name (plan rule 3). `assignee_id` is the accountable human and
+        `delegate_agent_id` the working agent — separate axes, not alternatives (D1).
+      required:
+        [id, project_id, seq, key, title, description, column_id, category, position,
+         priority, assignee_id, delegate_agent_id, parent_id, pr_number, pr_state, branch,
+         origin, created_by_user_id, created_by_agent_id, label_ids, archived_at,
+         created_at, updated_at]
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        seq: { type: integer }
+        key: { type: string, description: "'PAY-14' — allocated atomically at creation." }
+        title: { type: string }
+        description: { type: string }
+        column_id: { type: string }
+        category: { $ref: "#/components/schemas/ColumnCategory" }
+        position:
+          type: number
+          description: Fractional board ordering; treat as opaque and sort by it.
+        priority: { $ref: "#/components/schemas/TicketPriority" }
+        assignee_id: { type: [string, "null"] }
+        delegate_agent_id: { type: [string, "null"] }
+        parent_id: { type: [string, "null"] }
+        pr_number: { type: [integer, "null"] }
+        pr_state: { type: [string, "null"] }
+        branch: { type: [string, "null"] }
+        origin: { $ref: "#/components/schemas/TicketOrigin" }
+        created_by_user_id: { type: [string, "null"] }
+        created_by_agent_id: { type: [string, "null"] }
+        label_ids:
+          type: array
+          items: { type: string }
+        archived_at: { type: [string, "null"], description: Set = archived (D-15 soft delete). }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TicketListResponse:
+      type: object
+      required: [tickets]
+      properties:
+        tickets:
+          type: array
+          items: { $ref: "#/components/schemas/Ticket" }
+    TicketDetail:
+      allOf:
+        - $ref: "#/components/schemas/Ticket"
+        - type: object
+          required: [criteria, labels, children]
+          properties:
+            criteria:
+              type: array
+              items: { $ref: "#/components/schemas/Criterion" }
+            labels:
+              type: array
+              items: { $ref: "#/components/schemas/Label" }
+            children:
+              type: array
+              items: { $ref: "#/components/schemas/Ticket" }
+    CreateTicketRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        priority: { $ref: "#/components/schemas/TicketPriority" }
+        column_id:
+          type: string
+          description: Omit to land in the first backlog-category column.
+        assignee_id: { type: string }
+        delegate_agent_id: { type: string }
+        parent_id: { type: string }
+    UpdateTicketRequest:
+      type: object
+      description: >
+        Every field optional; absent = unchanged. The nullable fields accept an explicit
+        null to clear (unassign, remove the delegate, detach from parent).
+      properties:
+        title: { type: string }
+        description: { type: string }
+        priority: { $ref: "#/components/schemas/TicketPriority" }
+        assignee_id: { type: [string, "null"] }
+        delegate_agent_id: { type: [string, "null"] }
+        parent_id: { type: [string, "null"] }
+    MoveTicketRequest:
+      type: object
+      required: [column_id]
+      properties:
+        column_id: { type: string }
+        position:
+          type: number
+          description: An explicit fractional position, when the client computed it.
+        after_ticket_id:
+          type: [string, "null"]
+          description: >
+            Server-side placement: null = top of the column, a ticket id = right after it,
+            absent = end of the column.
+    SubticketsRequest:
+      type: object
+      description: One sub-ticket per title. `texts` is accepted as an alias for `titles`.
+      properties:
+        titles:
+          type: array
+          items: { type: string }
+        texts:
+          type: array
+          items: { type: string }
+    Criterion:
+      type: object
+      description: >
+        One ordered acceptance-criteria checklist item. A human check stamps
+        checked_by_user_id; an agent check (S22+) stamps checked_by_run_id.
+      required:
+        [id, ticket_id, position, text, checked, checked_by_run_id, checked_by_user_id,
+         note, updated_at]
+      properties:
+        id: { type: string }
+        ticket_id: { type: string }
+        position: { type: integer }
+        text: { type: string }
+        checked: { type: boolean }
+        checked_by_run_id: { type: [string, "null"] }
+        checked_by_user_id: { type: [string, "null"] }
+        note: { type: string }
+        updated_at: { type: string, format: date-time }
+    CreateCriterionRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+    UpdateCriterionRequest:
+      type: object
+      description: >
+        Every field optional; absent = unchanged. `after_id` reorders — null = top, a
+        criterion id = right after it.
+      properties:
+        text: { type: string }
+        note: { type: string }
+        checked: { type: boolean }
+        after_id: { type: [string, "null"] }
+    Label:
+      type: object
+      required: [id, project_id, name, color]
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        color: { type: string, description: "#rrggbb" }
+    LabelListResponse:
+      type: object
+      required: [labels]
+      properties:
+        labels:
+          type: array
+          items: { $ref: "#/components/schemas/Label" }
+    CreateLabelRequest:
+      type: object
+      required: [name, color]
+      properties:
+        name: { type: string }
+        color: { type: string }
+    UpdateLabelRequest:
+      type: object
+      description: Every field optional; absent = unchanged.
+      properties:
+        name: { type: string }
+        color: { type: string }
+    TicketStreamEntry:
+      type: object
+      description: >
+        One moment in a ticket's single chronological history (data model §4.1). `payload`
+        carries an `event` verb ("created", "moved", "assigned", "label_added",
+        "criterion_checked", …) plus event-specific details.
+      required: [id, ticket_id, kind, actor_kind, actor_id, body, payload, run_id,
+                 edited_at, created_at]
+      properties:
+        id: { type: string }
+        ticket_id: { type: string }
+        kind:
+          type: string
+          enum: [comment, status_change, field_change, run, pr_event, trigger_fired, proposal]
+        actor_kind:
+          type: string
+          enum: [human, agent, trigger, system]
+        actor_id: { type: [string, "null"] }
+        body: { type: string, description: Markdown, for comments (S12). }
+        payload: {}
+        run_id: { type: [string, "null"] }
+        edited_at: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    TicketStreamResponse:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/TicketStreamEntry" }
     StreamEventType:
       type: string
-      description: The SSE `event:` names (contracts §5.1).
+      description: The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events).
       enum:
         - run.state
         - run.activity
         - run.step
         - run.usage
         - run.elicitation
+        - ticket.created
         - ticket.updated
+        - ticket.moved
+        - ticket.archived
+        - ticket.unarchived
+        - label.created
+        - label.updated
+        - label.deleted
         - board.updated
         - triage.created
         - trigger.fired

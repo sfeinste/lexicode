@@ -46,3 +46,28 @@ type StreamEntry struct {
 	EditedAt  *string
 	CreatedAt string
 }
+
+// Criterion is a row of acceptance_criteria — one ordered checklist item on a ticket. Position
+// is a gapped integer (same scheme as board columns); Checked carries attribution: a human check
+// stamps CheckedByUserID, an agent check stamps CheckedByRunID (the run is the agent's identity
+// for the act). At most one of the two is set.
+type Criterion struct {
+	ID              string
+	TicketID        string
+	Position        int64
+	Text            string
+	Checked         bool
+	CheckedByRunID  *string
+	CheckedByUserID *string
+	Note            string
+	UpdatedAt       string
+}
+
+// Label is a row of labels — a project-scoped name + colour. Tickets reference labels through
+// ticket_labels; a label has no cross-project meaning.
+type Label struct {
+	ID        string
+	ProjectID string
+	Name      string
+	Color     string
+}
