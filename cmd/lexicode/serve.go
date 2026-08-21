@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spruce/lexicode/internal/config"
 	"github.com/spruce/lexicode/internal/kernel"
+	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
@@ -97,7 +99,9 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 
 	mux := http.NewServeMux()
 	b := bus.New(bus.Options{Store: st, Logger: logger})
-	k := kernel.New(kernel.Options{Logger: logger, Mux: mux, Store: st, Bus: b})
+	authSvc := auth.New(auth.Options{Store: st, Logger: logger})
+	authSvc.Routes(mux)
+	k := kernel.New(kernel.Options{Logger: logger, Mux: mux, Store: st, Bus: b, Auth: authSvc})
 
 	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
 	// stories that build them (architecture §3.1); each is one line here.
@@ -131,7 +135,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	}
 
 	srv := &http.Server{
-		Handler:           newHandler(logger, mux),
+		Handler:           newHandler(logger, mux, authSvc),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
@@ -208,7 +212,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 // Story S06 replaces this with kernel/httpx and its middleware chain. The "/api/" pattern is a
 // catch-all for the namespace; Go's mux resolves by specificity, so a real endpoint such as
 // /api/v1/system/modules always wins over it regardless of registration order.
-func newHandler(logger *slog.Logger, mux *http.ServeMux) http.Handler {
+//
+// The whole /api/ namespace runs behind two auth-owned checks (S05): CSRF on unsafe methods,
+// and the first-run setup gate — with zero users, everything but POST /api/v1/auth/setup is a
+// 401 "setup_required". Applying them here, around the mux, means a route added by a later
+// story cannot forget them. The SPA and /healthz stay outside both.
+func newHandler(logger *slog.Logger, mux *http.ServeMux, authSvc *auth.Service) http.Handler {
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "not_found",
 			"No such endpoint",
@@ -219,7 +228,16 @@ func newHandler(logger *slog.Logger, mux *http.ServeMux) http.Handler {
 		_, _ = io.WriteString(w, `{"status":"ok"}`+"\n")
 	}))
 	mux.Handle("/", webui.Handler())
-	return requestLogger(logger, mux)
+
+	api := auth.CSRF(authSvc.SetupGate(mux))
+	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			api.ServeHTTP(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	return requestLogger(logger, root)
 }
 
 func requestLogger(logger *slog.Logger, next http.Handler) http.Handler {

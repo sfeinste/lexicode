@@ -18,9 +18,12 @@ type modulesResponse struct {
 }
 
 // registerSystemRoutes registers the routes the kernel owns itself. Story S06 moves these onto
-// kernel/httpx with the middleware chain; the path and the body stay the same.
+// kernel/httpx with the middleware chain; the path and the body stay the same. When the kernel
+// was built with an auth service (cmd/lexicode always does; only kernel tests do not), the
+// module list sits behind RequireAuth — it names internal components and is nobody else's
+// business (S05).
 func (k *Kernel) registerSystemRoutes() {
-	k.mux.HandleFunc(SystemModulesPath, func(w http.ResponseWriter, _ *http.Request) {
+	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		body := modulesResponse{Modules: k.Modules()}
 		if body.Modules == nil {
 			// Encode an empty list, never null: a client that renders "no modules" should not
@@ -34,4 +37,8 @@ func (k *Kernel) registerSystemRoutes() {
 				slog.String("path", "/api/v1/system/modules"), slog.String("error", err.Error()))
 		}
 	})
+	if k.auth != nil {
+		handler = k.auth.RequireAuth(handler)
+	}
+	k.mux.Handle(SystemModulesPath, handler)
 }

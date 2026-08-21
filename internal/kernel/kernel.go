@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/store"
@@ -37,6 +38,7 @@ type Kernel struct {
 	mux         *http.ServeMux
 	store       *store.Store
 	bus         *bus.Bus
+	auth        *auth.Service
 	stopTimeout time.Duration
 
 	eventSources      *registry[ports.EventSource]
@@ -79,6 +81,10 @@ type Options struct {
 	// tolerated only for tests that exercise the kernel without one; modules may assume it is
 	// set.
 	Bus *bus.Bus
+	// Auth is the identity service (S05). The kernel uses it to guard the routes it owns
+	// itself — today, GET /api/v1/system/modules behind RequireAuth. Nil is tolerated only for
+	// tests that exercise the kernel without a database; cmd/lexicode always sets it.
+	Auth *auth.Service
 }
 
 // New builds a kernel and registers the routes the kernel itself owns.
@@ -102,6 +108,7 @@ func New(opts Options) *Kernel {
 		mux:               mux,
 		store:             opts.Store,
 		bus:               opts.Bus,
+		auth:              opts.Auth,
 		stopTimeout:       timeout,
 		eventSources:      newRegistry[ports.EventSource]("event source"),
 		forges:            newRegistry[ports.ForgeProvider]("forge"),

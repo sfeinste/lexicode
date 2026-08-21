@@ -82,9 +82,21 @@ func TestNoCommandExitsTwo(t *testing.T) {
 }
 
 // TestAPINamespaceNeverReturnsHTML pins the routing rule that makes the SPA fallback safe: an
-// unknown /api path is a problem+json 404, not the app shell.
+// unknown /api path is a problem+json 404, not the app shell. Setup runs first because before
+// it, the S05 setup gate answers every API path with its own problem+json (401 setup_required)
+// — also never HTML, but not the 404 this test pins.
 func TestAPINamespaceNeverReturnsHTML(t *testing.T) {
 	srv := newTestServer(t)
+
+	setup, err := http.Post(srv+"/api/v1/auth/setup", "application/json",
+		strings.NewReader(`{"email":"ada@example.com","display_name":"Ada","password":"correct horse"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = setup.Body.Close()
+	if setup.StatusCode != http.StatusCreated {
+		t.Fatalf("setup status = %d, want 201", setup.StatusCode)
+	}
 
 	resp, err := http.Get(srv + "/api/v1/nope")
 	if err != nil {
@@ -170,13 +182,49 @@ func newTestServer(t *testing.T) string {
 }
 
 // TestSystemModulesIsServed checks the kernel is actually wired into serve: its route answers on
-// the real server, and the /api/ catch-all does not shadow it. This build registers no modules
+// the real server, and the /api/ catch-all does not shadow it. Since S05 the route sits behind
+// auth, so the test walks the first-run path: with zero users every API call is 401
+// "setup_required", and after setup the cookie unlocks the list. This build registers no modules
 // yet — github, docker and the rest arrive with the stories that build them — so the list is
 // legitimately empty, and must be an empty array rather than null.
 func TestSystemModulesIsServed(t *testing.T) {
 	srv := newTestServer(t)
 
 	resp, err := http.Get(srv + "/api/v1/system/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("pre-setup status = %d, want 401", resp.StatusCode)
+	}
+	if !strings.Contains(string(gated), `"setup_required"`) {
+		t.Fatalf("pre-setup body = %s, want problem type setup_required", gated)
+	}
+
+	setup, err := http.Post(srv+"/api/v1/auth/setup", "application/json",
+		strings.NewReader(`{"email":"ada@example.com","display_name":"Ada","password":"correct horse"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = setup.Body.Close()
+	if setup.StatusCode != http.StatusCreated {
+		t.Fatalf("setup status = %d, want 201", setup.StatusCode)
+	}
+	var cookie *http.Cookie
+	for _, c := range setup.Cookies() {
+		if c.Name == "lexicode_session" {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("setup did not set the session cookie")
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv+"/api/v1/system/modules", nil)
+	req.AddCookie(cookie)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
