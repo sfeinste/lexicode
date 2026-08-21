@@ -17,6 +17,8 @@ import (
 
 	"github.com/spruce/lexicode/internal/config"
 	"github.com/spruce/lexicode/internal/kernel"
+	"github.com/spruce/lexicode/internal/kernel/store"
+	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
 	webui "github.com/spruce/lexicode/web"
 )
@@ -29,6 +31,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("lexicode serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	config.Bind(fs)
+	demo := fs.Bool("demo", false, "seed an empty database with demo fixtures before serving")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -59,14 +62,40 @@ func cmdServe(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return serve(ctx, cfg, logger, stdout)
+	return serve(ctx, cfg, logger, stdout, *demo)
 }
 
-func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout io.Writer) error {
+func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout io.Writer, demo bool) error {
 	// cmd/lexicode is the only wiring site (architecture §2.1): the kernel is built here, the
-	// modules are registered here, and nothing below this line knows which modules exist.
+	// store is opened and migrated here, the modules are registered here, and nothing below
+	// this line knows which modules exist.
+	st, err := store.Open(store.Options{Path: cfg.DBFile(), Logger: logger})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+	if _, err := st.Migrate(ctx); err != nil {
+		return err
+	}
+
+	// --demo seeds only an empty database: rerunning with the flag against real data is a no-op
+	// with a note, never a merge.
+	if demo {
+		empty, err := seed.IsEmpty(ctx, st)
+		if err != nil {
+			return err
+		}
+		if !empty {
+			fmt.Fprintln(stdout, "--demo: database is not empty; leaving it untouched")
+		} else if _, err := seed.Apply(ctx, st); err != nil {
+			return err
+		} else {
+			fmt.Fprintln(stdout, "--demo: seeded demo workspace")
+		}
+	}
+
 	mux := http.NewServeMux()
-	k := kernel.New(kernel.Options{Logger: logger, Mux: mux})
+	k := kernel.New(kernel.Options{Logger: logger, Mux: mux, Store: st})
 
 	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
 	// stories that build them (architecture §3.1); each is one line here.

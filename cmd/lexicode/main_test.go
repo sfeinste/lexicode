@@ -48,8 +48,19 @@ func TestMigrateIsWiredUp(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "no migrations") {
-		t.Errorf("output = %q, want the S03 placeholder line", out.String())
+	if !strings.Contains(out.String(), "applied 0001_init") {
+		t.Errorf("output = %q, want it to name the applied migration", out.String())
+	}
+
+	// Running it again is a no-op that says so.
+	out.Reset()
+	errOut.Reset()
+	code = run([]string{"migrate", "--data-dir", home, "--config", home + "/absent.yaml"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("second run exit code = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "up to date") {
+		t.Errorf("second run output = %q, want the up-to-date line", out.String())
 	}
 }
 
@@ -118,7 +129,7 @@ func TestGracefulShutdown(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, cfg, logger, io.Discard) }()
+	go func() { done <- serve(ctx, cfg, logger, io.Discard, false) }()
 
 	waitForServer(t, cfg.Addr())
 	start := time.Now()
@@ -144,7 +155,7 @@ func newTestServer(t *testing.T) string {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, cfg, logger, io.Discard) }()
+	go func() { done <- serve(ctx, cfg, logger, io.Discard, false) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

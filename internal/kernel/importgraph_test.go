@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -154,7 +154,9 @@ func goTool(t *testing.T) string {
 	if path, err := exec.LookPath("go"); err == nil {
 		return path
 	}
-	if root := runtime.GOROOT(); root != "" {
+	// runtime.GOROOT is deprecated (meaningless for a copied binary); the environment variable
+	// is the remaining honest signal when go is not on PATH.
+	if root := os.Getenv("GOROOT"); root != "" {
 		candidate := filepath.Join(root, "bin", "go")
 		if _, err := exec.LookPath(candidate); err == nil {
 			return candidate

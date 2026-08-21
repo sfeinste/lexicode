@@ -23,16 +23,18 @@ import (
 	"time"
 
 	"github.com/spruce/lexicode/internal/kernel/ports"
+	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
 // Kernel owns the subsystems every module and service shares. Subsystems are added one story at a
 // time; each one is a field here plus an accessor, and nothing else in the shape changes. The
-// accessors that contracts §1 lists but that have no subsystem yet — Store (S03), Bus (S04),
+// accessors that contracts §1 lists but that have no subsystem yet — Bus (S04),
 // Scheduler (S05), Secrets and Audit (S07), SSE (S06) — are deliberately absent rather than
 // stubbed, so that no caller can be written against a stub that later changes meaning.
 type Kernel struct {
 	logger      *slog.Logger
 	mux         *http.ServeMux
+	store       *store.Store
 	stopTimeout time.Duration
 
 	eventSources      *registry[ports.EventSource]
@@ -66,6 +68,10 @@ type Options struct {
 	// StopTimeout bounds the whole shutdown sequence. Zero means StopTimeout, which is what the
 	// architecture specifies; tests set it lower so that they can observe the deadline.
 	StopTimeout time.Duration
+	// Store is the open, migrated database. cmd/lexicode opens and migrates it before building
+	// the kernel — wiring stays in cmd (architecture §2.1). Nil is tolerated only for tests
+	// that exercise the kernel without a database; modules may assume it is set.
+	Store *store.Store
 }
 
 // New builds a kernel and registers the routes the kernel itself owns.
@@ -87,6 +93,7 @@ func New(opts Options) *Kernel {
 	k := &Kernel{
 		logger:            logger,
 		mux:               mux,
+		store:             opts.Store,
 		stopTimeout:       timeout,
 		eventSources:      newRegistry[ports.EventSource]("event source"),
 		forges:            newRegistry[ports.ForgeProvider]("forge"),
@@ -104,6 +111,10 @@ func New(opts Options) *Kernel {
 // Logger is the process logger. Modules are expected to derive their own with
 // Logger().With("module", name).
 func (k *Kernel) Logger() *slog.Logger { return k.logger }
+
+// Store is the open, migrated database (contracts §1). It is the one shared persistence handle:
+// repositories, transactions and migrations all hang off it.
+func (k *Kernel) Store() *store.Store { return k.store }
 
 // Mux is the HTTP mux modules and services register routes on.
 //

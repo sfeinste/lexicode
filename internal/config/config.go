@@ -73,6 +73,9 @@ func (c Config) FilePath() string { return c.source }
 // LogFile is the JSON log file inside the data directory.
 func (c Config) LogFile() string { return filepath.Join(c.DataDir, "logs", "lexicode.log") }
 
+// DBFile is the SQLite database inside the data directory (D-2).
+func (c Config) DBFile() string { return filepath.Join(c.DataDir, "lexicode.db") }
+
 // Defaults returns the built-in configuration, before any file, environment or flag is consulted.
 // home is the user's home directory; when empty the data directory falls back to ".lexicode"
 // relative to the working directory.
