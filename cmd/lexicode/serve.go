@@ -158,7 +158,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	if err := k.RegisterModule(ghMod); err != nil {
 		return err
 	}
-	dockerMod := dockermod.New(dockermod.Options{Host: cfg.DockerHost})
+	dockerMod := dockermod.New(dockermod.Options{Host: cfg.DockerHost, ProxyPort: cfg.ProxyPort})
 	if err := k.RegisterModule(dockerMod); err != nil {
 		return err
 	}

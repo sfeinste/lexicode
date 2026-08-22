@@ -248,6 +248,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{key}/repo/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update the repo's network policy and allowlist (S18, D-10). network_policy null reverts to inheriting the workspace default; an absent field is left unchanged. The egress proxy enforces the result per run; every allow/deny lands in the run's verbose activities. */
+        patch: operations["updateRepoNetwork"];
+        trace?: never;
+    };
     "/projects/{key}/bootstrap/preview": {
         parameters: {
             query?: never;
@@ -901,6 +918,24 @@ export interface components {
             connected_at: string | null;
             last_synced_at: string | null;
             has_token: boolean;
+            /**
+             * @description The project's network policy override (S18, D-10). Null inherits the workspace default.
+             * @enum {string|null}
+             */
+            network_policy: "none" | "allowlist" | "open" | null;
+            /** @description Extra allowed domains under the allowlist policy. `*.example.com` matches the domain and every subdomain. */
+            network_allowlist: string[];
+            /**
+             * @description The live workspace default, for the settings pane's inheritance line.
+             * @enum {string}
+             */
+            workspace_network_policy: "none" | "allowlist" | "open";
+        };
+        /** @description Both fields are optional; an absent field is left unchanged. network_policy null reverts to inheriting the workspace default. Allowlist entries are bare domains, optionally with a `*.` wildcard prefix — never URLs. */
+        UpdateRepoNetworkRequest: {
+            /** @enum {string|null} */
+            network_policy?: "none" | "allowlist" | "open" | null;
+            network_allowlist?: string[];
         };
         RepoStatus: {
             connected: boolean;
@@ -1893,6 +1928,36 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    updateRepoNetwork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRepoNetworkRequest"];
+            };
+        };
+        responses: {
+            /** @description The repo with its updated network settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repo"];
+                };
+            };
+            400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

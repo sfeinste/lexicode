@@ -39,6 +39,12 @@ type Options struct {
 	// module creates. The docker-tagged tests use it to offer a fixture git repository to the
 	// in-container clone. Production wiring leaves it empty.
 	ExtraBinds []string
+	// ProxyPort is the host port the S18 egress proxy binds (config proxy_port). Zero
+	// disables the proxy and the relay: none/allowlist containers then have zero egress.
+	ProxyPort int
+	// ProxyAppend is the proxy's decision-log sink. Nil means "wire from the kernel store in
+	// Init"; tests inject a recorder.
+	ProxyAppend ActivityAppender
 }
 
 // Module implements the kernel module lifecycle and registers the one Sandbox this binary
@@ -46,6 +52,7 @@ type Options struct {
 type Module struct {
 	opts    Options
 	sandbox *Sandbox
+	proxy   *Proxy
 
 	cancelSweep context.CancelFunc
 	sweepDone   chan struct{}
@@ -64,6 +71,11 @@ func (m *Module) Name() string { return moduleName }
 // capability the frozen port does not carry (Instance.Logs, via type assertion on the
 // instance). Nil until Init has run, unless the module was built by tests via NewSandbox.
 func (m *Module) Sandbox() *Sandbox { return m.sandbox }
+
+// Proxy returns the S18 egress proxy for the wiring site: the scheduler (S22) registers runs
+// on it, the env assembly (S19) asks it for ProxyEnv. Nil until Init has run, or when
+// Options.ProxyPort is zero.
+func (m *Module) Proxy() *Proxy { return m.proxy }
 
 // Init implements kernel.Module: build the client, wire the run-state lookup from the kernel
 // store, and register the sandbox port. No I/O happens here; an unreachable daemon is Start's
@@ -93,6 +105,19 @@ func (m *Module) Init(k *kernel.Kernel) error {
 		}
 	}
 	m.sandbox = sb
+
+	if m.opts.ProxyPort > 0 {
+		appendFn := m.opts.ProxyAppend
+		if appendFn == nil && k.Store() != nil {
+			st := k.Store()
+			appendFn = func(ctx context.Context, a *domain.Activity) error {
+				return st.Activities().AppendNext(ctx, a)
+			}
+		}
+		m.proxy = NewProxy(ProxyOptions{Logger: logger, Append: appendFn})
+		sb.proxyPort = m.opts.ProxyPort
+	}
+
 	return k.RegisterSandbox(sb)
 }
 
@@ -101,6 +126,14 @@ func (m *Module) Init(k *kernel.Kernel) error {
 // this module's degraded state — the server keeps working; runs cannot start until Docker is
 // back, and Available() keeps answering the current truth per call.
 func (m *Module) Start(ctx context.Context) error {
+	// The proxy starts before the daemon preflight: it is host-side and must serve whenever
+	// runs exist, including runs that outlived a Docker hiccup and come back with the daemon.
+	if m.proxy != nil {
+		if err := m.proxy.Start(fmt.Sprintf("0.0.0.0:%d", m.opts.ProxyPort)); err != nil {
+			return err
+		}
+	}
+
 	if err := m.sandbox.Available(ctx); err != nil {
 		return err
 	}
@@ -119,13 +152,17 @@ func (m *Module) Start(ctx context.Context) error {
 
 // Stop implements kernel.Module.
 func (m *Module) Stop(ctx context.Context) error {
+	var errProxy error
+	if m.proxy != nil {
+		errProxy = m.proxy.Stop(ctx)
+	}
 	if m.cancelSweep == nil {
-		return nil
+		return errProxy
 	}
 	m.cancelSweep()
 	select {
 	case <-m.sweepDone:
-		return nil
+		return errProxy
 	case <-ctx.Done():
 		return fmt.Errorf("docker: sweeper did not stop: %w", ctx.Err())
 	}

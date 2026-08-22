@@ -28,6 +28,11 @@ import (
 // DefaultPort is the port the server listens on unless told otherwise.
 const DefaultPort = 7717
 
+// DefaultProxyPort is the port the egress proxy (story S18, D-10) listens on unless told
+// otherwise. Unlike the dashboard it binds all interfaces — containers must be able to reach
+// it — which is why every request needs a per-run credential before it proxies anything.
+const DefaultProxyPort = 7718
+
 // FileName is the base name of the configuration file inside the config directory.
 const FileName = "config.yaml"
 
@@ -44,6 +49,9 @@ type Config struct {
 	DataDir string `yaml:"data_dir"`
 	// DockerHost overrides the Docker endpoint. Empty means "use the environment".
 	DockerHost string `yaml:"docker_host"`
+	// ProxyPort is the TCP port the run egress proxy binds (on all interfaces; per-run
+	// credentials make it useless to anyone without a token).
+	ProxyPort int `yaml:"proxy_port"`
 	// GitHubBaseURL overrides the GitHub API base URL (GitHub Enterprise, or a fixture
 	// server during development). Empty means api.github.com.
 	GitHubBaseURL string `yaml:"github_base_url"`
@@ -94,6 +102,7 @@ func Defaults(home string) Config {
 	return Config{
 		Host:        "127.0.0.1",
 		Port:        DefaultPort,
+		ProxyPort:   DefaultProxyPort,
 		DataDir:     dataDir,
 		DockerHost:  "",
 		LogLevel:    "info",
@@ -122,6 +131,7 @@ type Options struct {
 func Bind(fs *flag.FlagSet) *flag.FlagSet {
 	fs.String("host", "", "interface to bind (default 127.0.0.1)")
 	fs.Int("port", 0, "port to bind (default 7717)")
+	fs.Int("proxy-port", 0, "port the run egress proxy binds (default 7718)")
 	fs.String("data-dir", "", "directory for the database, logs and workspaces (default ~/.lexicode)")
 	fs.String("docker-host", "", "Docker endpoint override (default from the environment)")
 	fs.String("github-base-url", "", "GitHub API base URL override (GitHub Enterprise; default api.github.com)")
@@ -136,6 +146,7 @@ func Bind(fs *flag.FlagSet) *flag.FlagSet {
 type yamlConfig struct {
 	Host        *string `yaml:"host"`
 	Port        *int    `yaml:"port"`
+	ProxyPort   *int    `yaml:"proxy_port"`
 	DataDir     *string `yaml:"data_dir"`
 	DockerHost  *string `yaml:"docker_host"`
 	GitHubBase  *string `yaml:"github_base_url"`
@@ -212,6 +223,7 @@ func applyFile(cfg *Config, path string) error {
 
 	assign(&cfg.Host, raw.Host)
 	assign(&cfg.Port, raw.Port)
+	assign(&cfg.ProxyPort, raw.ProxyPort)
 	assign(&cfg.DataDir, raw.DataDir)
 	assign(&cfg.DockerHost, raw.DockerHost)
 	assign(&cfg.GitHubBaseURL, raw.GitHubBase)
@@ -238,6 +250,13 @@ func applyEnv(cfg *Config, lookup func(string) (string, bool)) error {
 			return fmt.Errorf("%sPORT=%q is not a number; set it to a port between 1 and 65535", EnvPrefix, v)
 		}
 		cfg.Port = n
+	}
+	if v, ok := lookup(EnvPrefix + "PROXY_PORT"); ok {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("%sPROXY_PORT=%q is not a number; set it to a port between 1 and 65535", EnvPrefix, v)
+		}
+		cfg.ProxyPort = n
 	}
 	if v, ok := lookup(EnvPrefix + "OPEN_BROWSER"); ok {
 		b, err := strconv.ParseBool(strings.TrimSpace(v))
@@ -274,6 +293,13 @@ func applyFlags(cfg *Config, fs *flag.FlagSet) error {
 			return fmt.Errorf("--port=%q is not a number; set it to a port between 1 and 65535", v)
 		}
 		cfg.Port = n
+	}
+	if v, ok := setFlag(fs, "proxy-port"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("--proxy-port=%q is not a number; set it to a port between 1 and 65535", v)
+		}
+		cfg.ProxyPort = n
 	}
 	if v, ok := setFlag(fs, "open-browser"); ok {
 		b, err := strconv.ParseBool(v)
@@ -325,6 +351,12 @@ var validLevels = []string{"debug", "info", "warn", "error"}
 func (c Config) Validate() error {
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("port %d is out of range; set port to a value between 1 and 65535", c.Port)
+	}
+	if c.ProxyPort < 1 || c.ProxyPort > 65535 {
+		return fmt.Errorf("proxy_port %d is out of range; set proxy_port to a value between 1 and 65535", c.ProxyPort)
+	}
+	if c.ProxyPort == c.Port {
+		return fmt.Errorf("proxy_port %d collides with port; the egress proxy needs its own port", c.ProxyPort)
 	}
 	if c.DataDir == "" {
 		return errors.New("data_dir is empty; set data_dir to a writable directory such as ~/.lexicode")

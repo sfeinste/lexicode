@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 //	POST   /api/v1/projects/{key}/repo                 connect / reconnect
 //	GET    /api/v1/projects/{key}/repo                 connection status
 //	DELETE /api/v1/projects/{key}/repo                 disconnect (imported data stays)
+//	PATCH  /api/v1/projects/{key}/repo/network         network policy + allowlist (S18)
 //	POST   /api/v1/projects/{key}/bootstrap/preview    the one-payload checklist; writes nothing
 //	POST   /api/v1/projects/{key}/bootstrap/apply      creates exactly the checked subset
 func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
@@ -26,6 +28,7 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("POST /api/v1/projects/{key}/repo", member(s.handleConnect))
 	mux.Handle("GET /api/v1/projects/{key}/repo", member(s.handleStatus))
 	mux.Handle("DELETE /api/v1/projects/{key}/repo", member(s.handleDisconnect))
+	mux.Handle("PATCH /api/v1/projects/{key}/repo/network", member(s.handleUpdateNetwork))
 	mux.Handle("POST /api/v1/projects/{key}/bootstrap/preview", member(s.handlePreview))
 	mux.Handle("POST /api/v1/projects/{key}/bootstrap/apply", member(s.handleApply))
 }
@@ -42,15 +45,32 @@ type repoBody struct {
 	ConnectedAt   *string `json:"connected_at"`
 	LastSyncedAt  *string `json:"last_synced_at"`
 	HasToken      bool    `json:"has_token"`
+	// The S18 network settings: the nullable override (null = inherit), the allowlist, and
+	// the live workspace default so the UI's InheritedField line never recomputes inheritance.
+	NetworkPolicy          *string  `json:"network_policy"`
+	NetworkAllowlist       []string `json:"network_allowlist"`
+	WorkspaceNetworkPolicy string   `json:"workspace_network_policy"`
 }
 
-func toRepoBody(rp domain.Repo) repoBody {
+// repoBody assembles the wire shape, fetching the workspace default the inheritance line
+// needs. The single workspace_settings row always exists (migration 0001 inserts it).
+func (s *Service) repoBody(ctx context.Context, rp domain.Repo) (repoBody, error) {
+	ws, err := s.st.Workspace().Get(ctx)
+	if err != nil {
+		return repoBody{}, err
+	}
+	allow := rp.NetworkAllowlist
+	if allow == nil {
+		allow = []string{}
+	}
 	return repoBody{
 		Provider: rp.Provider, Owner: rp.Owner, Name: rp.Name,
 		DefaultBranch: rp.DefaultBranch, HeadSHA: rp.HeadSHA, HeadMessage: rp.HeadMessage,
 		ConnectedAt: rp.ConnectedAt, LastSyncedAt: rp.LastSyncedAt,
-		HasToken: rp.TokenSecretID != nil,
-	}
+		HasToken:      rp.TokenSecretID != nil,
+		NetworkPolicy: rp.NetworkPolicy, NetworkAllowlist: allow,
+		WorkspaceNetworkPolicy: ws.DefaultNetworkPolicy,
+	}, nil
 }
 
 type connectBody struct {
@@ -69,7 +89,12 @@ func (s *Service) handleConnect(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, toRepoBody(rp))
+	rb, err := s.repoBody(r.Context(), rp)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, rb)
 }
 
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -83,9 +108,32 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
+	rb, err := s.repoBody(r.Context(), rp)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"connected": true, "repo": toRepoBody(rp),
+		"connected": true, "repo": rb,
 	})
+}
+
+func (s *Service) handleUpdateNetwork(w http.ResponseWriter, r *http.Request) {
+	body, ok := httpx.DecodeJSON[NetworkSettingsInput](w, r)
+	if !ok {
+		return
+	}
+	rp, err := s.UpdateNetworkSettings(r.Context(), r.PathValue("key"), body)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	rb, err := s.repoBody(r.Context(), rp)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, rb)
 }
 
 func (s *Service) handleDisconnect(w http.ResponseWriter, r *http.Request) {

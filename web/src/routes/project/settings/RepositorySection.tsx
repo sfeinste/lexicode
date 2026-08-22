@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { useDisconnectRepo, useRepoStatusQuery } from "../../../lib/api/repoQueries";
 import { ConnectRepoCard } from "../overview/ConnectRepoCard";
+import { NetworkSection } from "./NetworkSection";
 import styles from "./settings.module.css";
 
 export function RepositorySection({ projectKey }: { projectKey: string }) {
@@ -123,6 +124,8 @@ export function RepositorySection({ projectKey }: { projectKey: string }) {
               Disconnect failed: {disconnect.error.message}
             </p>
           )}
+
+          <NetworkSection projectKey={projectKey} repo={repo} />
         </div>
       )}
     </section>

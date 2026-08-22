@@ -47,6 +47,10 @@ type Sandbox struct {
 	logger     *slog.Logger
 	runState   RunStateFn
 	extraBinds []string // test seam: host bind mounts added to every container
+	// proxyPort is the host port the S18 egress proxy listens on; none/allowlist containers
+	// get an egress relay targeting it (relay.go). Zero disables the relay — containers on
+	// the internal network then simply have no egress (restrictive, never permissive).
+	proxyPort int
 
 	// build deduplicates concurrent builds of the same image tag: concurrent runs needing the
 	// same image share one build. Followers wait for the winner and see "ready" — build
@@ -261,9 +265,9 @@ func (s *Sandbox) createAndStart(ctx context.Context, spec ports.SandboxSpec, im
 
 // prepareNetwork maps the resolved policy onto a Docker network. `open` (and an unset mode) is
 // the default bridge. `none` and `allowlist` join lexicode-internal, an internal network with
-// no default route: S18's egress proxy will be the only way out of it, and is the story that
-// wires HTTP_PROXY and the per-host allow/deny decisions. Until then, these containers simply
-// have no egress — restrictive, never permissive, while the proxy is absent.
+// no default route: the S18 egress proxy — reached through the lexicode-egress relay — is the
+// only way out of it. When no proxy port is configured (proxyPort 0: direct-constructed test
+// sandboxes), these containers simply have no egress — restrictive, never permissive.
 func (s *Sandbox) prepareNetwork(ctx context.Context, policy ports.NetworkPolicy) (container.NetworkMode, error) {
 	switch policy.Mode {
 	case ports.NetworkOpen, "":
@@ -271,6 +275,11 @@ func (s *Sandbox) prepareNetwork(ctx context.Context, policy ports.NetworkPolicy
 	case ports.NetworkNone, ports.NetworkAllowlist:
 		if err := s.ensureInternalNetwork(ctx); err != nil {
 			return "", err
+		}
+		if s.proxyPort > 0 {
+			if err := s.ensureRelay(ctx, s.proxyPort); err != nil {
+				return "", err
+			}
 		}
 		return container.NetworkMode(internalNetwork), nil
 	default:

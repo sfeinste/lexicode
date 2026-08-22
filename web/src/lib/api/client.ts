@@ -55,6 +55,7 @@ export type OverviewRepo = components["schemas"]["OverviewRepo"];
 export type Repo = components["schemas"]["Repo"];
 export type RepoStatus = components["schemas"]["RepoStatus"];
 export type ConnectRepoRequest = components["schemas"]["ConnectRepoRequest"];
+export type UpdateRepoNetworkRequest = components["schemas"]["UpdateRepoNetworkRequest"];
 export type BootstrapPreview = components["schemas"]["BootstrapPreview"];
 export type IssueCandidate = components["schemas"]["IssueCandidate"];
 export type DocCandidate = components["schemas"]["DocCandidate"];
@@ -339,6 +340,8 @@ export const repoApi = {
     api<Repo>("POST", `/projects/${encodeURIComponent(projectKey)}/repo`, { body }),
   disconnect: (projectKey: string) =>
     api<void>("DELETE", `/projects/${encodeURIComponent(projectKey)}/repo`),
+  updateNetwork: (projectKey: string, body: UpdateRepoNetworkRequest) =>
+    api<Repo>("PATCH", `/projects/${encodeURIComponent(projectKey)}/repo/network`, { body }),
 };
 
 /**

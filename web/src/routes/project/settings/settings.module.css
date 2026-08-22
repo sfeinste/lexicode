@@ -438,3 +438,60 @@
 .fieldError {
   color: var(--fail);
 }
+
+/* ---- Network policy (S18) ------------------------------------------------------------- */
+
+.networkBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.networkLegend {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 0;
+  margin-bottom: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.networkOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.networkOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.networkOption input {
+  margin-top: 3px;
+}
+
+.networkOption input:disabled + span {
+  color: var(--text-3);
+}
+
+.networkOption > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.networkHint {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  max-width: 480px;
+}

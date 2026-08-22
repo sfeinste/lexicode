@@ -356,6 +356,31 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/repo/network:
+    patch:
+      operationId: updateRepoNetwork
+      summary: >
+        Update the repo's network policy and allowlist (S18, D-10). network_policy null
+        reverts to inheriting the workspace default; an absent field is left unchanged.
+        The egress proxy enforces the result per run; every allow/deny lands in the run's
+        verbose activities.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateRepoNetworkRequest" }
+      responses:
+        "200":
+          description: The repo with its updated network settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /projects/{key}/bootstrap/preview:
     post:
       operationId: bootstrapPreview
@@ -1469,7 +1494,8 @@ components:
       description: A connected repository. The token never appears — only that one is stored.
       required:
         [provider, owner, name, default_branch, head_sha, head_message, connected_at,
-         last_synced_at, has_token]
+         last_synced_at, has_token, network_policy, network_allowlist,
+         workspace_network_policy]
       properties:
         provider: { type: string }
         owner: { type: string }
@@ -1480,6 +1506,31 @@ components:
         connected_at: { type: [string, "null"] }
         last_synced_at: { type: [string, "null"] }
         has_token: { type: boolean }
+        network_policy:
+          type: [string, "null"]
+          enum: [none, allowlist, open, null]
+          description: The project's network policy override (S18, D-10). Null inherits the workspace default.
+        network_allowlist:
+          type: array
+          items: { type: string }
+          description: Extra allowed domains under the allowlist policy. `*.example.com` matches the domain and every subdomain.
+        workspace_network_policy:
+          type: string
+          enum: [none, allowlist, open]
+          description: The live workspace default, for the settings pane's inheritance line.
+    UpdateRepoNetworkRequest:
+      type: object
+      description: >
+        Both fields are optional; an absent field is left unchanged. network_policy null
+        reverts to inheriting the workspace default. Allowlist entries are bare domains,
+        optionally with a `*.` wildcard prefix — never URLs.
+      properties:
+        network_policy:
+          type: [string, "null"]
+          enum: [none, allowlist, open, null]
+        network_allowlist:
+          type: array
+          items: { type: string }
     RepoStatus:
       type: object
       required: [connected]

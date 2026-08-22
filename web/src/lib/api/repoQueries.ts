@@ -10,6 +10,7 @@ import {
   repoApi,
   type BootstrapApplyRequest,
   type ConnectRepoRequest,
+  type UpdateRepoNetworkRequest,
 } from "./client";
 import { projectKeys } from "./projectQueries";
 
@@ -43,6 +44,17 @@ export function useDisconnectRepo(key: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: repoKeys.status(key) });
       void qc.invalidateQueries({ queryKey: projectKeys.overview(key) });
+    },
+  });
+}
+
+/** Network policy + allowlist (S18). Only the repo status card depends on these columns. */
+export function useUpdateRepoNetwork(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateRepoNetworkRequest) => repoApi.updateNetwork(key, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: repoKeys.status(key) });
     },
   });
 }
