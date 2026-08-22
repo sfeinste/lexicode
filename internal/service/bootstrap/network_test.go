@@ -14,12 +14,12 @@ func TestUpdateRepoNetworkSettings(t *testing.T) {
 	c := e.owner()
 
 	// Connect: the repo body carries the network triple from day one — no override, the
-	// workspace default visible (migration 0001 seeds default_network_policy 'allowlist').
+	// workspace default visible (migration 0001 seeds it; migration 0005 sets it to 'open').
 	body := e.connect(c)
 	if body["network_policy"] != nil {
 		t.Errorf("fresh connect network_policy = %v, want null (inherit)", body["network_policy"])
 	}
-	if body["workspace_network_policy"] != "allowlist" {
+	if body["workspace_network_policy"] != "open" {
 		t.Errorf("workspace_network_policy = %v, want the seeded workspace default", body["workspace_network_policy"])
 	}
 
@@ -73,8 +73,8 @@ func TestUpdateRepoNetworkSettings(t *testing.T) {
 		t.Fatalf("status = %d", code)
 	}
 	repo, _ := status["repo"].(map[string]any)
-	if repo["network_policy"] != nil || repo["workspace_network_policy"] != "allowlist" {
-		t.Errorf("status network fields = %v / %v, want null / allowlist",
+	if repo["network_policy"] != nil || repo["workspace_network_policy"] != "open" {
+		t.Errorf("status network fields = %v / %v, want null / open",
 			repo["network_policy"], repo["workspace_network_policy"])
 	}
 	if got, _ := repo["network_allowlist"].([]any); len(got) != 2 {

@@ -146,6 +146,12 @@ func run(port, proxyPort, ghPort int) (*timings, error) {
 	// -- fake GitHub: REST + git smart-HTTP on one listener ------------------------------
 	gh := &harness.GitHub{
 		Root: filepath.Join(work, "git"), Owner: "acme", Name: "payments", Branch: "main",
+		// The git endpoints demand the repository token, as a private repository does.
+		// That is what makes this harness a proof of the credential design rather than a
+		// rehearsal of it: the container, whose `origin` is tokenless from the moment the
+		// clone finishes, is refused, and the orchestrator's teardown push — the token in
+		// that one exec's environment as `http.extraheader` — is not.
+		Token: repoToken,
 	}
 	if err := os.MkdirAll(filepath.Join(gh.Root, gh.Owner), 0o755); err != nil {
 		return t, err

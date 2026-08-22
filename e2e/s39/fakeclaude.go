@@ -3,8 +3,14 @@ package main
 // fakeClaude is the scripted stand-in agent baked into the derived image at
 // /usr/local/bin/claude. It honours the contracts §3.1 shape from the outside — consumes the
 // prompt as the first stdin message, emits a stream-json session on stdout — and does REAL
-// work through the real seams: git against the fake GitHub's smart-HTTP remote, and the real
-// Lexicode MCP server over HTTP using the run token from /workspace/.lexicode/mcp.json.
+// work through the real seams: real git in a real workspace, and the real Lexicode MCP server
+// over HTTP using the run token from /workspace/.lexicode/mcp.json.
+//
+// It never pushes and never fetches. It cannot: `origin` is tokenless from the moment the
+// clone finishes, and the fake GitHub's git endpoints demand the repository token. Branches
+// it needs are already in the workspace as remote-tracking refs, fetched by the clone step
+// while the credential was still live; branches it produces reach the remote through the
+// orchestrator's teardown push.
 //
 // Which of the four roles it plays is read out of /workspace/.lexicode/prompt.md, because
 // that is where a trigger's prompt override lands. The chain's triggers write the role, the
@@ -12,14 +18,15 @@ package main
 // interpolation — the same mechanism a user types into the trigger editor.
 //
 //	E2E-ROLE: dev-implement   implement the ticket on the run's own branch, check off an
-//	                          acceptance criterion, push. The orchestrator opens the PR.
+//	                          acceptance criterion, commit. The orchestrator pushes it and
+//	                          opens the PR.
 //	E2E-ROLE: reviewer        read the PR's diff and call submit_review with severity-tagged
 //	                          findings. E2E-REVIEW says request_changes or comment.
-//	E2E-ROLE: dev-address     check out the PR's branch, push a fix to it, then submit a
+//	E2E-ROLE: dev-address     check out the PR's branch, commit a fix on it, then submit a
 //	                          COMMENT review saying so — the "addressed, please re-review"
-//	                          hop that carries the chain forward.
-//	E2E-ROLE: dev-cifix       check out the PR's branch and push a fix to it. No review: the
-//	                          CI branch of the chain is not meant to bounce.
+//	                          hop that carries the chain forward. The orchestrator pushes.
+//	E2E-ROLE: dev-cifix       check out the PR's branch and commit a fix on it. No review:
+//	                          the CI branch of the chain is not meant to bounce.
 const fakeClaude = `#!/bin/bash
 set -u
 IFS= read -r _prompt || true
@@ -78,7 +85,6 @@ export function replay(key) {
 EOF
     git add -A
     git commit -q -m "feat: idempotency keys for POST /charges"
-    git push -q origin HEAD
   } >/tmp/work.log 2>&1
   GIT_EXIT=$?
   emit "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":$(jq -Rs . </tmp/work.log),\"is_error\":$([ $GIT_EXIT -eq 0 ] && echo false || echo true)}]}}"
@@ -89,13 +95,13 @@ EOF
     mcp_call check_criterion "{\"criterion_id\":\"$CRIT\",\"met\":true,\"note\":\"covered by src/idempotency.ts replay()\"}" >/dev/null 2>&1
   fi
   step "done" 3 3
-  finish "Added idempotency keys and pushed the branch."
+  finish "Added idempotency keys and committed them."
   ;;
 
 reviewer)
   step "reading the pull request diff" 1 2
-  git fetch -q origin "$BRANCH" >/tmp/fetch.log 2>&1
-  DIFF=$(git diff --stat HEAD FETCH_HEAD 2>/dev/null | tail -5)
+  # No fetch: the branch is already here as a remote-tracking ref, from the clone step.
+  DIFF=$(git diff --stat HEAD "origin/$BRANCH" 2>/dev/null | tail -5)
   say "Reviewing PR #$PR on $BRANCH. Diff:
 $DIFF"
   if [ "$REVIEW" = comment ]; then
@@ -114,8 +120,7 @@ $DIFF"
 dev-address|dev-cifix)
   step "checking out $BRANCH" 1 3
   {
-    git fetch origin "$BRANCH"
-    git checkout -q -f -B "$BRANCH" FETCH_HEAD
+    git checkout -q -f -B "$BRANCH" "origin/$BRANCH"
   } >/tmp/checkout.log 2>&1
   if [ "$ROLE" = dev-cifix ]; then
     NOTE="fix: repair the failing check"
@@ -127,11 +132,10 @@ dev-address|dev-cifix)
   {
     git add -A
     git commit -q -m "$NOTE"
-    git push -q origin "HEAD:$BRANCH"
   } >>/tmp/checkout.log 2>&1
   GIT_EXIT=$?
   emit "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t3\",\"content\":$(jq -Rs . </tmp/checkout.log),\"is_error\":$([ $GIT_EXIT -eq 0 ] && echo false || echo true)}]}}"
-  step "pushed to $BRANCH" 2 3
+  step "committed on $BRANCH" 2 3
   if [ "$ROLE" = dev-address ]; then
     ARGS="{\"pr_number\":$PR,\"event\":\"comment\",\"summary\":\"Addressed the review: TTL is a named constant and the sweep is noted.\",\"findings\":[{\"severity\":\"nit\",\"title\":\"Persistence is still a TODO\",\"detail\":\"Tracked separately; the in-process map stays for now.\",\"file\":\"src/idempotency.ts\"}]}"
     emit "{\"type\":\"assistant\",\"message\":{\"id\":\"m11\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t4\",\"name\":\"mcp__lexicode__submit_review\",\"input\":$ARGS}]}}"
@@ -139,7 +143,7 @@ dev-address|dev-cifix)
     emit "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t4\",\"content\":$(printf '%s' "$RESULT" | jq -Rs .)}]}}"
   fi
   step "done" 3 3
-  finish "Pushed $NOTE to $BRANCH."
+  finish "Committed $NOTE on $BRANCH."
   ;;
 
 *)

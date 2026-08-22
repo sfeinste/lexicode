@@ -240,6 +240,13 @@ func (b *Builder) Build(ctx context.Context, in PrepInput) (Prep, error) {
 
 	env["LEXICODE_RUN_ID"] = in.Run.ID
 
+	// The container holds no repository credential (the sandbox's clone step points `origin`
+	// at a tokenless URL as soon as the fetch is done), so any git command that needs one has
+	// to fail rather than sit waiting for a username nobody will type. Without this, an
+	// agent's `git push` ends in "could not read Username" only because there is no terminal;
+	// with it, git says plainly that authentication is unavailable.
+	env["GIT_TERMINAL_PROMPT"] = "0"
+
 	// Model credentials: first healthy source wins, and its variables override any stored
 	// secret — the credential source is the single authority for them.
 	credEnv, err := b.credentialEnv(ctx, in.Project.ID)

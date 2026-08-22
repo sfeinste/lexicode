@@ -118,6 +118,13 @@ func execOutput(t *testing.T, inst ports.Instance, argv ...string) (int, string)
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	return execOutputCtx(ctx, t, inst, argv...)
+}
+
+// execOutputCtx is execOutput with the caller's deadline — an apt or npm install needs longer
+// than the one-minute default.
+func execOutputCtx(ctx context.Context, t *testing.T, inst ports.Instance, argv ...string) (int, string) {
+	t.Helper()
 	st, err := inst.Exec(ctx, argv, ports.ExecOpts{})
 	if err != nil {
 		t.Fatalf("Exec %v: %v", argv, err)
@@ -231,16 +238,17 @@ func TestPrepareExecReadFileDestroy(t *testing.T) {
 		t.Errorf("setup.txt = %q", got)
 	}
 
-	// The substrate the spec promised: read-only rootfs, writable workspace and /tmp,
-	// non-root user.
-	if code, _ := execOutput(t, inst, "/bin/sh", "-c", "touch /usr/local/nope 2>/dev/null"); code == 0 {
-		t.Error("rootfs is writable; want read-only")
+	// The substrate the spec promised. The POC posture (see the "Container posture" block in
+	// sandbox.go) is a writable rootfs and uid 0; TestPOCContainerIsUsable proves the
+	// consequences, this only pins the two settings so a silent revert is a failing test.
+	if code, out := execOutput(t, inst, "/bin/sh", "-c", "touch /usr/local/nope && touch /etc/nope"); code != 0 {
+		t.Errorf("rootfs is not writable: exit %d, out %q", code, out)
 	}
 	if code, _ := execOutput(t, inst, "/bin/sh", "-c", "touch /tmp/ok && touch /workspace/ok"); code != 0 {
 		t.Error("/tmp or /workspace not writable")
 	}
-	if code, out := execOutput(t, inst, "id", "-un"); code != 0 || strings.TrimSpace(out) != "agent" {
-		t.Errorf("container user: exit %d, out %q (want agent)", code, out)
+	if code, out := execOutput(t, inst, "id", "-un"); code != 0 || strings.TrimSpace(out) != "root" {
+		t.Errorf("container user: exit %d, out %q (want root)", code, out)
 	}
 
 	// Destroy is idempotent.

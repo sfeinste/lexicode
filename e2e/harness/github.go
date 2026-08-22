@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -36,18 +37,40 @@ type GitHub struct {
 	Branch string
 	// Root is the parent directory of <owner>/<name>.git.
 	Root string
+	// Token is the repository credential. When set, the git smart-HTTP endpoints demand it
+	// as HTTP basic auth (`x-access-token:<token>`) exactly as a private repository does —
+	// which is what turns "the orchestrator owns the push" from an assertion about our own
+	// code into an assertion the remote enforces. Leave it empty for an anonymous fixture.
+	Token string
 	// Logf receives one line per interesting mutation; nil means log.Printf.
 	Logf func(string, ...any)
 
-	mu       sync.Mutex
-	prs      []*PullRequest
-	reviews  []Review
-	suites   []CheckSuite
-	comments []Comment
-	requests []Request
-	failCI   int
-	nextID   int64
+	mu          sync.Mutex
+	prs         []*PullRequest
+	reviews     []Review
+	suites      []CheckSuite
+	comments    []Comment
+	requests    []Request
+	failCI      int
+	nextID      int64
+	gitRefusals int
 }
+
+// fixtureTime is how this fixture serializes timestamps: RFC 3339 with a FIXED three digits of
+// fractional seconds.
+//
+// github.com serializes to whole seconds, and this fixture used to as well — but github.com
+// also cannot open a pull request in the same second a repository was connected, and this
+// fixture routinely does: a whole six-run chain runs here in under a minute. Truncating to
+// seconds threw away precision the fixture genuinely has, and a pull request created in the
+// same second as the poller's baseline then serialized as OLDER than the baseline cursor
+// (which keeps sub-second precision) and was never seen again — an intermittent hang in step 3
+// that got much more likely once the agent stopped doing its own push and runs got shorter.
+//
+// Fixed-width fractions rather than time.RFC3339Nano: Nano drops trailing zeros, so its output
+// is variable-width and sortByUpdatedDesc — which compares the strings — would order
+// "…:32Z" after "…:32.500Z".
+const fixtureTime = "2006-01-02T15:04:05.000Z07:00"
 
 // PullRequest is one fake pull request. HeadSHA is refreshed from the bare repository on
 // every request, so a push from a container is visible to the next poll without anybody
@@ -161,7 +184,7 @@ func (g *GitHub) Handler() http.Handler {
 				"status": "completed", "conclusion": s.Conclusion,
 				"app":        map[string]any{"name": "CI"},
 				"url":        fmt.Sprintf("https://github.example/checks/%d", s.ID),
-				"updated_at": s.UpdatedAt.UTC().Format(time.RFC3339),
+				"updated_at": s.UpdatedAt.UTC().Format(fixtureTime),
 			})
 		}
 		g.mu.Unlock()
@@ -201,7 +224,7 @@ func (g *GitHub) Handler() http.Handler {
 				"id": rev.ID, "state": rev.State, "body": rev.Body,
 				"user":         map[string]any{"login": rev.Author},
 				"html_url":     fmt.Sprintf("https://github.example/pull/%d#review-%d", number, rev.ID),
-				"submitted_at": rev.SubmittedAt.UTC().Format(time.RFC3339),
+				"submitted_at": rev.SubmittedAt.UTC().Format(fixtureTime),
 			})
 		}
 		g.mu.Unlock()
@@ -221,8 +244,8 @@ func (g *GitHub) Handler() http.Handler {
 				"user":       map[string]any{"login": c.Author},
 				"issue_url":  fmt.Sprintf("https://api.github.example/repos/%s/%s/issues/%d", g.Owner, g.Name, c.PRNumber),
 				"html_url":   fmt.Sprintf("https://github.example/pull/%d#comment-%d", c.PRNumber, c.ID),
-				"created_at": c.CreatedAt.UTC().Format(time.RFC3339),
-				"updated_at": c.CreatedAt.UTC().Format(time.RFC3339),
+				"created_at": c.CreatedAt.UTC().Format(fixtureTime),
+				"updated_at": c.CreatedAt.UTC().Format(fixtureTime),
 			})
 		}
 		g.mu.Unlock()
@@ -256,6 +279,15 @@ func (g *GitHub) Handler() http.Handler {
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, ".git/") {
+			if !g.gitAuthorized(r) {
+				g.mu.Lock()
+				g.gitRefusals++
+				g.mu.Unlock()
+				g.logf("fakegithub: 401 %s %s (no valid git credential)", r.Method, r.URL.Path)
+				w.Header().Set("WWW-Authenticate", `Basic realm="lexicode-fixture"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			backend.ServeHTTP(w, r)
 			return
 		}
@@ -274,6 +306,35 @@ func (g *GitHub) wrap(h http.HandlerFunc) http.HandlerFunc {
 		g.syncHeads()
 		h(w, r)
 	}
+}
+
+// gitAuthorized checks the credential on a git smart-HTTP request. Both spellings of the
+// basic scheme are accepted: git's own URL-credential retry sends "Basic", while the
+// `http.extraheader` form the orchestrator's push uses sends "basic" — the scheme token is
+// case-insensitive (RFC 7235) and a fixture that only accepted one would be testing its own
+// spelling rather than the mechanism.
+func (g *GitHub) gitAuthorized(r *http.Request) bool {
+	if g.Token == "" {
+		return true
+	}
+	scheme, cred, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "basic") {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(cred))
+	if err != nil {
+		return false
+	}
+	_, pass, ok := strings.Cut(string(raw), ":")
+	return ok && pass == g.Token
+}
+
+// GitRefusals is how many git requests were turned away for want of a credential — the
+// fixture's proof that the remote really is enforcing.
+func (g *GitHub) GitRefusals() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.gitRefusals
 }
 
 func (g *GitHub) record(r *http.Request) {
@@ -386,7 +447,7 @@ func (g *GitHub) createReview(w http.ResponseWriter, r *http.Request) {
 		"id": rev.ID, "state": rev.State, "body": rev.Body,
 		"user":         map[string]any{"login": rev.Author},
 		"html_url":     fmt.Sprintf("https://github.example/pull/%d#review-%d", number, rev.ID),
-		"submitted_at": now.UTC().Format(time.RFC3339),
+		"submitted_at": now.UTC().Format(fixtureTime),
 	})
 }
 
@@ -408,8 +469,8 @@ func (g *GitHub) createComment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]any{
 		"id": c.ID, "body": c.Body, "user": map[string]any{"login": c.Author},
-		"created_at": now.UTC().Format(time.RFC3339),
-		"updated_at": now.UTC().Format(time.RFC3339),
+		"created_at": now.UTC().Format(fixtureTime),
+		"updated_at": now.UTC().Format(fixtureTime),
 	})
 }
 
@@ -625,8 +686,8 @@ func prJSON(pr *PullRequest, detail bool) map[string]any {
 		"base":       map[string]any{"ref": pr.Base},
 		"labels":     []any{},
 		"html_url":   fmt.Sprintf("https://github.example/pull/%d", pr.Number),
-		"created_at": pr.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at": pr.UpdatedAt.UTC().Format(time.RFC3339),
+		"created_at": pr.CreatedAt.UTC().Format(fixtureTime),
+		"updated_at": pr.UpdatedAt.UTC().Format(fixtureTime),
 	}
 	if detail {
 		out["additions"] = 12

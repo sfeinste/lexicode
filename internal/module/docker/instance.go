@@ -44,7 +44,47 @@ func (i *Instance) ContainerID() string { return i.containerID }
 // and Stderr are the plain streams the port promises. Wait polls the exec's exit code after
 // the process ends and then releases the connection; call it exactly once, after reading the
 // streams to EOF (or from another goroutine while reading).
+//
+// A first failure is retried once against a revived container. The container runs as root
+// with a writable rootfs (see the "Container posture" block in sandbox.go), so the agent can
+// end the container's life from inside it — `kill 1`, a `pkill` that catches `sleep
+// infinity`, an OOM kill after a runaway build. The teardown path then finds a stopped
+// container and the §10.5 artifact push — the one thing standing between a failed run and
+// losing the agent's work — would fail before it started. The workspace is an anonymous
+// volume that outlives the process, so starting the container again gets the work back.
 func (i *Instance) Exec(ctx context.Context, argv []string, opts ports.ExecOpts) (ports.Streams, error) {
+	st, err := i.exec(ctx, argv, opts)
+	if err == nil {
+		return st, nil
+	}
+	if !i.revive(ctx, err) {
+		return ports.Streams{}, err
+	}
+	return i.exec(ctx, argv, opts)
+}
+
+// revive restarts a container that is not running any more, reporting whether a retry is
+// worth attempting. A container that is gone, or that is running (so the failure was
+// something else), is not revivable.
+func (i *Instance) revive(ctx context.Context, cause error) bool {
+	insp, err := i.cli.ContainerInspect(ctx, i.containerID)
+	if err != nil || insp.State == nil || insp.State.Running {
+		return false
+	}
+	if err := i.cli.ContainerStart(ctx, i.containerID, container.StartOptions{}); err != nil {
+		i.logger.Warn("docker: could not restart the run's stopped container",
+			slog.String("container", shortID(i.containerID)),
+			slog.String("error", err.Error()))
+		return false
+	}
+	i.logger.Warn("docker: the run's container had stopped; restarted it to run one more command",
+		slog.String("container", shortID(i.containerID)),
+		slog.String("exit_code", fmt.Sprint(insp.State.ExitCode)),
+		slog.String("cause", cause.Error()))
+	return true
+}
+
+func (i *Instance) exec(ctx context.Context, argv []string, opts ports.ExecOpts) (ports.Streams, error) {
 	created, err := i.cli.ContainerExecCreate(ctx, i.containerID, container.ExecOptions{
 		Cmd:          argv,
 		WorkingDir:   opts.WorkDir, // "" = the container's default, /workspace

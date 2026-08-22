@@ -1,8 +1,12 @@
 // Package docker is the Docker sandbox module (story S17): the one V1 implementation of
 // ports.Sandbox. It builds the embedded agent base image on demand (D-7), provisions one
-// container per run — labelled, resource-limited, read-only rootfs with a writable workspace
-// volume — executes the workspace clone and setup script inside the container, and sweeps
-// orphaned containers on boot and hourly (§10.6).
+// container per run — labelled and resource-limited, with a writable workspace volume —
+// executes the workspace clone and setup script inside the container, and sweeps orphaned
+// containers on boot and hourly (§10.6).
+//
+// The container the POC ships is deliberately unrestricted: writable rootfs, uid 0, and an
+// `open` network default. What that removed and how to put it back is the "Container posture"
+// block in sandbox.go.
 package docker
 
 import (

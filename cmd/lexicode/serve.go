@@ -389,6 +389,10 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		PRs: &runsvc.PROpener{
 			Store: st, Secrets: sec, Forge: k.Forge, Logger: logger,
 		},
+		// §10.5 (D-9 amendment): the orchestrator also owns the PUSH. The container is
+		// given the repository credential for the clone fetch and nothing else, so the
+		// token comes back here, in the teardown exec's environment only.
+		Pushes:   &runsvc.Pusher{Store: st, Secrets: sec},
 		GitHosts: gitHostsFor(cfg.GitHubBaseURL),
 	})
 	k.AttachScheduler(scheduler)

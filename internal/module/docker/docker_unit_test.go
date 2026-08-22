@@ -198,3 +198,46 @@ func TestSkipReadCloserSkips(t *testing.T) {
 		t.Errorf("read %q, want %q", b, "456789")
 	}
 }
+
+// TestTokenlessURL is the credential boundary's one pure function: what `origin` becomes for
+// the rest of the container's life. A URL it fails to strip is a repository token left in
+// `.git/config` under a root agent, so the odd shapes are here on purpose.
+func TestTokenlessURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{
+			"https://x-access-token:ghp_secret@github.com/acme/payments.git",
+			"https://github.com/acme/payments.git",
+		},
+		{
+			"http://x-access-token:ghp_secret@host.docker.internal:8080/acme/payments.git",
+			"http://host.docker.internal:8080/acme/payments.git",
+		},
+		// Already clean: unchanged, not mangled.
+		{"https://github.com/acme/payments.git", "https://github.com/acme/payments.git"},
+		// Not an http(s) URL: a file:// fixture has no credential, and an scp-style remote's
+		// `git@` is a username. Rewriting either breaks a working remote to fix nothing.
+		{"file:///fixtures/fixture.git", "file:///fixtures/fixture.git"},
+		{"git@github.com:acme/payments.git", "git@github.com:acme/payments.git"},
+		{"ssh://git@github.com/acme/payments.git", "ssh://git@github.com/acme/payments.git"},
+	}
+	for _, c := range cases {
+		if got := tokenlessURL(c.in); got != c.want {
+			t.Errorf("tokenlessURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// stripUserinfo is the fallback for a URL net/url cannot parse. It must not leave a
+// credential behind on a technicality, and must not eat an "@" that is part of a path.
+func TestStripUserinfo(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"https://user:pa ss@example.com/x.git", "https://example.com/x.git"},
+		{"https://example.com/a@b/x.git", "https://example.com/a@b/x.git"},
+		{"not a url at all", "not a url at all"},
+	}
+	for _, c := range cases {
+		if got := stripUserinfo(c.in); got != c.want {
+			t.Errorf("stripUserinfo(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

@@ -29,17 +29,21 @@ import (
 )
 
 // schedFakeClaude is the in-container stand-in agent: consume the prompt from stdin the way
-// the real CLI would, do real work in the real workspace — an empty commit pushed to origin
-// on the run branch — then emit a well-formed stream-json session.
+// the real CLI would, do real work in the real workspace — an empty commit on the run
+// branch — then emit a well-formed stream-json session.
+//
+// It does NOT push. It cannot: the clone step points `origin` at a tokenless URL before the
+// agent starts. Committing is the whole of the agent's contribution, and the branch reaching
+// the remote — asserted at the bottom of this test — is the orchestrator's teardown push
+// doing its job.
 const schedFakeClaude = `#!/bin/sh
 head -n 1 >/dev/null
 git commit --allow-empty -m "smoke: agent work" >/dev/null 2>&1
-git push origin HEAD >/dev/null 2>&1
 cat <<'EOF'
 {"type":"system","subtype":"init","cwd":"/workspace","session_id":"smoke","tools":["Bash"],"model":"fake"}
 {"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"committing the change"}],"usage":{"input_tokens":5,"output_tokens":9}}}
-{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git push origin HEAD"}}]}}
-{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"pushed"}]}}
+{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git commit --allow-empty -m 'smoke: agent work'"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"committed"}]}}
 {"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"smoke complete","total_cost_usd":0.005,"usage":{"input_tokens":5,"output_tokens":9}}
 EOF
 `
@@ -227,8 +231,9 @@ func TestSchedulerDockerSmoke(t *testing.T) {
 		t.Fatalf("agent session too thin: %d activities", agentActivities)
 	}
 
-	// The branch the builder minted exists in the local bare repository — the agent's push
-	// landed.
+	// The branch the builder minted exists in the local bare repository. The agent never
+	// pushed — it holds no credential and never runs `git push` — so this is the
+	// orchestrator's teardown push, on a run that COMPLETED.
 	if final.Branch == nil {
 		t.Fatal("run has no branch")
 	}

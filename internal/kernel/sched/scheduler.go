@@ -79,6 +79,34 @@ type PROpener interface {
 	OpenForRun(ctx context.Context, run domain.Run) (bool, error)
 }
 
+// PushCredentials supplies what the orchestrator needs to push a run's branch itself, after
+// the agent process has exited (§10.5, and the D-9 amendment: the push is orchestrator-owned).
+//
+// The container never holds the repository credential — the clone step points `origin` at a
+// tokenless URL as soon as the fetch is done — so the token has to come back at teardown, for
+// exactly one command, in exactly one exec's environment. The service layer implements this
+// (it needs the repo row and the secret store, which the kernel does not touch); nil means
+// the orchestrator pushes with whatever the remote already authorizes, which is what the
+// docker-tagged fixtures with `file://` remotes rely on.
+type PushCredentials interface {
+	ForRun(ctx context.Context, run domain.Run) (PushAuth, error)
+}
+
+// PushAuth is one run's push authorization.
+type PushAuth struct {
+	// Env is merged into the push exec's environment and nowhere else. The GitHub shape is
+	// git's config-via-environment carrying an `http.extraheader` basic credential — never
+	// argv (`/proc/<pid>/cmdline` is world-readable inside the container) and never
+	// `.git/config` (it would outlive the command).
+	Env map[string]string
+	// Secrets is every value in Env that must never reach a log or an activity row.
+	Secrets []string
+	// BaseBranch is the repository's default branch. The orchestrator refuses to push to it:
+	// an agent that checked out `main` and committed there must not have that pushed on its
+	// behalf (brief D6 — no agent writes a protected branch).
+	BaseBranch string
+}
+
 // Options configures New. Store, Bus and Audit are required; the seams degrade individually
 // (a nil Tokens mints nothing, a nil Proxy registers nothing, a nil Tickets moves nothing) so
 // tests wire exactly what they exercise.
@@ -101,6 +129,7 @@ type Options struct {
 	Proxy   ProxyRegistrar
 	Tickets TicketMover
 	PRs     PROpener
+	Pushes  PushCredentials
 
 	// SandboxID is which sandbox runs execute in ("docker" in production, "fake" in tests).
 	// Empty means "docker".

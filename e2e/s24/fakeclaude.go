@@ -6,13 +6,16 @@ package main
 // emits a stream-json session on stdout — and does REAL work through the real seams: it
 // calls the Lexicode MCP server over HTTP (ask_human parks the run; request_approval parks
 // it again in interactive mode) using the run token from /workspace/.lexicode/mcp.json, and
-// it commits and pushes through the git remote the provisioner configured (the fake GitHub
-// server's git http-backend).
+// it COMMITS its work locally.
+//
+// It does not push, and could not: `origin` is tokenless by the time it starts, and the fake
+// GitHub's git endpoints demand the repository token. The branch reaching the remote is the
+// orchestrator's teardown push, which the driver asserts.
 //
 // Modes, chosen by a marker the driver puts in the delegate prompt (read back from
 // /workspace/.lexicode/prompt.md):
 //
-//	(none)                → ask a question, wait for the answer, commit + push, finish.
+//	(none)                → ask a question, wait for the answer, commit, finish.
 //	E2E-MODE: stall       → leave WIP in the tree and sleep; the driver stops the run
 //	                        midway and asserts the §10.5 artifact push preserved the branch.
 //	E2E-MODE: interactive → ask a question, then request an approval, then loop slowly on
@@ -74,19 +77,18 @@ if [ "$MODE" = interactive ]; then
 fi
 
 mcp_call set_step '{"step":"editing IMPLEMENTATION.md","index":2,"total":3}' >/dev/null 2>&1
-emit '{"type":"assistant","message":{"id":"m5","role":"assistant","content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"git add -A && git commit -m \"feat: add idempotency keys\" && git push origin HEAD"}}]}}'
+emit '{"type":"assistant","message":{"id":"m5","role":"assistant","content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"git add -A && git commit -m \"feat: add idempotency keys\""}}]}}'
 {
   echo "# Idempotency keys" > IMPLEMENTATION.md
   echo "" >> IMPLEMENTATION.md
   echo "Chosen storage (from the delegating human): see the answer in the run log." >> IMPLEMENTATION.md
   git add -A
   git commit -q -m "feat: add idempotency keys"
-  git push -q origin HEAD
 } >/tmp/gitwork.log 2>&1
 GIT_EXIT=$?
 GITLOG=$(jq -Rs . </tmp/gitwork.log)
 emit "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t3\",\"content\":$GITLOG,\"is_error\":$([ $GIT_EXIT -eq 0 ] && echo false || echo true)}]}}"
 mcp_call set_step '{"step":"done","index":3,"total":3}' >/dev/null 2>&1
-emit '{"type":"result","subtype":"success","is_error":false,"num_turns":4,"result":"Implemented idempotency keys and pushed the branch.","total_cost_usd":0.0342,"usage":{"input_tokens":1200,"output_tokens":340}}'
+emit '{"type":"result","subtype":"success","is_error":false,"num_turns":4,"result":"Implemented idempotency keys and committed them.","total_cost_usd":0.0342,"usage":{"input_tokens":1200,"output_tokens":340}}'
 exit 0
 `

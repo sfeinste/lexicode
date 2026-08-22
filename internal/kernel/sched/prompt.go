@@ -138,6 +138,13 @@ func (s *Scheduler) assemblePrompt(ctx context.Context, agent domain.Agent, tick
 		}
 	}
 
+	if section := deliverySection(agent); section != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(section)
+	}
+
 	if strings.TrimSpace(req.PromptOverride) != "" {
 		if b.Len() > 0 {
 			b.WriteString("\n")
@@ -147,6 +154,40 @@ func (s *Scheduler) assemblePrompt(ctx context.Context, agent domain.Agent, tick
 		b.WriteString("\n")
 	}
 	return b.String(), items, nil
+}
+
+// deliverySection tells the agent how its work leaves the container: commit locally,
+// Lexicode pushes.
+//
+// This is guidance about a mechanism, not an enforcement control (plan rule 5 / brief D7).
+// The enforcement is the absent credential — the sandbox's clone step points `origin` at a
+// tokenless URL as soon as the fetch is done, so an agent that ignores every word of this
+// cannot push anyway. What the paragraph buys is an agent that does not waste its run
+// discovering that, and one that COMMITS: a run that ends with its work uncommitted has
+// nothing for the orchestrator to push but a machine-written `wip:` blob.
+//
+// An agent without the push_branches grant gets nothing: no branch of its work is ever
+// pushed, so there is nothing to explain.
+func deliverySection(agent domain.Agent) string {
+	if !agent.Permissions.PushBranches {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# How your work is delivered\n\n")
+	b.WriteString("Commit your work locally, on the branch this workspace is already on. " +
+		"Do not push: this container holds no credential for the repository, so `git push` " +
+		"will fail. ")
+	if agent.Permissions.OpenPRs {
+		b.WriteString("Lexicode pushes your branch once you have exited, and opens the pull " +
+			"request from it.\n")
+	} else {
+		b.WriteString("Lexicode pushes your branch once you have exited.\n")
+	}
+	b.WriteString("\nCommitting is the only way your work leaves this container. If you end " +
+		"with uncommitted changes, Lexicode commits them for you as a single `wip:` commit " +
+		"so nothing is lost — but your own commits, with your own messages, are what a " +
+		"reviewer reads.\n")
+	return b.String()
 }
 
 // EstimateTokens is the crude chars/4 heuristic every context surface shares.

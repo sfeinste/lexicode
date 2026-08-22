@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/spruce/lexicode/internal/domain"
@@ -493,19 +491,22 @@ func (s *Scheduler) finishWithoutInstance(ctx context.Context, run domain.Run, k
 func (s *Scheduler) finish(ctx context.Context, sup *supervisor, run domain.Run, agent domain.Agent, inst ports.Instance, branch string, kind domain.RunState, reason, message string) {
 	ctx = context.WithoutCancel(ctx)
 
-	// The failure-artifact rule: a failed run never leaves nothing behind. Whatever exists
-	// is committed and pushed before the container is destroyed. Completed runs pushed
-	// their own work; the wip commit is for the ones that could not.
-	preserved := false
-	if inst != nil && branch != "" && kind != domain.RunCompleted {
-		preserved = s.pushArtifact(ctx, run, inst, branch)
+	// The push (§10.5, and the D-9 amendment): the ORCHESTRATOR pushes, for every outcome,
+	// because the agent's container holds no credential that could. For a run that ended
+	// badly this is also the failure-artifact rule — whatever is in the workspace is
+	// committed as wip first, so a failed run never leaves nothing behind. For a run that
+	// completed it is how its branch reaches the remote at all, which is what the pull
+	// request is then opened from.
+	preserved := s.preserveAndPush(ctx, run, agent, inst, branch)
+	if preserved.pushed && kind != domain.RunCompleted {
+		s.recordPartialWork(ctx, run, preserved.branch)
 	}
 
 	fresh, err := s.st.Runs().ByID(ctx, run.ID)
 	if err == nil {
 		run = fresh
 	}
-	finalMessage := s.terminalMessage(kind, run, branch, message, preserved)
+	finalMessage := s.terminalMessage(kind, run, message, preserved)
 
 	// Teardown: revoke the MCP token, unregister the proxy, destroy the container.
 	if s.opts.Tokens != nil {
@@ -569,11 +570,23 @@ func (s *Scheduler) finish(ctx context.Context, sup *supervisor, run domain.Run,
 
 // terminalMessage renders the outcome line, naming the preserved branch (§10.5's exact shape:
 // "Failed after 6 steps. Partial work pushed to `dev/PAY-14-idempotency-keys`.").
-func (s *Scheduler) terminalMessage(kind domain.RunState, run domain.Run, branch, message string, preserved bool) string {
+//
+// Every clause is a fact from preserveOutcome. A push that failed says so and names the
+// error; a workspace with nothing in it says nothing at all. The version this replaced ran
+// `git push … || true` and then claimed "Partial work pushed to `branch`" whatever happened,
+// which is the one thing a terminal message must never do.
+func (s *Scheduler) terminalMessage(kind domain.RunState, run domain.Run, message string, p preserveOutcome) string {
 	var b strings.Builder
 	switch kind {
 	case domain.RunCompleted:
-		return message
+		b.WriteString(message)
+		// A completed run's own text is the message; the only thing worth adding is a push
+		// that did not happen, because the pull request will be missing and the reason
+		// belongs next to it.
+		if p.attempted && p.failure != "" {
+			fmt.Fprintf(&b, " The branch could not be pushed: %s.", strings.TrimSuffix(p.failure, "."))
+		}
+		return strings.TrimSpace(b.String())
 	case domain.RunFailed:
 		fmt.Fprintf(&b, "Failed after %d steps.", run.StepCount)
 	case domain.RunTimedOut:
@@ -584,53 +597,25 @@ func (s *Scheduler) terminalMessage(kind domain.RunState, run domain.Run, branch
 	if message != "" {
 		b.WriteString(" " + strings.TrimSuffix(message, ".") + ".")
 	}
-	if preserved {
-		fmt.Fprintf(&b, " Partial work pushed to `%s`.", branch)
+	switch {
+	case !p.attempted:
+	case p.pushed:
+		fmt.Fprintf(&b, " Partial work pushed to `%s`.", p.branch)
+	case p.failure != "" && p.committed:
+		fmt.Fprintf(&b, " Partial work was committed on `%s` but could not be pushed: %s.",
+			p.branch, strings.TrimSuffix(p.failure, "."))
+	case p.failure != "":
+		fmt.Fprintf(&b, " Partial work could not be preserved: %s.",
+			strings.TrimSuffix(p.failure, "."))
+	case p.nothing:
+		b.WriteString(" There was nothing to preserve: the workspace held no changes.")
 	}
 	return b.String()
 }
 
-// pushArtifact runs the §10.5 commit-and-push inside the instance and records the
-// partial_work output. Both git commands tolerate failure (`|| true`) — an empty workspace
-// or an unreachable remote must not turn teardown into a hang.
-func (s *Scheduler) pushArtifact(ctx context.Context, run domain.Run, inst ports.Instance, branch string) bool {
-	summary := run.CurrentStep
-	if summary == "" {
-		summary = "run " + fmt.Sprintf("#%d", run.Seq)
-	}
-	script := fmt.Sprintf("git add -A && git commit -m %s || true; git push origin %s || true",
-		shellQuote(fmt.Sprintf("wip: %s [lexicode run %s]", summary, run.ID)),
-		shellQuote(branch))
-	streams, err := inst.Exec(ctx, []string{"/bin/sh", "-c", script}, ports.ExecOpts{})
-	if err != nil {
-		s.logger.Error("sched: artifact push exec failed",
-			slog.String("run", run.ID), slog.String("error", err.Error()))
-		return false
-	}
-	if streams.Stdin != nil {
-		_ = streams.Stdin.Close()
-	}
-	// Drain stdout and stderr CONCURRENTLY: the docker exec demultiplexer feeds both
-	// through unbuffered pipes, so reading one to EOF before touching the other deadlocks
-	// the moment the ignored stream produces a frame (git push reports on stderr).
-	var drains sync.WaitGroup
-	for _, r := range []io.Reader{streams.Stdout, streams.Stderr} {
-		if r == nil {
-			continue
-		}
-		drains.Add(1)
-		go func(r io.Reader) {
-			defer drains.Done()
-			_, _ = io.Copy(io.Discard, r)
-		}(r)
-	}
-	drains.Wait()
-	if streams.Wait != nil {
-		if _, err := streams.Wait(); err != nil {
-			s.logger.Warn("sched: artifact push wait failed",
-				slog.String("run", run.ID), slog.String("error", err.Error()))
-		}
-	}
+// recordPartialWork writes the §10.5 output row. It is written only when a push actually
+// landed, so the row and the terminal message cannot disagree.
+func (s *Scheduler) recordPartialWork(ctx context.Context, run domain.Run, branch string) {
 	out := domain.RunOutput{
 		ID: domain.NewID(), RunID: run.ID, Kind: domain.OutputPartialWork,
 		Ref: branch, Summary: "Partial work pushed to `" + branch + "`.",
@@ -640,12 +625,6 @@ func (s *Scheduler) pushArtifact(ctx context.Context, run domain.Run, inst ports
 		s.logger.Error("sched: partial_work output write failed",
 			slog.String("run", run.ID), slog.String("error", err.Error()))
 	}
-	return true
-}
-
-// shellQuote single-quotes a string for /bin/sh.
-func shellQuote(v string) string {
-	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
 // cancelPendingElicitations closes a terminated run's open questions so nothing waits on a

@@ -26,11 +26,26 @@ type Script struct {
 	ExitCode int
 }
 
+// ExecResult is what a scripted side exec answers with.
+type ExecResult struct {
+	Stdout   string
+	ExitCode int
+	// Err makes Exec itself fail — the "container is gone at teardown" case.
+	Err error
+}
+
+// SideExecFunc overrides the canned answer for one non-agent exec (the §10.5 teardown push, a
+// probe). Returning ok=false falls back to the default. It is how a test drives the artifact
+// rule's three outcomes — pushed, push failed, nothing to commit — without Docker.
+type SideExecFunc func(argv []string, env map[string]string) (ExecResult, bool)
+
 // Sandbox is the in-memory ports.Sandbox, ID "fake". Every Prepare returns an Instance whose
 // agent exec replays the configured Script — enough for the scheduler, trigger and steering
 // tests to run the whole engine without Docker.
 type Sandbox struct {
 	script Script
+	// SideExec scripts the answers to non-agent execs; nil means the defaults.
+	SideExec SideExecFunc
 
 	mu        sync.Mutex
 	instances map[string]*Instance // by InstanceID, for Reattach
@@ -60,9 +75,10 @@ func (s *Sandbox) Prepare(_ context.Context, spec ports.SandboxSpec, sink ports.
 			InstanceID: "fake-" + spec.RunID,
 			RunID:      spec.RunID,
 		},
-		script: s.script,
-		files:  spec.Files,
-		killed: make(chan struct{}),
+		script:   s.script,
+		sideExec: s.SideExec,
+		files:    spec.Files,
+		killed:   make(chan struct{}),
 	}
 	s.mu.Lock()
 	s.instances[inst.ref.InstanceID] = inst
@@ -109,9 +125,10 @@ func (s *Sandbox) Instances() []*Instance {
 // to end without a process. Any other argv (git artifact pushes, probes) is recorded and
 // succeeds with empty output; Execs() is the test's window into what ran.
 type Instance struct {
-	ref    ports.InstanceRef
-	script Script
-	files  map[string][]byte
+	ref      ports.InstanceRef
+	script   Script
+	sideExec SideExecFunc
+	files    map[string][]byte
 
 	mu        sync.Mutex
 	stdin     bytes.Buffer
@@ -124,12 +141,13 @@ type Instance struct {
 func (i *Instance) Ref() ports.InstanceRef { return i.ref }
 
 // Exec implements ports.Instance.
-func (i *Instance) Exec(_ context.Context, argv []string, _ ports.ExecOpts) (ports.Streams, error) {
+func (i *Instance) Exec(_ context.Context, argv []string, opts ports.ExecOpts) (ports.Streams, error) {
 	i.mu.Lock()
 	dead := i.destroyed
 	killed := i.killed
 	logOffset := i.ref.LogOffset
 	script := i.script
+	sideExec := i.sideExec
 	i.execs = append(i.execs, append([]string(nil), argv...))
 	i.mu.Unlock()
 	if dead {
@@ -147,13 +165,25 @@ func (i *Instance) Exec(_ context.Context, argv []string, _ ports.ExecOpts) (por
 	}
 
 	if !isAgentLaunch(argv) {
-		// A side exec (the §10.5 artifact push, a probe): recorded above, succeeds, no
-		// output. Only the agent launch replays the script.
+		// A side exec (the §10.5 teardown push, a probe): recorded above. The test's
+		// SideExec answers it if it wants to; otherwise the defaults apply. Only the agent
+		// launch replays the script.
+		res, ok := ExecResult{}, false
+		if sideExec != nil {
+			res, ok = sideExec(argv, opts.Env)
+		}
+		if !ok {
+			res = defaultSideExec(argv, opts.Env)
+		}
+		if res.Err != nil {
+			return ports.Streams{}, res.Err
+		}
+		code := res.ExitCode
 		return ports.Streams{
 			Stdin:  nopWriteCloser{},
-			Stdout: bytes.NewReader(nil),
+			Stdout: strings.NewReader(res.Stdout),
 			Stderr: bytes.NewReader(nil),
-			Wait:   func() (int, error) { return 0, nil },
+			Wait:   func() (int, error) { return code, nil },
 		}, nil
 	}
 
@@ -224,6 +254,33 @@ func (i *Instance) StdinWrites() string {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	return i.stdin.String()
+}
+
+// defaultSideExec answers a side exec the test did not script. Everything succeeds silently
+// except the teardown push, which reports the ordinary happy path — an uncommitted tree
+// committed and pushed, with the run trailer on it — because that is what a real container
+// with work in it does, and the scheduler's terminal message is rendered from these lines.
+func defaultSideExec(argv []string, env map[string]string) ExecResult {
+	if !isTeardownPush(argv) {
+		return ExecResult{}
+	}
+	branch := env["LEXICODE_BRANCH"]
+	const sha = "0f1e2d3c4b5a69788796a5b4c3d2e1f000000000"
+	return ExecResult{Stdout: strings.Join([]string{
+		"lexicode: branch " + branch,
+		"lexicode: committed",
+		"lexicode: commit " + sha + " " + env["GIT_AUTHOR_EMAIL"],
+		"lexicode: trailed " + sha,
+		"lexicode: pushed",
+	}, "\n") + "\n"}
+}
+
+// IsTeardownPush reports whether an argv is the scheduler's §10.5 preserve-and-push exec —
+// the hook a test's SideExec keys on.
+func IsTeardownPush(argv []string) bool { return isTeardownPush(argv) }
+
+func isTeardownPush(argv []string) bool {
+	return strings.Contains(strings.Join(argv, " "), "git push origin")
 }
 
 func isKill(argv []string) bool {

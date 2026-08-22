@@ -1,0 +1,26 @@
+-- The POC ships an unrestricted agent container (see the "Container posture" block in
+-- internal/module/docker/sandbox.go). The last piece of that posture lives here: the workspace
+-- default network policy moves from 'allowlist' to 'open'.
+--
+-- Why: under the shipped default a run reached only api.anthropic.com, claude.ai and the
+-- project's git remote, because repos.network_allowlist starts empty. An agent could not
+-- install a dependency, fetch a toolchain or read a doc page, and the failure surfaced as a
+-- proxy denial rather than as a setting to change. On a local, single-owner proof-of-concept
+-- that cost more than it bought.
+--
+-- What it costs: `open` puts the container on Docker's default bridge with no proxy in front
+-- of it, so it reaches every host the laptop reaches. That is the bound on both exfiltration
+-- (a prompt injection has somewhere to send the checkout) and supply-chain pull (an unvetted
+-- registry has a way in) removed.
+--
+-- What it does NOT change: the feature. `none` and `allowlist`, the CONNECT proxy, the egress
+-- relay and the per-decision activity logging are all untouched and still enforce whenever a
+-- project selects them, per project or as a new workspace default. Restoring the old posture
+-- is one more migration setting this column back to 'allowlist'.
+--
+-- Only the row is updated. The column's DEFAULT clause in migration 0001 is consulted by
+-- exactly one statement — 0001's own seed INSERT of the single settings row — and nothing
+-- inserts into workspace_settings at runtime, so a fresh database (0001 then 0005) and an
+-- existing one both end on 'open'. SQLite cannot rewrite a column default in place, and
+-- rebuilding the table to change a clause no future statement reads would be worse.
+UPDATE workspace_settings SET default_network_policy = 'open' WHERE id = 1;
