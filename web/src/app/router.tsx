@@ -187,10 +187,18 @@ const wikiRoute = createRoute({
   path: "wiki",
 });
 
+/** Wiki index state in the URL (interaction rule 12): `?tag=` filters to one tag. */
+export interface WikiSearch {
+  tag?: string;
+}
+
 const wikiIndexRoute = createRoute({
   getParentRoute: () => wikiRoute,
   path: "/",
   component: WikiIndexPage,
+  validateSearch: (search: Record<string, unknown>): WikiSearch => ({
+    tag: optStr(search.tag),
+  }),
 });
 
 const wikiPageRoute = createRoute({

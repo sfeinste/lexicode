@@ -47,6 +47,7 @@ import (
 	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
 	"github.com/spruce/lexicode/internal/service/tickets"
 	triggersvc "github.com/spruce/lexicode/internal/service/triggers"
+	wikisvc "github.com/spruce/lexicode/internal/service/wiki"
 	webui "github.com/spruce/lexicode/web"
 )
 
@@ -175,6 +176,9 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	secretsSvc.Routes(mux, authSvc)
 	agentsSvc := agentsvc.New(agentsvc.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
 	agentsSvc.Routes(mux, authSvc)
+	// The wiki service (S33): pages, versions, FTS search, mentions/backlinks.
+	wikiSvc := wikisvc.New(wikisvc.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
+	wikiSvc.Routes(mux, authSvc)
 	// The Lexicode MCP server (S21, D-12): elicitations, approvals, step reporting, wiki
 	// proposals and criterion checks, blocking on humans. SetRunState routes into the S22
 	// scheduler — the only writer of runs.state — through the same late-bound pointer. The

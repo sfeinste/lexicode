@@ -9,10 +9,9 @@
  * Selection in the description + ⌘⇧O opens the sub-ticket preview: N non-empty selected
  * lines → N titles shown before anything is created; confirming calls POST subtickets.
  *
- * Known S12 seams, closed by later stories: the wiki mention source renders its empty
- * state until the wiki API exists (the delegate picker and agent mentions are live as of
- * S16); run cards appear in the stream when S23 writes kind='run' entries; linked PR and
- * branch populate with the forge (S14+) and runs (S23+).
+ * The S12 seams are closed: the wiki mention source completes real pages (S33), the
+ * delegate picker and agent mentions are live as of S16, run cards appear in the stream
+ * since S23, and linked PR / branch populate with the forge (S14+) and runs (S23+).
  */
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -38,6 +37,7 @@ import {
 import { useAutosave } from "../../../lib/autosave";
 import { formatRelativeTime } from "../../../lib/format/format";
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
+import { useWikiListQuery } from "../../../lib/api/wikiQueries";
 import { useStreamTopics } from "../../../lib/sse/useStreamTopics";
 import { Composer } from "./Composer";
 import { DescriptionSection } from "./DescriptionSection";
@@ -118,6 +118,7 @@ function LoadedTicket({
   const labelsQuery = useProjectLabels(projectKey);
   const membersQuery = useMembers();
   const listQuery = useTicketList(projectKey);
+  const wikiList = useWikiListQuery(projectKey);
 
   const patch = usePatchTicket(projectKey);
   const move = useMoveTicket(projectKey);
@@ -159,18 +160,20 @@ function LoadedTicket({
     );
   }, []);
 
-  // One mention source set for every Editor on the page. Wiki pages stay empty until the
-  // wiki API exists — the menu renders their honest empty state rather than pretending.
+  // One mention source set for every Editor on the page. Every source is live now — the
+  // wiki API (S33) closed the last S12 seam, so `@` completes real pages.
   const mentions: MentionSources = useMemo(
     () => ({
       users: members.map((m: Member) => ({ kind: "user" as const, id: m.id, label: m.display_name })),
       agents: eligibleAgents.map((a) => ({ kind: "agent" as const, id: a.id, label: a.name })),
-      wiki: [],
+      wiki: (wikiList.data?.pages ?? [])
+        .filter((p) => p.state === "live")
+        .map((p) => ({ kind: "wiki" as const, id: p.id, label: p.title })),
       tickets: (listQuery.data?.tickets ?? [])
         .filter((t) => t.id !== detail.id && t.archived_at === null)
         .map((t) => ({ kind: "ticket" as const, id: t.id, label: t.key, hint: t.title })),
     }),
-    [members, eligibleAgents, listQuery.data, detail.id],
+    [members, eligibleAgents, wikiList.data, listQuery.data, detail.id],
   );
 
   const membersById = useMemo(() => {

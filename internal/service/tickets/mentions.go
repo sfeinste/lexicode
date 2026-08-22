@@ -3,64 +3,23 @@ package tickets
 import (
 	"context"
 	"errors"
-	"regexp"
-	"strings"
 
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/store"
+	"github.com/spruce/lexicode/internal/service/mentionparse"
 )
 
-// Mention wire format (S12). The Editor inserts an explicit token for every accepted
-// autocomplete pick:
-//
-//	@[Display Name](user:01H…)   @[dev](agent:01H…)   @[API runbook](wiki:01H…)   @[PAY-14](ticket:01H…)
-//
-// The token is unambiguous (bare `@name` text never creates a linked mention — the wiki
-// story's backlink pass owns *unlinked* mention detection, mentions.linked = 0), renders
-// legibly as plain markdown, and survives copy/paste. parseMentions finds the tokens;
-// resolveMentions validates the targets and turns them into mentions rows with the containing
-// paragraph as context (data model §5).
-var mentionPattern = regexp.MustCompile(`@\[([^\]\n]+)\]\((user|agent|wiki|ticket):([A-Za-z0-9]+)\)`)
+// Mention wire format (S12): see the mentionparse package, the one parser shared with the
+// wiki service (S33) so ticket and wiki bodies can never drift. parseMentions finds the
+// tokens; resolveMentions validates the targets and turns them into mentions rows with the
+// containing paragraph as context (data model §5).
 
 // parsedMention is one token found in a body, with the paragraph that contains it.
-type parsedMention struct {
-	Label   string
-	Kind    string // user | agent | wiki | ticket
-	ID      string
-	Context string
-}
+type parsedMention = mentionparse.Parsed
 
-// parseMentions extracts every mention token from a markdown body, in order. Context is the
-// full containing paragraph (blank-line delimited) — the backlinks pane renders it (UI spec
-// §5.6: a bare list of titles is useless).
+// parseMentions extracts every mention token from a markdown body, in order.
 func parseMentions(body string) []parsedMention {
-	matches := mentionPattern.FindAllStringSubmatchIndex(body, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	out := make([]parsedMention, 0, len(matches))
-	for _, m := range matches {
-		out = append(out, parsedMention{
-			Label:   body[m[2]:m[3]],
-			Kind:    body[m[4]:m[5]],
-			ID:      body[m[6]:m[7]],
-			Context: paragraphAround(body, m[0], m[1]),
-		})
-	}
-	return out
-}
-
-// paragraphAround returns the blank-line-delimited paragraph containing [start,end).
-func paragraphAround(body string, start, end int) string {
-	pStart := 0
-	if i := strings.LastIndex(body[:start], "\n\n"); i != -1 {
-		pStart = i + 2
-	}
-	pEnd := len(body)
-	if i := strings.Index(body[end:], "\n\n"); i != -1 {
-		pEnd = end + i
-	}
-	return strings.TrimSpace(body[pStart:pEnd])
+	return mentionparse.Parse(body)
 }
 
 // resolveMentions validates parsed mentions against the database and returns the mentions
@@ -70,10 +29,8 @@ func paragraphAround(body string, start, end int) string {
 //     table in V1).
 //   - agent: must exist, belong to the project, and not be archived.
 //   - ticket: must exist and belong to the project.
-//   - wiki: written as-is — the wiki service (and its repository) is a later story; the
-//     Editor cannot mint wiki tokens until that API exists, and the wiki story adds
-//     validation when it lands. The mentions table carries no FK on to_id, so an
-//     unvalidated row is inert.
+//   - wiki: must exist, belong to the project, and not be archived (S33 — the validation
+//     the S12 comment promised once the wiki service landed).
 //
 // A token whose target does not resolve is dropped silently: a stale mention must not make
 // the comment or description unsaveable. Agents that resolve are also returned separately —
@@ -117,7 +74,16 @@ func (s *Service) resolveMentions(ctx context.Context, projectID string, parsed 
 				continue
 			}
 		case "wiki":
-			// Written unvalidated; see the function comment.
+			wp, err := s.st.Wiki().ByID(ctx, p.ID)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, nil, err
+			}
+			if wp.ProjectID != projectID || wp.ArchivedAt != nil {
+				continue
+			}
 		}
 		rows = append(rows, domain.Mention{
 			ID:          domain.NewID(),

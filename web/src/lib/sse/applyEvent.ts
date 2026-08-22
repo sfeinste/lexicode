@@ -146,8 +146,14 @@ export function applyStreamEvent(
       void qc.invalidateQueries({ queryKey: ["inbox"] });
       void qc.invalidateQueries({ queryKey: ["notifications"] });
       break;
+    // Wiki writes (S33): the tree payload and every cached page detail (a rename rewrites
+    // other pages' bodies and backlink paragraphs, so one page's event can stale any detail).
     case "wiki.proposed":
+    case "wiki.created":
+    case "wiki.updated":
+    case "wiki.deleted":
       void qc.invalidateQueries({ queryKey: ["wiki", id] });
+      void qc.invalidateQueries({ queryKey: ["wikiPage"] });
       break;
     // Provisioning steps are activity rows updated in place (§10.3) but their frame carries
     // no seq — refetch the transcript the checklist renders from.

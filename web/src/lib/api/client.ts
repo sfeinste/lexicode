@@ -62,6 +62,16 @@ export type DocCandidate = components["schemas"]["DocCandidate"];
 export type TriggerCandidate = components["schemas"]["TriggerCandidate"];
 export type AgentCandidate = components["schemas"]["AgentCandidate"];
 export type AgentScope = components["schemas"]["AgentScope"];
+export type WikiState = components["schemas"]["WikiState"];
+export type WikiPage = components["schemas"]["WikiPage"];
+export type WikiListResponse = components["schemas"]["WikiListResponse"];
+export type WikiPageDetail = components["schemas"]["WikiPageDetail"];
+export type WikiBacklink = components["schemas"]["WikiBacklink"];
+export type WikiUnlinkedMention = components["schemas"]["WikiUnlinkedMention"];
+export type CreateWikiPageRequest = components["schemas"]["CreateWikiPageRequest"];
+export type UpdateWikiPageRequest = components["schemas"]["UpdateWikiPageRequest"];
+export type WikiSearchResponse = components["schemas"]["WikiSearchResponse"];
+export type WikiSearchResult = components["schemas"]["WikiSearchResult"];
 export type Agent = components["schemas"]["Agent"];
 export type AgentListResponse = components["schemas"]["AgentListResponse"];
 export type AgentPermissions = components["schemas"]["AgentPermissions"];
@@ -466,6 +476,31 @@ export const agentsApi = {
     api<void>(
       "DELETE",
       `/agents/${encodeURIComponent(id)}/permission-rules/${encodeURIComponent(ruleID)}`,
+    ),
+};
+
+/**
+ * Wiki (S33). The list is the whole tree payload (bodies included — a wiki is prompt-sized
+ * by design); GET by id returns the page plus backlinks and unlinked mentions in one fetch;
+ * search is FTS5 with \x01…\x02 match markers in the snippets.
+ */
+export const wikiApi = {
+  list: (projectKey: string, signal?: AbortSignal) =>
+    api<WikiListResponse>("GET", `/projects/${encodeURIComponent(projectKey)}/wiki`, {
+      signal,
+    }),
+  create: (projectKey: string, body: CreateWikiPageRequest) =>
+    api<WikiPage>("POST", `/projects/${encodeURIComponent(projectKey)}/wiki`, { body }),
+  get: (id: string, signal?: AbortSignal) =>
+    api<WikiPageDetail>("GET", `/wiki/${encodeURIComponent(id)}`, { signal }),
+  update: (id: string, body: UpdateWikiPageRequest) =>
+    api<WikiPage>("PATCH", `/wiki/${encodeURIComponent(id)}`, { body }),
+  archive: (id: string) => api<void>("DELETE", `/wiki/${encodeURIComponent(id)}`),
+  search: (projectKey: string, q: string, signal?: AbortSignal) =>
+    api<WikiSearchResponse>(
+      "GET",
+      `/projects/${encodeURIComponent(projectKey)}/wiki/search?q=${encodeURIComponent(q)}`,
+      { signal },
     ),
 };
 

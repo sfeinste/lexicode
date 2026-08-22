@@ -1261,6 +1261,131 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/wiki:
+    get:
+      operationId: listWiki
+      summary: >
+        The S33 wiki tree payload: every non-archived page of the project (live pages plus
+        agent proposals, `state` distinguishing them), bodies included — one payload feeds
+        the tree, the tag index and mention autocomplete. Tree order: roots by position,
+        then children by position.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The pages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WikiListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createWikiPage
+      summary: >
+        Create a live page at the end of its parent's (or the root's) sibling list. Version 1
+        is appended, mentions derived. A parent that already has a parent is refused with the
+        409 `wiki_depth_exceeded` problem — the wiki is two levels deep at most.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateWikiPageRequest" }
+      responses:
+        "201":
+          description: The created page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WikiPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/wiki/search:
+    get:
+      operationId: searchWiki
+      summary: >
+        FTS5 search over titles, bodies and tags — the wiki's primary navigation (`/`
+        focuses it; UI spec §5.6). Best match first. Snippets wrap match regions in
+        the control markers U+0001/U+0002; the client renders its own highlight — the server never ships HTML.
+        User input is quoted term-by-term (metacharacters are safe), the last term matching
+        as a prefix so results appear while typing.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: q, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Ranked results; empty query returns empty results.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WikiSearchResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /wiki/{id}:
+    get:
+      operationId: getWikiPage
+      summary: >
+        One page plus everything its screen renders in a single fetch: the latest version
+        number, the backlinks pane (linked mentions grouped by source with their full
+        containing paragraphs), and the unlinked-mentions disclosure (pages whose plain text
+        contains this page's title outside any mention token — computed live, search-based).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The page detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WikiPageDetail" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    patch:
+      operationId: updateWikiPage
+      summary: >
+        Edit content and/or front matter; every field optional, null clears the nullable
+        ones. A title or body change appends the next version (an unchanged content save is
+        a no-op that mints nothing; front-matter-only edits never version). A title change
+        regenerates the slug and rewrites the stored label of every inbound
+        `@[label](wiki:id)` token in other live wiki pages, re-deriving their backlink
+        paragraphs. A third tree level (or re-parenting a page that has children) is the 409
+        `wiki_depth_exceeded` problem; editing an archived page is 409 `wiki_page_archived`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateWikiPageRequest" }
+      responses:
+        "200":
+          description: The updated page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WikiPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: archiveWikiPage
+      summary: >
+        Archive (never row deletion — disappearance without data loss). The page leaves the
+        tree, search and mention resolution; its outbound mention rows are cleared; its
+        children are lifted to the root. Idempotent.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Archived.
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /agents/{id}/permission-rules:
     get:
       operationId: listPermissionRules
@@ -2442,6 +2567,129 @@ components:
     AgentScope:
       type: string
       enum: [always, auto, paths, manual, never]
+    WikiState:
+      type: string
+      enum: [live, proposed]
+    WikiPage:
+      type: object
+      description: >
+        One wiki page with its full front matter (data model §5). `state` distinguishes live
+        pages from agent proposals (rendered with a PROPOSED chip; accept/dismiss is S35).
+        Positions are fractional — drag ordering writes midpoints.
+      required:
+        [id, project_id, slug, title, parent_id, position, owner_id, verified_until,
+         agent_scope, scope_paths, tags, body, token_estimate, state, imported_from,
+         demoted_at, demoted_from, archived_at, created_at, updated_at]
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        parent_id: { type: [string, "null"] }
+        position: { type: number }
+        owner_id: { type: [string, "null"] }
+        verified_until: { type: [string, "null"] }
+        agent_scope: { $ref: "#/components/schemas/AgentScope" }
+        scope_paths: { type: array, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+        body: { type: string }
+        token_estimate: { type: integer }
+        state: { $ref: "#/components/schemas/WikiState" }
+        imported_from: { type: [string, "null"] }
+        demoted_at: { type: [string, "null"] }
+        demoted_from: { type: [string, "null"] }
+        archived_at: { type: [string, "null"] }
+        created_at: { type: string }
+        updated_at: { type: string }
+    WikiListResponse:
+      type: object
+      required: [pages]
+      properties:
+        pages:
+          type: array
+          items: { $ref: "#/components/schemas/WikiPage" }
+    CreateWikiPageRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        parent_id: { type: [string, "null"] }
+        body: { type: string }
+    UpdateWikiPageRequest:
+      type: object
+      description: >
+        Every field optional; null clears the nullable ones (parent_id → root, owner_id →
+        no owner, verified_until → not verified).
+      properties:
+        title: { type: string }
+        body: { type: string }
+        parent_id: { type: [string, "null"] }
+        position: { type: number }
+        owner_id: { type: [string, "null"] }
+        verified_until: { type: [string, "null"] }
+        agent_scope: { $ref: "#/components/schemas/AgentScope" }
+        scope_paths: { type: array, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+    WikiBacklink:
+      type: object
+      description: >
+        One source that mentions the page, with every containing paragraph (UI spec §5.6 —
+        a bare list of titles is useless). `source_slug` set for wiki sources, `source_key`
+        (the ticket key) for ticket and comment sources.
+      required: [source_kind, source_id, title, paragraphs]
+      properties:
+        source_kind: { type: string, enum: [wiki, ticket, comment] }
+        source_id: { type: string }
+        title: { type: string }
+        source_slug: { type: string }
+        source_key: { type: string }
+        paragraphs:
+          type: array
+          items: { type: string }
+    WikiUnlinkedMention:
+      type: object
+      description: >
+        One page whose plain text contains this page's title outside any mention token —
+        one click from becoming a real link. Linking is a client-side edit of the SOURCE
+        page: replace the first plain occurrence in its body with the mention token and
+        PATCH it.
+      required: [page_id, slug, title, paragraph]
+      properties:
+        page_id: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        paragraph: { type: string }
+    WikiPageDetail:
+      type: object
+      required: [page, version, backlinks, unlinked_mentions]
+      properties:
+        page: { $ref: "#/components/schemas/WikiPage" }
+        version: { type: integer, description: Latest version number; versions append on content change only. }
+        backlinks:
+          type: array
+          items: { $ref: "#/components/schemas/WikiBacklink" }
+        unlinked_mentions:
+          type: array
+          items: { $ref: "#/components/schemas/WikiUnlinkedMention" }
+    WikiSearchResult:
+      type: object
+      description: >
+        Snippets wrap each match region in U+0001…U+0002; the client splits on the markers
+        and renders its own highlight.
+      required: [id, slug, title, title_snippet, body_snippet]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        title_snippet: { type: string }
+        body_snippet: { type: string }
+    WikiSearchResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/WikiSearchResult" }
     TriggerCandidate:
       type: object
       description: A pre-filled suggested trigger. Created DISABLED — the toggles ship off (§6.3).
@@ -3336,6 +3584,9 @@ components:
         - trigger.deleted
         - notification.updated
         - wiki.proposed
+        - wiki.created
+        - wiki.updated
+        - wiki.deleted
         - provision.step
         - module.degraded
     StreamFrame:

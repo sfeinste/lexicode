@@ -755,6 +755,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{key}/wiki": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The S33 wiki tree payload: every non-archived page of the project (live pages plus agent proposals, `state` distinguishing them), bodies included — one payload feeds the tree, the tag index and mention autocomplete. Tree order: roots by position, then children by position. */
+        get: operations["listWiki"];
+        put?: never;
+        /** Create a live page at the end of its parent's (or the root's) sibling list. Version 1 is appended, mentions derived. A parent that already has a parent is refused with the 409 `wiki_depth_exceeded` problem — the wiki is two levels deep at most. */
+        post: operations["createWikiPage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/wiki/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** FTS5 search over titles, bodies and tags — the wiki's primary navigation (`/` focuses it; UI spec §5.6). Best match first. Snippets wrap match regions in the control markers U+0001/U+0002; the client renders its own highlight — the server never ships HTML. User input is quoted term-by-term (metacharacters are safe), the last term matching as a prefix so results appear while typing. */
+        get: operations["searchWiki"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wiki/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page plus everything its screen renders in a single fetch: the latest version number, the backlinks pane (linked mentions grouped by source with their full containing paragraphs), and the unlinked-mentions disclosure (pages whose plain text contains this page's title outside any mention token — computed live, search-based). */
+        get: operations["getWikiPage"];
+        put?: never;
+        post?: never;
+        /** Archive (never row deletion — disappearance without data loss). The page leaves the tree, search and mention resolution; its outbound mention rows are cleared; its children are lifted to the root. Idempotent. */
+        delete: operations["archiveWikiPage"];
+        options?: never;
+        head?: never;
+        /** Edit content and/or front matter; every field optional, null clears the nullable ones. A title or body change appends the next version (an unchanged content save is a no-op that mints nothing; front-matter-only edits never version). A title change regenerates the slug and rewrites the stored label of every inbound `@[label](wiki:id)` token in other live wiki pages, re-deriving their backlink paragraphs. A third tree level (or re-parenting a page that has children) is the 409 `wiki_depth_exceeded` problem; editing an archived page is 409 `wiki_page_archived`. */
+        patch: operations["updateWikiPage"];
+        trace?: never;
+    };
     "/agents/{id}/permission-rules": {
         parameters: {
             query?: never;
@@ -1629,6 +1683,86 @@ export interface components {
         };
         /** @enum {string} */
         AgentScope: "always" | "auto" | "paths" | "manual" | "never";
+        /** @enum {string} */
+        WikiState: "live" | "proposed";
+        /** @description One wiki page with its full front matter (data model §5). `state` distinguishes live pages from agent proposals (rendered with a PROPOSED chip; accept/dismiss is S35). Positions are fractional — drag ordering writes midpoints. */
+        WikiPage: {
+            id: string;
+            project_id: string;
+            slug: string;
+            title: string;
+            parent_id: string | null;
+            position: number;
+            owner_id: string | null;
+            verified_until: string | null;
+            agent_scope: components["schemas"]["AgentScope"];
+            scope_paths: string[];
+            tags: string[];
+            body: string;
+            token_estimate: number;
+            state: components["schemas"]["WikiState"];
+            imported_from: string | null;
+            demoted_at: string | null;
+            demoted_from: string | null;
+            archived_at: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        WikiListResponse: {
+            pages: components["schemas"]["WikiPage"][];
+        };
+        CreateWikiPageRequest: {
+            title: string;
+            parent_id?: string | null;
+            body?: string;
+        };
+        /** @description Every field optional; null clears the nullable ones (parent_id → root, owner_id → no owner, verified_until → not verified). */
+        UpdateWikiPageRequest: {
+            title?: string;
+            body?: string;
+            parent_id?: string | null;
+            position?: number;
+            owner_id?: string | null;
+            verified_until?: string | null;
+            agent_scope?: components["schemas"]["AgentScope"];
+            scope_paths?: string[];
+            tags?: string[];
+        };
+        /** @description One source that mentions the page, with every containing paragraph (UI spec §5.6 — a bare list of titles is useless). `source_slug` set for wiki sources, `source_key` (the ticket key) for ticket and comment sources. */
+        WikiBacklink: {
+            /** @enum {string} */
+            source_kind: "wiki" | "ticket" | "comment";
+            source_id: string;
+            title: string;
+            source_slug?: string;
+            source_key?: string;
+            paragraphs: string[];
+        };
+        /** @description One page whose plain text contains this page's title outside any mention token — one click from becoming a real link. Linking is a client-side edit of the SOURCE page: replace the first plain occurrence in its body with the mention token and PATCH it. */
+        WikiUnlinkedMention: {
+            page_id: string;
+            slug: string;
+            title: string;
+            paragraph: string;
+        };
+        WikiPageDetail: {
+            page: components["schemas"]["WikiPage"];
+            /** @description Latest version number; versions append on content change only. */
+            version: number;
+            backlinks: components["schemas"]["WikiBacklink"][];
+            unlinked_mentions: components["schemas"]["WikiUnlinkedMention"][];
+        };
+        /** @description Snippets wrap each match region in U+0001…U+0002; the client splits on the markers and renders its own highlight. */
+        WikiSearchResult: {
+            id: string;
+            slug: string;
+            title: string;
+            title_snippet: string;
+            body_snippet: string;
+        };
+        WikiSearchResponse: {
+            results: components["schemas"]["WikiSearchResult"][];
+        };
         /** @description A pre-filled suggested trigger. Created DISABLED — the toggles ship off (§6.3). */
         TriggerCandidate: {
             id: string;
@@ -2221,7 +2355,7 @@ export interface components {
          * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "triage.accepted" | "triage.duplicate" | "triage.declined" | "triage.snoozed" | "triage.woken" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "triage.accepted" | "triage.duplicate" | "triage.declined" | "triage.snoozed" | "triage.woken" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "wiki.created" | "wiki.updated" | "wiki.deleted" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;
@@ -4167,6 +4301,168 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TriageItem"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    listWiki: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The pages. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WikiListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    createWikiPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWikiPageRequest"];
+            };
+        };
+        responses: {
+            /** @description The created page. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WikiPage"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    searchWiki: {
+        parameters: {
+            query: {
+                q: string;
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ranked results; empty query returns empty results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WikiSearchResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getWikiPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WikiPageDetail"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    archiveWikiPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    updateWikiPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWikiPageRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WikiPage"];
                 };
             };
             400: components["responses"]["Problem"];

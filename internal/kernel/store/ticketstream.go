@@ -31,6 +31,31 @@ func (r *TicketStreamRepo) Append(ctx context.Context, e *domain.StreamEntry) er
 	return mapErr(err)
 }
 
+// ByID returns one stream entry, or ErrNotFound — the wiki backlinks pane resolving a
+// comment mention source back to its ticket (S33).
+func (r *TicketStreamRepo) ByID(ctx context.Context, id string) (domain.StreamEntry, error) {
+	var (
+		e                      domain.StreamEntry
+		kind, actorKind        string
+		actorID, runID, edited sql.NullString
+		payload                string
+	)
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT `+streamCols+` FROM ticket_stream WHERE id = ?`, id).
+		Scan(&e.ID, &e.TicketID, &kind, &actorKind, &actorID, &e.Body, &payload,
+			&runID, &edited, &e.CreatedAt)
+	if err != nil {
+		return domain.StreamEntry{}, mapErr(err)
+	}
+	e.Kind = domain.StreamKind(kind)
+	e.ActorKind = domain.ActorKind(actorKind)
+	e.ActorID = strPtr(actorID)
+	e.RunID = strPtr(runID)
+	e.EditedAt = strPtr(edited)
+	e.Payload = json.RawMessage(payload)
+	return e, nil
+}
+
 // ForTicket returns a ticket's whole stream, oldest first — the shape the detail view renders.
 func (r *TicketStreamRepo) ForTicket(ctx context.Context, ticketID string) ([]domain.StreamEntry, error) {
 	rows, err := r.h.r.QueryContext(ctx, `

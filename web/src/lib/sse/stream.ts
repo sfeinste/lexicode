@@ -44,6 +44,9 @@ export const STREAM_EVENT_TYPES: readonly StreamEventType[] = [
   "trigger.fired",
   "notification.updated",
   "wiki.proposed",
+  "wiki.created",
+  "wiki.updated",
+  "wiki.deleted",
   "provision.step",
   "module.degraded",
 ];
