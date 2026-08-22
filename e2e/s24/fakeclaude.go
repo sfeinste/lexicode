@@ -32,6 +32,14 @@ grep -q 'E2E-MODE: interactive' /workspace/.lexicode/prompt.md 2>/dev/null && MO
 
 emit() { printf '%s\n' "$1"; }
 
+# await_stdin_eof is what makes this fixture honest. Under --input-format stream-json the real
+# CLI does not exit when it emits a result: it goes back to reading stdin for the next user
+# message and exits only at EOF. The orchestrator closes stdin when the last turn ends with
+# nothing queued, and that — not the script reaching its own end — is what ends this process.
+# A fixture that exited by itself would let an adapter that never closes stdin pass, which is
+# precisely how a completed run came to hang in the running state, with no push and no PR.
+await_stdin_eof() { cat >/dev/null; }
+
 mcp_call() { # $1 = tool name, $2 = JSON arguments; blocks until the tool returns
   curl -sS --max-time 86400 -X POST "$MCP_URL" \
     -H 'Content-Type: application/json' -H 'Accept: application/json' \
@@ -50,6 +58,7 @@ if [ "$MODE" = stall ]; then
   i=0
   while [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done
   emit '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"unreachable","total_cost_usd":0.001,"usage":{"input_tokens":12,"output_tokens":6}}'
+  await_stdin_eof
   exit 0
 fi
 
@@ -90,5 +99,6 @@ GITLOG=$(jq -Rs . </tmp/gitwork.log)
 emit "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t3\",\"content\":$GITLOG,\"is_error\":$([ $GIT_EXIT -eq 0 ] && echo false || echo true)}]}}"
 mcp_call set_step '{"step":"done","index":3,"total":3}' >/dev/null 2>&1
 emit '{"type":"result","subtype":"success","is_error":false,"num_turns":4,"result":"Implemented idempotency keys and committed them.","total_cost_usd":0.0342,"usage":{"input_tokens":1200,"output_tokens":340}}'
+await_stdin_eof
 exit 0
 `

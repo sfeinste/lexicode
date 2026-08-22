@@ -53,22 +53,22 @@ func (s *Scripted) Launch(ctx context.Context, spec ports.RunSpec, inst ports.In
 		return rt.Launch(ctx, spec, inst, sink)
 	}
 
-	// No instance: replay from an internal paced stream. Stop terminates it like a signal.
+	// No instance: replay from an internal paced stream. Like the real CLI it stays open once
+	// the fixture runs out and exits when the adapter closes stdin; Stop terminates it like a
+	// signal.
 	killed := make(chan struct{})
-	pr := &pacedReader{lines: splitAfterNewlines(s.Fixture), pace: s.Pace, killed: killed}
-	var rec discardWriter
+	stdinEOF := make(chan struct{})
+	pr := newPacedReader(splitAfterNewlines(s.Fixture), s.Pace, killed, stdinEOF)
 	st := ports.Streams{
-		Stdin:  &rec,
+		Stdin:  &eofSignalWriter{eof: stdinEOF},
 		Stdout: pr,
 		Stderr: nil,
 		Wait: func() (int, error) {
 			<-pr.drained()
-			select {
-			case <-killed:
+			if pr.wasKilled() {
 				return 143, nil
-			default:
-				return s.ExitCode, nil
 			}
+			return s.ExitCode, nil
 		},
 	}
 	var killOnce sync.Once
@@ -83,7 +83,16 @@ func (s *Scripted) Launch(ctx context.Context, spec ports.RunSpec, inst ports.In
 	}), nil
 }
 
-type discardWriter struct{}
+// eofSignalWriter discards what the adapter writes but honours the one thing that matters:
+// closing it is the stdin EOF that lets the scripted process exit.
+type eofSignalWriter struct {
+	eof  chan struct{}
+	once sync.Once
+}
 
-func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
-func (discardWriter) Close() error                { return nil }
+func (w *eofSignalWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func (w *eofSignalWriter) Close() error {
+	w.once.Do(func() { close(w.eof) })
+	return nil
+}

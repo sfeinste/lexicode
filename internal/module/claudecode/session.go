@@ -24,6 +24,15 @@ var ErrRespondUnrouted = errors.New(
 // ErrSessionEnded is returned by Steer once the agent process has exited.
 var ErrSessionEnded = errors.New("claudecode: session has ended")
 
+// ErrStdinClosed is returned by Steer in the window between the agent's last turn and its
+// exit: the final result arrived with nothing queued, so the adapter closed stdin and the CLI
+// is on its way out. Nothing can reach the agent any more, and saying so is the honest
+// answer — the caller keeps the message queued rather than believing it was delivered. It
+// wraps ErrSessionEnded so callers that only care "can I still steer this run?" need one
+// errors.Is.
+var ErrStdinClosed = fmt.Errorf(
+	"%w: the agent's final result arrived and its input stream is closed", ErrSessionEnded)
+
 // RespondFunc routes an elicitation answer to whatever is holding the blocking MCP call.
 type RespondFunc func(ctx context.Context, runID, elicitationID string, r ports.Response) error
 
@@ -127,7 +136,8 @@ type session struct {
 	lastEventAt time.Time
 	lastUsageID string            // message id whose usage was already counted
 	usageTotal  domain.UsageDelta // everything emitted through sink.Usage so far
-	resultLine  *streamLine       // the final "result" message, if one arrived
+	resultLine  *streamLine       // the most recent "result" message, if one arrived
+	stdinClosed bool              // stdin has been closed; nothing more can reach the agent
 
 	done    chan struct{}
 	result  ports.Result
@@ -442,15 +452,58 @@ func (s *session) handleResultLocked(line *streamLine, now time.Time) {
 			}),
 			CostCents: delta.CostCents,
 		}, now)
+	} else {
+		s.emitLocked(domain.Activity{
+			Type:      domain.ActivityResponse,
+			Level:     0,
+			Title:     truncateLine(line.Result),
+			Payload:   mustJSON(map[string]any{"text": line.Result}),
+			CostCents: delta.CostCents,
+		}, now)
+	}
+	s.turnEndedLocked()
+}
+
+// turnEndedLocked applies what a `result` actually means to the session's lifetime.
+//
+// Under `--input-format stream-json` (contracts §3.1) the CLI does not exit when it emits a
+// result: it flushes the turn and blocks reading stdin for the next user message. A result is
+// therefore the end of a *turn*, and the end of the session only when nobody has anything
+// left to say. Two cases:
+//
+//   - Steering is still queued. The agent has more to do, so deliver it here and let the
+//     session run on. A turn boundary is the widest possible gap "between tool calls", which
+//     is exactly the seam contracts §3.4 promises delivery on.
+//   - Nothing is queued. Close stdin. The CLI exits, stdout reaches EOF, the pumps return and
+//     finish() publishes the result — which is what runs the scheduler's terminal path: the
+//     push, the pull request, the ticket move. Without this close nothing ever ends the
+//     process: a run that had finished its work sat in `running` until its wall clock fired.
+//
+// mu held.
+func (s *session) turnEndedLocked() {
+	if len(s.queue) > 0 {
+		s.flushQueueLocked()
+		if len(s.queue) == 0 {
+			return // the agent has a new instruction; the session continues
+		}
+		// stdin refused the write, so there is nothing to continue with. Fall through and
+		// close; finish() reports what could not be delivered.
+	}
+	s.closeStdinLocked()
+}
+
+// closeStdinLocked closes the agent's input stream exactly once. Both the last turn and Stop
+// come through here, so the two paths cannot double-close (a docker exec's stdin is a
+// half-closed hijacked connection; closing it twice is an error) and cannot race — the flag
+// and the close are both under mu. mu held.
+func (s *session) closeStdinLocked() {
+	if s.stdinClosed {
 		return
 	}
-	s.emitLocked(domain.Activity{
-		Type:      domain.ActivityResponse,
-		Level:     0,
-		Title:     truncateLine(line.Result),
-		Payload:   mustJSON(map[string]any{"text": line.Result}),
-		CostCents: delta.CostCents,
-	}, now)
+	s.stdinClosed = true
+	if s.st.Stdin != nil {
+		_ = s.st.Stdin.Close()
+	}
 }
 
 // emitLocked assigns the next adapter sequence number and sends the activity. mu held.
@@ -527,6 +580,12 @@ func (s *session) Steer(_ context.Context, msg string) error {
 	if s.ended {
 		return ErrSessionEnded
 	}
+	if s.stdinClosed {
+		// The agent's last turn ended and its input stream is gone. Queueing here would be a
+		// lie — nothing drains the queue after this point — so refuse and let the caller
+		// keep the message (see ErrStdinClosed).
+		return ErrStdinClosed
+	}
 	if len(s.inFlight) > 0 {
 		s.queue = append(s.queue, msg)
 		return nil
@@ -551,16 +610,13 @@ func (s *session) Stop(ctx context.Context, reason string) error {
 		s.stopped = true
 		s.stopReason = reason
 	}
-	stdin := s.st.Stdin
+	// Idempotent, and shared with the last turn's close: whichever gets there first wins and
+	// the other is a no-op.
+	s.closeStdinLocked()
 	s.mu.Unlock()
 
-	if !already {
-		if stdin != nil {
-			_ = stdin.Close()
-		}
-		if s.opts.Kill != nil {
-			_ = s.opts.Kill(ctx, "TERM")
-		}
+	if !already && s.opts.Kill != nil {
+		_ = s.opts.Kill(ctx, "TERM")
 	}
 
 	select {
@@ -609,6 +665,9 @@ func (s *session) flushQueueLocked() {
 func (s *session) writeUserLocked(text string) error {
 	if s.st.Stdin == nil {
 		return errors.New("claudecode: no stdin attached")
+	}
+	if s.stdinClosed {
+		return ErrStdinClosed
 	}
 	_, err := s.st.Stdin.Write(userMessage(text))
 	return err

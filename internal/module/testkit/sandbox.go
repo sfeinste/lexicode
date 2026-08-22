@@ -197,22 +197,24 @@ func (i *Instance) Exec(_ context.Context, argv []string, opts ports.ExecOpts) (
 			stdout = stdout[off:]
 		}
 	}
-	pr := &pacedReader{lines: splitAfterNewlines(stdout), pace: script.Pace, killed: killed}
+	// stdinEOF joins this exec's stdin to its stdout: the scripted process holds stdout open
+	// after the fixture runs out and ends only when its stdin closes, which is what the real
+	// CLI does under --input-format stream-json.
+	stdinEOF := make(chan struct{})
+	pr := newPacedReader(splitAfterNewlines(stdout), script.Pace, killed, stdinEOF)
 	return ports.Streams{
-		Stdin:  &recordingWriter{inst: i},
+		Stdin:  &recordingWriter{inst: i, eof: stdinEOF},
 		Stdout: pr,
 		Stderr: bytes.NewReader(script.Stderr),
 		Wait: func() (int, error) {
-			// The stream always ends — naturally, or cut short by a kill (the paced
-			// reader returns EOF as soon as it sees the signal). A killed script exits
-			// 143 (128+SIGTERM), like a real signalled process.
+			// The stream ends when the adapter closes stdin, or is cut short by a kill.
+			// A killed script exits 143 (128+SIGTERM), like a real signalled process;
+			// one that ran out of input exits with the script's code.
 			<-pr.drained()
-			select {
-			case <-killed:
+			if pr.wasKilled() {
 				return 143, nil
-			default:
-				return script.ExitCode, nil
 			}
+			return script.ExitCode, nil
 		},
 	}, nil
 }
@@ -305,7 +307,13 @@ func (i *Instance) Execs() [][]string {
 	return out
 }
 
-type recordingWriter struct{ inst *Instance }
+// recordingWriter is one exec's stdin: it records what the orchestrator writes, and its Close
+// is the EOF that lets the scripted process exit.
+type recordingWriter struct {
+	inst *Instance
+	eof  chan struct{}
+	once sync.Once
+}
 
 func (w *recordingWriter) Write(p []byte) (int, error) {
 	w.inst.mu.Lock()
@@ -313,36 +321,59 @@ func (w *recordingWriter) Write(p []byte) (int, error) {
 	return w.inst.stdin.Write(p)
 }
 
-func (w *recordingWriter) Close() error { return nil }
+func (w *recordingWriter) Close() error {
+	w.once.Do(func() { close(w.eof) })
+	return nil
+}
 
 type nopWriteCloser struct{}
 
 func (nopWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
 func (nopWriteCloser) Close() error                { return nil }
 
-// pacedReader serves pre-split lines with a delay before each, ending early when killed.
+// pacedReader serves pre-split lines with a delay before each.
+//
+// When the lines run out it does NOT end the stream. The real Claude Code CLI, launched with
+// `--input-format stream-json` (contracts §3.1), emits its `result` and then blocks reading
+// stdin for the next user message: a result ends a turn, and only EOF on stdin ends the
+// process. So the reader parks until the orchestrator closes stdin — or until a kill, which
+// ends it wherever it is.
+//
+// This is the dimension the old fake had backwards. It served the fixture and returned EOF by
+// itself, so every test passed over an adapter that never closed stdin at all, which is
+// exactly the hang a real run then produced.
 type pacedReader struct {
 	lines  [][]byte
 	pace   time.Duration
 	killed chan struct{}
+	stdin  chan struct{} // closed when the process's stdin reaches EOF
 
 	mu       sync.Mutex
 	buf      bytes.Buffer
 	idx      int
+	killEnd  bool // the stream ended on a signal rather than on stdin EOF
 	done     chan struct{}
 	doneOnce sync.Once
 }
 
-func (r *pacedReader) drained() chan struct{} {
+func newPacedReader(lines [][]byte, pace time.Duration, killed, stdin chan struct{}) *pacedReader {
+	if stdin == nil {
+		stdin = make(chan struct{}) // never closed: only a kill can end this stream
+	}
+	return &pacedReader{
+		lines: lines, pace: pace, killed: killed, stdin: stdin,
+		done: make(chan struct{}),
+	}
+}
+
+// drained is closed once the stream has ended, however it ended.
+func (r *pacedReader) drained() chan struct{} { return r.done }
+
+// wasKilled reports whether a signal, rather than stdin EOF, ended the stream.
+func (r *pacedReader) wasKilled() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.done == nil {
-		r.done = make(chan struct{})
-		if r.idx >= len(r.lines) && r.buf.Len() == 0 {
-			r.doneOnce.Do(func() { close(r.done) })
-		}
-	}
-	return r.done
+	return r.killEnd
 }
 
 func (r *pacedReader) Read(p []byte) (int, error) {
@@ -354,8 +385,14 @@ func (r *pacedReader) Read(p []byte) (int, error) {
 			return n, nil
 		}
 		if r.idx >= len(r.lines) {
-			r.finishLocked()
 			r.mu.Unlock()
+			// Out of fixture, but not out of process: wait for stdin to close.
+			select {
+			case <-r.stdin:
+				r.end(false)
+			case <-r.killed:
+				r.end(true)
+			}
 			return 0, io.EOF
 		}
 		next := r.lines[r.idx]
@@ -366,19 +403,13 @@ func (r *pacedReader) Read(p []byte) (int, error) {
 			select {
 			case <-time.After(r.pace):
 			case <-r.killed:
-				r.mu.Lock()
-				r.idx = len(r.lines)
-				r.finishLocked()
-				r.mu.Unlock()
+				r.end(true)
 				return 0, io.EOF
 			}
 		} else {
 			select {
 			case <-r.killed:
-				r.mu.Lock()
-				r.idx = len(r.lines)
-				r.finishLocked()
-				r.mu.Unlock()
+				r.end(true)
 				return 0, io.EOF
 			default:
 			}
@@ -390,11 +421,14 @@ func (r *pacedReader) Read(p []byte) (int, error) {
 	}
 }
 
-// finishLocked marks the stream drained. mu held.
-func (r *pacedReader) finishLocked() {
-	if r.done == nil {
-		r.done = make(chan struct{})
+// end marks the stream finished, recording whether a signal did it.
+func (r *pacedReader) end(killed bool) {
+	r.mu.Lock()
+	r.idx = len(r.lines)
+	if killed {
+		r.killEnd = true
 	}
+	r.mu.Unlock()
 	r.doneOnce.Do(func() { close(r.done) })
 }
 
