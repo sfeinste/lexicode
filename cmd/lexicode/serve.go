@@ -20,6 +20,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/audit"
 	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/bus"
+	"github.com/spruce/lexicode/internal/kernel/guard"
 	"github.com/spruce/lexicode/internal/kernel/httpx"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/sched"
@@ -196,11 +197,17 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	})
 	triggersSvc.Routes(mux, authSvc)
 	// The trigger engine (S26, architecture §8): match → conditions → guard → actions.
-	// Stage 3 is guard.Pass until S27 lands the loop-protection layers; stage 4 resolves
-	// actions from the registry, which is empty until S28 — a stored action fires as
-	// `errored` naming the missing ID, with no side effects.
+	// Stage 3 is the S27 loop guard — the five layers of architecture §9, each defaulting
+	// on, configured per trigger. Its loop-stopped run seam reaches the scheduler through
+	// the same late-bound pointer as everything else (only the scheduler writes runs.state).
+	// Stage 4 resolves actions from the registry, which is empty until S28 — a stored
+	// action fires as `errored` naming the missing ID, with no side effects.
+	loopGuard := guard.New(guard.Options{
+		Store: st, Loop: lateLoopStopper{s: &scheduler}, Logger: logger,
+	})
 	triggerEngine := triggersvc.NewEngine(triggersvc.EngineOptions{
 		Store: st, Bus: b, Logger: logger,
+		Guard: loopGuard, Sources: k.EventSources,
 		Action: k.Action, Kernel: k,
 	})
 	if err := triggerEngine.Subscribe(b); err != nil {

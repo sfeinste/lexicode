@@ -13,6 +13,7 @@ import (
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/audit"
 	"github.com/spruce/lexicode/internal/kernel/bus"
+	"github.com/spruce/lexicode/internal/kernel/guard"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
@@ -348,7 +349,13 @@ func (s *Scheduler) Enqueue(ctx context.Context, req RunRequest) (domain.Run, er
 		SandboxID:          s.opts.SandboxID,
 		StateReason:        req.Reason,
 		SubjectKey:         subjectKey(ticket),
+		Depth:              req.Depth,
 		QueuedAt:           now,
+	}
+	if req.SubjectKey != "" {
+		// The guard's descriptor-derived subject ("pr:219") wins over the ticket fallback:
+		// it is what debounce and cancel-in-progress key on (S27).
+		run.SubjectKey = req.SubjectKey
 	}
 	if req.TicketID != "" {
 		run.TicketID = &req.TicketID
@@ -409,8 +416,89 @@ func (s *Scheduler) Enqueue(ctx context.Context, req RunRequest) (domain.Run, er
 			"state": string(run.State)}); err != nil {
 		return domain.Run{}, err
 	}
+
+	// Cancel-in-progress (S27, architecture §9 layer 3): the guard elected a still-active
+	// run for the same (trigger, subject); now that the new run and its seq exist, cancel
+	// the old one with a reason naming its replacement, and retro-mark its firing
+	// `superseded` pointing at the new run — before waking admission, so cancel-then-admit
+	// ordering holds. (The admission ticker can still race a pass already in flight; the
+	// worst case is the new run waiting one interval for the freed slot.)
+	if req.SupersededRunID != "" {
+		reason := fmt.Sprintf("superseded by run #%d", run.Seq)
+		if err := s.StopRun(ctx, req.SupersededRunID, reason); err != nil {
+			s.logger.Error("sched: superseded-run stop failed",
+				slog.String("run", req.SupersededRunID), slog.String("error", err.Error()))
+		}
+		if req.TriggerID != "" {
+			if err := s.st.Firings().Supersede(ctx, req.TriggerID, req.SupersededRunID, run.ID, reason); err != nil {
+				s.logger.Error("sched: firing supersede failed",
+					slog.String("run", req.SupersededRunID), slog.String("error", err.Error()))
+			}
+		}
+	}
+
 	s.emitRunState(ctx, run)
 	s.Wake()
+	return run, nil
+}
+
+// EnqueueLoopStopped implements guard.LoopStopper (S27): record a run the loop guard's depth
+// counter refused to start — created directly in the terminal `loop_stopped` state, with no
+// container, no prompt and no cost, referencing the trigger and the cause event so
+// GET /runs/{id}/chain can reconstruct the causal chain the visualization renders
+// (architecture §9: the run is created, never suppressed). It lives here because only the
+// scheduler writes runs.state (data model invariant 4).
+func (s *Scheduler) EnqueueLoopStopped(ctx context.Context, req guard.LoopStoppedRun) (domain.Run, error) {
+	if req.ProjectID == "" || req.AgentID == "" {
+		return domain.Run{}, errors.New("sched: a loop-stopped run needs a project and an agent")
+	}
+	agent, err := s.st.Agents().ByID(ctx, req.AgentID)
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("sched: no such agent %s: %w", req.AgentID, err)
+	}
+	now := s.now()
+	run := domain.Run{
+		ID:                 domain.NewID(),
+		ProjectID:          req.ProjectID,
+		AgentID:            agent.ID,
+		State:              domain.RunLoopStopped,
+		StateReason:        req.Reason,
+		Autonomy:           agent.Autonomy,
+		DirectiveVersionID: agent.DirectiveVersionID,
+		Model:              agent.Model,
+		Effort:             agent.Effort,
+		RuntimeID:          agent.RuntimeID,
+		SandboxID:          s.opts.SandboxID,
+		SubjectKey:         req.SubjectKey,
+		Depth:              req.Depth,
+		QueuedAt:           now,
+		EndedAt:            &now,
+	}
+	if req.TriggerID != "" {
+		run.TriggerID = &req.TriggerID
+	}
+	if req.CauseEventID != "" {
+		run.CauseEventID = &req.CauseEventID
+	}
+	err = s.st.Tx(ctx, func(tx *store.Tx) error {
+		seq, err := tx.Runs().NextSeq(ctx, run.ProjectID)
+		if err != nil {
+			return err
+		}
+		run.Seq = seq
+		return tx.Runs().Create(ctx, &run)
+	})
+	if err != nil {
+		return domain.Run{}, err
+	}
+	if err := s.audit.Write(ctx, "run.loop_stopped",
+		audit.Target{Kind: "run", ID: run.ID, ProjectID: run.ProjectID, Note: req.Reason},
+		nil, map[string]any{"seq": run.Seq, "agent_id": run.AgentID,
+			"trigger_id": req.TriggerID, "depth": req.Depth,
+			"subject_key": req.SubjectKey}); err != nil {
+		return domain.Run{}, err
+	}
+	s.emitRunState(ctx, run)
 	return run, nil
 }
 

@@ -1346,6 +1346,26 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /runs/{id}/chain:
+    get:
+      operationId: getRunChain
+      summary: >
+        The run's causal chain (S27, architecture §9): ancestors via runs.cause_event_id,
+        descendants via events.cause_run_id, oldest first, the requested run flagged
+        `focus`. Reconstructed from the causality edges on demand — never stored — so it is
+        available for every run, not only loop-stopped ones. The loop chain view renders it
+        vertically with the repeating element highlighted.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The chain, oldest entry first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunChainResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /runs/{id}/messages:
     post:
       operationId: steerRun
@@ -2885,6 +2905,54 @@ components:
         activities:
           type: array
           items: { $ref: "#/components/schemas/RunActivity" }
+    RunChainResponse:
+      type: object
+      required: [chain]
+      properties:
+        chain:
+          type: array
+          items: { $ref: "#/components/schemas/RunChainEntry" }
+    RunChainEntry:
+      type: object
+      description: >
+        One causal-chain node: `type` says which of the two bodies is set. Entries
+        alternate event → run along each causality edge.
+      required: [type]
+      properties:
+        type: { type: string, enum: [event, run] }
+        event: { $ref: "#/components/schemas/RunChainEvent" }
+        run: { $ref: "#/components/schemas/RunChainRun" }
+    RunChainEvent:
+      type: object
+      required: [id, kind, activity_type, actor_kind, actor_login, subject, occurred_at]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        activity_type: { type: string }
+        actor_kind: { type: string }
+        actor_login: { type: string, nullable: true }
+        subject:
+          type: string
+          description: The guard subject the event addresses ("pr:219" / "ticket:PAY-14" / "repo").
+        occurred_at: { type: string }
+    RunChainRun:
+      type: object
+      required: [id, seq, agent_id, agent_name, state, state_reason, depth, subject_key,
+                 queued_at, ended_at, focus]
+      properties:
+        id: { type: string }
+        seq: { type: integer }
+        agent_id: { type: string }
+        agent_name: { type: string }
+        state: { $ref: "#/components/schemas/RunState" }
+        state_reason: { type: string }
+        depth: { type: integer }
+        subject_key: { type: string }
+        queued_at: { type: string }
+        ended_at: { type: string, nullable: true }
+        focus:
+          type: boolean
+          description: True on the run the chain was requested for.
     DelegateRequest:
       type: object
       required: [agent_id]

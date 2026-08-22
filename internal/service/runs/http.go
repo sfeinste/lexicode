@@ -28,6 +28,7 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("GET /api/v1/projects/{key}/runs", member(s.handleList))
 	mux.Handle("GET /api/v1/runs/{id}", viaRun(s.handleGet))
 	mux.Handle("GET /api/v1/runs/{id}/activities", viaRun(s.handleActivities))
+	mux.Handle("GET /api/v1/runs/{id}/chain", viaRun(s.handleChain))
 	mux.Handle("POST /api/v1/runs/{id}/messages", viaRun(s.handleSteer))
 	mux.Handle("POST /api/v1/runs/{id}/stop", viaRun(s.handleStop))
 	mux.Handle("POST /api/v1/runs/{id}/takeover", viaRun(s.handleTakeover))

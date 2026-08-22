@@ -61,3 +61,13 @@ func (r *BudgetRepo) AgentDay(ctx context.Context, day, agentID string) (int64, 
 		day, agentID).Scan(&cents)
 	return cents, mapErr(err)
 }
+
+// TriggerDay returns one trigger's total recorded spend for one UTC day — the loop guard's
+// rule/day budget scope (S27; loop_config.daily_budget_cents).
+func (r *BudgetRepo) TriggerDay(ctx context.Context, day, triggerID string) (int64, error) {
+	var cents int64
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(cents), 0) FROM budget_ledger WHERE day = ? AND trigger_id = ?`,
+		day, triggerID).Scan(&cents)
+	return cents, mapErr(err)
+}

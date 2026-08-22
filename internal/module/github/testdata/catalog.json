@@ -102,6 +102,10 @@
           "type": "text"
         },
         {
+          "path": "pr.head_commit_message",
+          "type": "text"
+        },
+        {
           "path": "repo.owner",
           "type": "text"
         },
@@ -225,6 +229,10 @@
         },
         {
           "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "pr.head_commit_message",
           "type": "text"
         },
         {
@@ -357,6 +365,10 @@
           "type": "text"
         },
         {
+          "path": "pr.head_commit_message",
+          "type": "text"
+        },
+        {
           "path": "repo.owner",
           "type": "text"
         },
@@ -475,6 +487,10 @@
         },
         {
           "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "pr.head_commit_message",
           "type": "text"
         },
         {
@@ -601,6 +617,10 @@
         },
         {
           "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "pr.head_commit_message",
           "type": "text"
         },
         {

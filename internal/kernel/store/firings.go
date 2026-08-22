@@ -142,3 +142,18 @@ func scanFiring(row rowScanner) (domain.TriggerFiring, error) {
 	f.Warnings = json.RawMessage(warnings)
 	return f, nil
 }
+
+// Supersede retroactively marks the firing that started runID — under this trigger — as
+// `superseded`, linking it to the run that replaced it. This is the one place a firing's
+// outcome is ever rewritten: cancel-in-progress (architecture §9 layer 3) cancels the
+// previous run after the new one exists, and the previous firing's "succeeded" would
+// otherwise claim work that was thrown away. The rule-health breakdown's `superseded` class
+// exists exactly for these rows.
+func (r *FiringsRepo) Supersede(ctx context.Context, triggerID, runID, absorbedByRunID, reason string) error {
+	_, err := r.h.w.ExecContext(ctx, `
+		UPDATE trigger_firings
+		SET outcome = 'superseded', reason = ?, absorbed_by_run_id = ?
+		WHERE trigger_id = ? AND run_id = ? AND outcome != 'superseded'`,
+		reason, absorbedByRunID, triggerID, runID)
+	return mapErr(err)
+}

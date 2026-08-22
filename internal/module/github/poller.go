@@ -486,14 +486,20 @@ func deriveActivities(prev domain.PollPRState, seen bool, pr domain.PullRequest)
 // attribution.
 func (p *Poller) emitPREvent(ctx context.Context, t *tickState, pr domain.PullRequest, act string) error {
 	att, ok := attributeBody(pr.Body, t.agents)
-	if !ok && act == "synchronize" {
-		// A push changes no body; the commit's git identity is the signal (D-9).
-		author, committer, cerr := p.forge.CommitEmails(ctx, t.creds, t.repo.Ref(), pr.HeadSHA)
+	headMessage := ""
+	if act == "synchronize" {
+		// A push changes no body; the commit's git identity is the attribution signal (D-9),
+		// and the same read carries the head commit message the loop guard scans for skip
+		// tokens (S27) — it rides the synchronize payload as pr.head_commit_message.
+		author, committer, message, cerr := p.forge.CommitEmails(ctx, t.creds, t.repo.Ref(), pr.HeadSHA)
 		if cerr != nil {
 			p.logger.Warn("github.poll: commit read for attribution failed",
 				slog.Int("pr", pr.Number), slog.String("error", cerr.Error()))
 		} else {
-			att, ok = attributeEmail(t.agents, author, committer)
+			headMessage = message
+			if !ok {
+				att, ok = attributeEmail(t.agents, author, committer)
+			}
 		}
 	}
 	if !ok {
@@ -513,8 +519,12 @@ func (p *Poller) emitPREvent(ctx context.Context, t *tickState, pr domain.PullRe
 	e := p.newEvent(ctx, t, kindPullRequest, act, pr,
 		dedupe(t.projectID, kindPullRequest, strconv.Itoa(pr.Number), act+":"+pr.HeadSHA),
 		occurred, att, ok, login)
+	prMap := p.prBody(pr, t)
+	if headMessage != "" {
+		prMap["head_commit_message"] = headMessage
+	}
 	e.Payload = mustPayload(map[string]any{
-		"pr":    p.prBody(pr, t),
+		"pr":    prMap,
 		"repo":  repoBody(t.repo),
 		"actor": actorBody(att, ok, login),
 	})

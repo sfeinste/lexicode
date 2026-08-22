@@ -103,3 +103,40 @@ func scanEvent(row rowScanner) (domain.Event, error) {
 	e.DispatchState = domain.DispatchState(dispatch)
 	return e, nil
 }
+
+// ByCauseRun returns the events a run caused (events.cause_run_id — the downward half of the
+// causal chain), oldest first.
+func (r *EventsRepo) ByCauseRun(ctx context.Context, runID string) ([]domain.Event, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+eventCols+` FROM events
+		WHERE cause_run_id = ? ORDER BY occurred_at, created_at, id`, runID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Event
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// NewestHumanActionAt returns the occurred_at of the newest human-actor event on the given
+// subject (matched on the subject columns, which agree with the descriptor-derived subject
+// keys), or "" when no human has acted there. This is the loop guard's depth-reset probe
+// (architecture §9): causal hops older than this timestamp no longer count — a human's
+// intervention on a stalled chain must not inherit the chain's exhausted budget.
+func (r *EventsRepo) NewestHumanActionAt(ctx context.Context, projectID, subjectKind string, subjectNumber *int64, subjectID *string) (string, error) {
+	var at string
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(occurred_at), '') FROM events
+		WHERE project_id = ? AND actor_kind = 'human' AND subject_kind = ?
+		  AND subject_number IS ? AND subject_id IS ?`,
+		projectID, subjectKind, nullInt(subjectNumber), nullStr(subjectID)).Scan(&at)
+	return at, mapErr(err)
+}

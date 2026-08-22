@@ -809,6 +809,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{id}/chain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The run's causal chain (S27, architecture §9): ancestors via runs.cause_event_id, descendants via events.cause_run_id, oldest first, the requested run flagged `focus`. Reconstructed from the causality edges on demand — never stored — so it is available for every run, not only loop-stopped ones. The loop chain view renders it vertically with the repeating element highlighted. */
+        get: operations["getRunChain"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{id}/messages": {
         parameters: {
             query?: never;
@@ -1925,6 +1942,40 @@ export interface components {
         };
         RunActivitiesResponse: {
             activities: components["schemas"]["RunActivity"][];
+        };
+        RunChainResponse: {
+            chain: components["schemas"]["RunChainEntry"][];
+        };
+        /** @description One causal-chain node: `type` says which of the two bodies is set. Entries alternate event → run along each causality edge. */
+        RunChainEntry: {
+            /** @enum {string} */
+            type: "event" | "run";
+            event?: components["schemas"]["RunChainEvent"];
+            run?: components["schemas"]["RunChainRun"];
+        };
+        RunChainEvent: {
+            id: string;
+            kind: string;
+            activity_type: string;
+            actor_kind: string;
+            actor_login: string | null;
+            /** @description The guard subject the event addresses ("pr:219" / "ticket:PAY-14" / "repo"). */
+            subject: string;
+            occurred_at: string;
+        };
+        RunChainRun: {
+            id: string;
+            seq: number;
+            agent_id: string;
+            agent_name: string;
+            state: components["schemas"]["RunState"];
+            state_reason: string;
+            depth: number;
+            subject_key: string;
+            queued_at: string;
+            ended_at: string | null;
+            /** @description True on the run the chain was requested for. */
+            focus: boolean;
         };
         DelegateRequest: {
             agent_id: string;
@@ -3995,6 +4046,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunActivitiesResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getRunChain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The chain, oldest entry first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunChainResponse"];
                 };
             };
             401: components["responses"]["Problem"];

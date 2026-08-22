@@ -35,6 +35,18 @@ type RunRequest struct {
 	CauseEventID string
 	// ParentRunID chains a run onto the run that caused it (loop-guard depth, S27).
 	ParentRunID string
+	// SubjectKey is the loop-protection subject the guard derived ("pr:219"); empty lets the
+	// scheduler fall back to the ticket-derived key. Stored on the run at enqueue so the
+	// guard's debounce and cancel-in-progress probes are one indexed query (S27).
+	SubjectKey string
+	// Depth is the run's position in the causal chain, computed by the guard's depth
+	// counter; zero for chain roots and manual runs.
+	Depth int64
+	// SupersededRunID is the still-active run the guard's cancel-in-progress layer elected
+	// to stop (S27). The scheduler cancels it right after this run's row exists — after,
+	// because the cancellation reason names this run's seq ("superseded by run #N") — and
+	// before waking admission, so cancel-then-admit ordering holds.
+	SupersededRunID string
 }
 
 // Requester is the seam between everything that may *want* a run and the one component allowed

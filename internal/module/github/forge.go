@@ -723,17 +723,20 @@ func (f *Forge) GetPullRequest(ctx context.Context, c ports.Creds, r domain.Repo
 	return mapPullRequest(pr), nil
 }
 
-// CommitEmails returns the author and committer email of one commit — the D-9 attribution
-// signal for pushes (an agent's commits carry its git_author_email). Poller-only capability on
-// the concrete adapter.
-func (f *Forge) CommitEmails(ctx context.Context, c ports.Creds, r domain.RepoRef, sha string) (author, committer string, err error) {
+// CommitEmails returns the author email, committer email and message of one commit — the
+// emails are the D-9 attribution signal for pushes (an agent's commits carry its
+// git_author_email), and the message is where the loop guard's skip token may ride
+// (`pr.head_commit_message`, S27). One API read serves both. Poller-only capability on the
+// concrete adapter.
+func (f *Forge) CommitEmails(ctx context.Context, c ports.Creds, r domain.RepoRef, sha string) (author, committer, message string, err error) {
 	cl, err := f.client(c)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	commit, _, err := cl.Repositories.GetCommit(ctx, r.Owner, r.Name, sha, &gh.ListOptions{PerPage: 1})
 	if err != nil {
-		return "", "", wrapErr("read commit "+sha, r, err)
+		return "", "", "", wrapErr("read commit "+sha, r, err)
 	}
-	return commit.GetCommit().GetAuthor().GetEmail(), commit.GetCommit().GetCommitter().GetEmail(), nil
+	inner := commit.GetCommit()
+	return inner.GetAuthor().GetEmail(), inner.GetCommitter().GetEmail(), inner.GetMessage(), nil
 }

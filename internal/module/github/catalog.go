@@ -37,6 +37,9 @@ var (
 		{Path: "pr.labels", Type: "set"},
 		{Path: "pr.body", Type: "text"},
 		{Path: "pr.url", Type: "text"},
+		// Present on synchronize events only (the poller reads it off the head commit, S27);
+		// nil elsewhere, which every operator has defined behaviour for.
+		{Path: "pr.head_commit_message", Type: "text"},
 	}
 	repoFields = []ports.PayloadField{
 		{Path: "repo.owner", Type: "text"},

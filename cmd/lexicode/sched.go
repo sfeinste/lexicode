@@ -11,6 +11,7 @@ import (
 	"net/url"
 
 	"github.com/spruce/lexicode/internal/domain"
+	"github.com/spruce/lexicode/internal/kernel/guard"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/sched"
 	dockermod "github.com/spruce/lexicode/internal/module/docker"
@@ -110,4 +111,15 @@ func gitHostsFor(gitHubBaseURL string) func(domain.Repo) []string {
 		}
 		return nil
 	}
+}
+
+// lateLoopStopper is the same trick for the loop guard's terminal-run seam (S27): the guard
+// is wired before the scheduler exists because the trigger engine is constructed first.
+type lateLoopStopper struct{ s **sched.Scheduler }
+
+func (l lateLoopStopper) EnqueueLoopStopped(ctx context.Context, req guard.LoopStoppedRun) (domain.Run, error) {
+	if *l.s == nil {
+		return domain.Run{}, errors.New("the run scheduler is not running")
+	}
+	return (*l.s).EnqueueLoopStopped(ctx, req)
 }

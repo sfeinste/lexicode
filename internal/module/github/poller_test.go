@@ -474,6 +474,9 @@ func TestPollerSnapshotSequence(t *testing.T) {
 			"additions": float64(14), "deletions": float64(3), "files_changed": float64(2),
 			"labels": []any{"bug"}, "body": "Fix the rounding",
 			"url": "https://github.example/acme/payments/pull/101",
+			// The head commit message rides the synchronize payload (S27): the loop
+			// guard scans pr.head_commit_message for skip tokens.
+			"head_commit_message": "commit",
 		},
 		"repo":  map[string]any{"owner": "acme", "name": "payments", "default_branch": "main"},
 		"actor": map[string]any{"kind": "agent", "login": "", "agent": "Dev"},

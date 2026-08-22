@@ -114,6 +114,28 @@ type ActionContext struct {
 	// `k := ac.Kernel.(*kernel.Kernel)` — asserting to the kernel is not a violation of the
 	// "no type assertions to concrete module types" rule, which is about modules.
 	Kernel any
+
+	// Guard is the loop guard's stage-3 → stage-4 pass-through (S27, architecture §9). A
+	// run_agent action copies it verbatim into the scheduler's RunRequest — that is the whole
+	// contract: the guard decided, the action carries the decision, the scheduler applies it.
+	Guard GuardPass
+}
+
+// GuardPass is what the loop guard (stage 3) hands the actions (stage 4) when a firing
+// proceeds. It lives in ports rather than kernel/guard so module actions can carry it without
+// importing kernel internals.
+type GuardPass struct {
+	// SubjectKey is the derived loop-protection subject ("pr:219" / "ticket:PAY-14" /
+	// "repo"), stored on the run at enqueue so debounce and cancel-in-progress can key on
+	// (trigger, subject) with one indexed query.
+	SubjectKey string
+	// Depth is the run's position in the causal chain (0 for a chain root), stored on the
+	// run at enqueue; the guard's depth counter recomputes it per event.
+	Depth int64
+	// SupersededRunID names the still-active run for the same (trigger, subject) that
+	// cancel-in-progress elects to stop. The scheduler cancels it after the new run exists —
+	// after, because the reason names the new run's seq ("superseded by run #N").
+	SupersededRunID string
 }
 
 // ActionResult is one action's outcome (contracts §2.5).

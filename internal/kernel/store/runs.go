@@ -215,3 +215,36 @@ func (r *RunsRepo) StatsForProjectAgents(ctx context.Context, projectID, since s
 	}
 	return out, rows.Err()
 }
+
+// LatestOnSubject returns the most recent run for (trigger, subject) queued at or after
+// cutoff — the loop guard's debounce probe (S27). It is a database query, not an in-memory
+// timer, so the window survives restarts. loop_stopped rows are excluded: they are guard
+// artifacts, not started work, and must not absorb a later firing.
+func (r *RunsRepo) LatestOnSubject(ctx context.Context, triggerID, subjectKey, cutoffQueuedAt string) (domain.Run, error) {
+	return scanRun(r.h.r.QueryRowContext(ctx, `
+		SELECT `+runCols+` FROM runs
+		WHERE trigger_id = ? AND subject_key = ? AND queued_at >= ? AND state != 'loop_stopped'
+		ORDER BY queued_at DESC, seq DESC LIMIT 1`, triggerID, subjectKey, cutoffQueuedAt))
+}
+
+// ActiveOnSubject returns the newest non-terminal run for (trigger, subject) — the loop
+// guard's cancel-in-progress probe (S27). ErrNotFound when nothing is live.
+func (r *RunsRepo) ActiveOnSubject(ctx context.Context, triggerID, subjectKey string) (domain.Run, error) {
+	return scanRun(r.h.r.QueryRowContext(ctx, `
+		SELECT `+runCols+` FROM runs
+		WHERE trigger_id = ? AND subject_key = ? AND state NOT IN `+terminalStates+`
+		ORDER BY queued_at DESC, seq DESC LIMIT 1`, triggerID, subjectKey))
+}
+
+// ByCauseEvent returns the runs an event spawned (runs.cause_event_id — the downward half of
+// the causal chain), oldest first.
+func (r *RunsRepo) ByCauseEvent(ctx context.Context, eventID string) ([]domain.Run, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+runCols+` FROM runs
+		WHERE cause_event_id = ? ORDER BY queued_at, seq`, eventID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectRuns(rows)
+}

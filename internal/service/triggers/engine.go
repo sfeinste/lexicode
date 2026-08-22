@@ -40,14 +40,15 @@ import (
 // action's ID resolves to nothing and the firing is `errored` naming the missing action — the
 // pipeline logs and side-effects nothing.
 type Engine struct {
-	st     *store.Store
-	bus    *bus.Bus
-	guard  guard.Evaluator
-	action func(id string) (ports.TriggerAction, error)
-	kernel any
-	logger *slog.Logger
-	now    func() string
-	qsize  int
+	st      *store.Store
+	bus     *bus.Bus
+	guard   guard.Evaluator
+	action  func(id string) (ports.TriggerAction, error)
+	sources func() []ports.EventSource
+	kernel  any
+	logger  *slog.Logger
+	now     func() string
+	qsize   int
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -71,6 +72,11 @@ type EngineOptions struct {
 	// production. Nil means no actions are registered: every stored action fires as `errored`
 	// naming the missing ID.
 	Action func(id string) (ports.TriggerAction, error)
+	// Sources lists the registered event sources — kernel.EventSources in production. The
+	// guard's subject key ("pr:219") is derived from the matching descriptor's SubjectKey
+	// template (S27); nil falls back to the event's subject columns, which agree with the
+	// descriptors S25 ships.
+	Sources func() []ports.EventSource
 	// Kernel is placed on ActionContext.Kernel verbatim (contracts §2.5; see ports.ActionContext
 	// for why the field is `any`). Nil is fine until S28's actions need it.
 	Kernel any
@@ -107,9 +113,14 @@ func NewEngine(opts EngineOptions) *Engine {
 	if qsize <= 0 {
 		qsize = 256
 	}
+	sources := opts.Sources
+	if sources == nil {
+		sources = func() []ports.EventSource { return nil }
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
-		st: opts.Store, bus: opts.Bus, guard: g, action: act, kernel: opts.Kernel,
+		st: opts.Store, bus: opts.Bus, guard: g, action: act, sources: sources,
+		kernel: opts.Kernel,
 		logger: logger, now: now, qsize: qsize,
 		ctx: ctx, cancel: cancel,
 		workers: make(map[string]chan domain.Event),
@@ -244,17 +255,30 @@ func (e *Engine) fire(ctx context.Context, tr domain.Trigger, ev domain.Event, p
 		return
 	}
 
-	// Stage 3: guard (S27; guard.Pass until then).
-	v := e.guard.Evaluate(ctx, guard.Input{Event: ev, Trigger: tr, SubjectKey: subjectKey(ev)})
+	// Stage 3: guard — the loop-protection layers (S27, architecture §9). The engine owns
+	// deriving what the guard keys on: the subject from the catalog descriptor's template,
+	// and the would-run agent IDs from the trigger's run_agent action params.
+	v := e.guard.Evaluate(ctx, guard.Input{
+		Event: ev, Trigger: tr,
+		SubjectKey:  e.deriveSubjectKey(ev, payload),
+		Payload:     payload,
+		RunAgentIDs: e.runAgentIDs(ctx, tr),
+	})
 	if !v.Proceed {
+		// A loop-stopped verdict carries the terminal run row the guard had created
+		// (architecture §9: created, never suppressed); the firing points at it.
 		e.writeFiring(ctx, tr, ev, firingOutcome{
-			Outcome: v.Outcome, Reason: v.Reason, AbsorbedByRunID: v.AbsorbedByRunID,
+			Outcome: v.Outcome, Reason: v.Reason,
+			RunID: v.RunID, AbsorbedByRunID: v.AbsorbedByRunID,
 		}, nil)
 		return
 	}
 
-	// Stage 4: actions, in stored order, through the registry.
-	res, warnings := e.runActions(ctx, tr, ev, payload)
+	// Stage 4: actions, in stored order, through the registry. The guard's pass-through
+	// rides on the ActionContext: run_agent copies it into the RunRequest, which is how the
+	// subject key and depth land on the run and how cancel-in-progress supersession happens
+	// after the new run's seq exists.
+	res, warnings := e.runActions(ctx, tr, ev, payload, v.Pass)
 	e.writeFiring(ctx, tr, ev, res, warnings)
 }
 
@@ -280,7 +304,7 @@ type actionRef struct {
 // result stops the walk and becomes the firing's outcome; otherwise the firing succeeds when
 // any action succeeded, and is `no_action` in words when none had anything to do. Interpolation
 // warnings from every executed action are collected for the firing row.
-func (e *Engine) runActions(ctx context.Context, tr domain.Trigger, ev domain.Event, payload map[string]any) (firingOutcome, []string) {
+func (e *Engine) runActions(ctx context.Context, tr domain.Trigger, ev domain.Event, payload map[string]any, pass ports.GuardPass) (firingOutcome, []string) {
 	var refs []actionRef
 	if err := json.Unmarshal(tr.Actions, &refs); err != nil {
 		return outcomeOf(domain.FiringErrored, "stored actions could not be parsed: "+err.Error()), nil
@@ -296,7 +320,7 @@ func (e *Engine) runActions(ctx context.Context, tr domain.Trigger, ev domain.Ev
 
 	var warnings []string
 	ac := ports.ActionContext{
-		Event: ev, Trigger: tr, Project: project, Kernel: e.kernel,
+		Event: ev, Trigger: tr, Project: project, Kernel: e.kernel, Guard: pass,
 		Interp: func(tmpl string) (string, []string) {
 			s, w := interpolate(tmpl, payload)
 			warnings = append(warnings, w...)
@@ -427,10 +451,93 @@ func (e *Engine) emitFired(ctx context.Context, tr domain.Trigger, ev domain.Eve
 	}
 }
 
-// subjectKey is the loop-protection subject in words: "pr:219" / "ticket:PAY-14" / "repo"
-// (architecture §9). S27 owns the real derivation from the event descriptor's template; this
-// stands in with the event's subject columns, which agree with the descriptors S25 ships.
-func subjectKey(ev domain.Event) string {
+// deriveSubjectKey is the loop-protection subject in words: "pr:219" / "ticket:PAY-14" /
+// "repo" (architecture §9, S27). The source of truth is the matching event descriptor's
+// SubjectKey template ("pr:{{pr.number}}"), interpolated against the normalized payload —
+// the same catalog the trigger editor is generated from, so a new event source defines its
+// own subject with no engine change. Events without a descriptor (internal kinds, unknown
+// sources) or whose template does not fully resolve fall back to the event's subject columns,
+// which agree with the descriptors S25 ships.
+func (e *Engine) deriveSubjectKey(ev domain.Event, payload map[string]any) string {
+	if desc := e.descriptor(ev.Source, ev.Kind); desc != nil && desc.SubjectKey != "" {
+		s, warns := interpolate(desc.SubjectKey, payload)
+		if len(warns) == 0 && s != "" {
+			return s
+		}
+	}
+	return subjectKeyFromColumns(ev)
+}
+
+// descriptor finds the (source, kind) event descriptor in the registered catalogs.
+func (e *Engine) descriptor(sourceID, kind string) *ports.EventDescriptor {
+	for _, src := range e.sources() {
+		if src.ID() != sourceID {
+			continue
+		}
+		cat := src.Catalog()
+		for i := range cat.Events {
+			if cat.Events[i].Kind == kind {
+				return &cat.Events[i]
+			}
+		}
+	}
+	return nil
+}
+
+// runAgentIDs extracts the agents this trigger's run_agent actions would start — what actor
+// suppression compares the event's resolved actor against (D-9), and what layer 4's
+// loop-stopped run row is created for. Params may carry agent_id (the S28 schema) or
+// agent_name (the S15 suggested rules, written before agents existed to have IDs); names
+// resolve against the project's roster.
+func (e *Engine) runAgentIDs(ctx context.Context, tr domain.Trigger) []string {
+	var refs []actionRef
+	if err := json.Unmarshal(tr.Actions, &refs); err != nil {
+		return nil
+	}
+	var out []string
+	var agents []domain.Agent
+	loaded := false
+	for _, ref := range refs {
+		if ref.ActionID != "run_agent" {
+			continue
+		}
+		var p struct {
+			AgentID   string `json:"agent_id"`
+			AgentName string `json:"agent_name"`
+		}
+		if len(ref.Params) > 0 {
+			_ = json.Unmarshal(ref.Params, &p)
+		}
+		if p.AgentID != "" {
+			out = append(out, p.AgentID)
+			continue
+		}
+		if p.AgentName == "" {
+			continue
+		}
+		if !loaded {
+			var err error
+			agents, err = e.st.Agents().ForProject(ctx, tr.ProjectID)
+			if err != nil {
+				e.logger.Error("triggers: agent roster read for guard failed",
+					slog.String("trigger", tr.ID), slog.String("error", err.Error()))
+				continue
+			}
+			loaded = true
+		}
+		for i := range agents {
+			if agents[i].Name == p.AgentName {
+				out = append(out, agents[i].ID)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// subjectKeyFromColumns derives the subject from the event's subject columns — the fallback
+// when no descriptor template applies.
+func subjectKeyFromColumns(ev domain.Event) string {
 	switch {
 	case ev.SubjectKind == "" || ev.SubjectKind == "repo":
 		return "repo"
