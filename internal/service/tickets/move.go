@@ -188,8 +188,8 @@ func (s *Service) maybeAutoStart(ctx context.Context, res moveResult) {
 		TicketID:  res.after.ID,
 		Reason:    "column auto-start",
 	}
-	note := "run requested"
-	err := s.sched.RequestRun(ctx, req)
+	var note string
+	runID, err := s.sched.RequestRun(ctx, req)
 	switch {
 	case errors.Is(err, sched.ErrNotImplemented):
 		note = "scheduler not implemented until S22; no run started"
@@ -197,6 +197,8 @@ func (s *Service) maybeAutoStart(ctx context.Context, res moveResult) {
 		note = "scheduler refused: " + err.Error()
 		s.logger.Error("tickets: auto-start request failed",
 			slog.String("ticket", res.after.Key), slog.String("error", err.Error()))
+	default:
+		note = "run requested: " + runID
 	}
 	if aerr := s.audit.Write(ctx, "ticket.autostart_delegate",
 		audit.Target{Kind: "ticket", ID: res.after.ID, ProjectID: res.after.ProjectID, Note: note},

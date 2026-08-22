@@ -1,6 +1,6 @@
-// Package sched owns the run queue, admission control and the run state machine (D-14; story
-// S22 builds it). Until S22 the package holds only the request seam: RunRequest, the Requester
-// interface and the Unscheduled placeholder, so that earlier stories (S10's column auto-start
-// and archive-time run cancellation) call the real boundary today and change nothing when the
-// scheduler arrives.
+// Package sched is the kernel-owned run scheduler (D-14, story S22): the run queue,
+// admission control (§10.2), the run state machine (§10.1), execution supervision, the
+// failure-artifact rule (§10.5) and boot crash reconciliation (§10.6). Nothing else may
+// start a run or write runs.state — modules and services request runs through Requester
+// (or Scheduler.Enqueue) and the kernel decides.
 package sched

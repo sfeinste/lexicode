@@ -97,6 +97,34 @@ type RunOutput struct {
 	CreatedAt string
 }
 
+// RunMessage is a row of run_messages — one queued steering message ("queue, don't
+// interrupt"). delivered_at is stamped when the adapter accepts the message for delivery
+// between tool calls.
+type RunMessage struct {
+	ID          string
+	RunID       string
+	Body        string
+	AuthorID    *string
+	State       RunMessageState
+	CreatedAt   string
+	DeliveredAt *string
+}
+
+// RunContextItem is a row of run_context_items — one labelled piece of the context stack a run
+// was given, exactly what the run detail's Context panel renders (architecture §11).
+type RunContextItem struct {
+	ID         string
+	RunID      string
+	Provider   string
+	SourceKind string
+	SourceRef  string
+	Title      string
+	Reason     string
+	Tokens     int64
+	Position   int64
+	Injected   bool
+}
+
 // Activity is a row of activities — one step of a run's transcript, keyed (run_id, seq).
 // Payload is typed per tool by the runtime adapter (S19); the store carries it raw.
 type Activity struct {

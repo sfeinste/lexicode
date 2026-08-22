@@ -24,6 +24,7 @@ const maxCommentBytes = 65536
 type CommentRunRequest struct {
 	AgentID   string
 	AgentName string
+	RunID     string
 	Staged    bool
 	Note      string
 }
@@ -127,7 +128,7 @@ func (s *Service) requestMentionRun(ctx context.Context, tk domain.Ticket, a dom
 		Reason:    "@mention",
 	}
 	out := CommentRunRequest{AgentID: a.ID, AgentName: a.Name}
-	err := s.sched.RequestRun(ctx, req)
+	runID, err := s.sched.RequestRun(ctx, req)
 	switch {
 	case errors.Is(err, sched.ErrNotImplemented):
 		out.Note = "scheduler not implemented until S22; no run started"
@@ -138,6 +139,7 @@ func (s *Service) requestMentionRun(ctx context.Context, tk domain.Ticket, a dom
 			slog.String("error", err.Error()))
 	default:
 		out.Staged = true
+		out.RunID = runID
 		out.Note = "run requested"
 	}
 	if aerr := s.audit.Write(ctx, "ticket.mention_run",

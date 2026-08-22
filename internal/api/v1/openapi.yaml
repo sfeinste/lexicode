@@ -963,6 +963,32 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /tickets/{id}/delegate:
+    post:
+      operationId: delegateTicket
+      summary: >
+        Delegate the ticket to an agent (S22): records the agent as the ticket's delegate and
+        enqueues a run through the kernel scheduler (D-14). A nil error means "queued", not
+        "running" — admission control (§10.2) decides when it starts, and the run's
+        `hold_reason` says in words which limit is holding it.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DelegateRequest" }
+      responses:
+        "201":
+          description: The created run's id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DelegateResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /tickets/{id}/criteria:
     post:
       operationId: addCriterion
@@ -1140,6 +1166,124 @@ paths:
         - { name: rule_id, in: path, required: true, schema: { type: string } }
       responses:
         "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/runs:
+    get:
+      operationId: listRuns
+      summary: >
+        A project's runs, newest first (S22; the full list UI is S23). `status` accepts a
+        comma-separated set of run states.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: agent, in: query, schema: { type: string } }
+        - { name: ticket, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The matching runs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunListResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /runs/{id}:
+    get:
+      operationId: getRun
+      summary: >
+        One run, with its outputs and its recorded context stack. A queued run's
+        `hold_reason` names, in words, which limit is holding it (§10.2 — never a bare
+        spinner).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The run, its outputs and its context items.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunDetailResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /runs/{id}/activities:
+    get:
+      operationId: getRunActivities
+      summary: The run's transcript in step order (basic; S23 builds the timeline UI on it).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The transcript.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunActivitiesResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /runs/{id}/messages:
+    post:
+      operationId: steerRun
+      summary: >
+        Queue a steering message ("queue, don't interrupt"): a run_messages row the
+        supervisor delivers between tool calls — "Applied after the current step" is
+        literally true (contracts §3.4). Enabled from queued through provisioning and
+        running (§10.3). 409 `run_ended` once the run is terminal.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SteerRequest" }
+      responses:
+        "201":
+          description: The queued message.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunMessage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /runs/{id}/stop:
+    post:
+      operationId: stopRun
+      summary: >
+        Stop the run: terminal `canceled` with the reason recorded, after the §10.5
+        failure-artifact push — whatever exists is committed and pushed to the run branch
+        before the container is destroyed. 409 `run_ended` once the run is terminal.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StopRunRequest" }
+      responses:
+        "200":
+          description: The stopped run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StopRunResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /runs/{id}/takeover:
+    post:
+      operationId: takeoverRun
+      summary: >
+        Take over the run. Not available until story S24 builds the takeover flow — until
+        then this answers 501 `not_implemented`; stop the run instead (its branch is
+        preserved).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
@@ -2355,6 +2499,7 @@ components:
       properties:
         agent_id: { type: string }
         agent_name: { type: string }
+        run_id: { type: string, description: "The created run's id, when one was staged." }
         staged: { type: boolean }
         note: { type: string }
     CommentResponse:
@@ -2380,6 +2525,169 @@ components:
         users:
           type: array
           items: { $ref: "#/components/schemas/Member" }
+    RunState:
+      type: string
+      description: runs.state — only the kernel scheduler writes it (D-14).
+      enum:
+        - queued
+        - provisioning
+        - running
+        - needs_input
+        - awaiting_approval
+        - completed
+        - failed
+        - timed_out
+        - canceled
+        - loop_stopped
+    Run:
+      type: object
+      description: >
+        One agent session. Autonomy, directive_version_id, model, effort and the prompt are
+        snapshots taken at enqueue; hold_reason says in words why a queued run is queued.
+      required:
+        [id, seq, project_id, agent_id, ticket_id, trigger_id, state, state_reason,
+         hold_reason, autonomy, directive_version_id, model, effort, branch, subject_key,
+         current_step, cost_cents, tokens_in, tokens_out, tokens_cache_read,
+         tokens_cache_write, step_count, error_message, queued_at, started_at, ended_at]
+      properties:
+        id: { type: string }
+        seq: { type: integer, description: 'Per-project; renders as "run #482".' }
+        project_id: { type: string }
+        agent_id: { type: string }
+        ticket_id: { type: [string, "null"] }
+        trigger_id: { type: [string, "null"] }
+        state: { $ref: "#/components/schemas/RunState" }
+        state_reason: { type: string }
+        hold_reason: { type: string }
+        autonomy: { type: string }
+        directive_version_id: { type: [string, "null"] }
+        model: { type: string }
+        effort: { type: string }
+        branch: { type: [string, "null"] }
+        subject_key: { type: string }
+        current_step: { type: string }
+        cost_cents: { type: integer }
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
+        tokens_cache_read: { type: integer }
+        tokens_cache_write: { type: integer }
+        step_count: { type: integer }
+        error_message: { type: string }
+        queued_at: { type: string }
+        started_at: { type: [string, "null"] }
+        ended_at: { type: [string, "null"] }
+    RunOutput:
+      type: object
+      description: One artifact a run produced (a branch, a PR, preserved partial work, …).
+      required: [id, kind, ref, url, summary, created_at]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [branch, pull_request, comment, review, wiki_proposal, ticket, partial_work]
+        ref: { type: string }
+        url: { type: string }
+        summary: { type: string }
+        created_at: { type: string }
+    RunContextItem:
+      type: object
+      description: >
+        One labelled piece of the context stack the run was given — exactly what the run
+        detail's Context panel renders (architecture §11). `reason` is rendered verbatim.
+      required: [provider, source_kind, source_ref, title, reason, tokens, position, injected]
+      properties:
+        provider: { type: string }
+        source_kind: { type: string }
+        source_ref: { type: string }
+        title: { type: string }
+        reason: { type: string }
+        tokens: { type: integer }
+        position: { type: integer }
+        injected: { type: boolean }
+    RunActivity:
+      type: object
+      description: One step of a run's transcript, keyed (run_id, seq).
+      required:
+        [seq, type, level, tool_name, group_key, title, payload, ok, attempt, duration_ms,
+         cost_cents, created_at]
+      properties:
+        seq: { type: integer }
+        type:
+          type: string
+          enum: [thought, action, elicitation, response, error, system, provision]
+        level: { type: integer, description: '0 summary · 1 normal · 2 verbose.' }
+        tool_name: { type: string }
+        group_key: { type: string }
+        title: { type: string }
+        payload: {}
+        ok: { type: [boolean, "null"] }
+        attempt: { type: integer }
+        duration_ms: { type: [integer, "null"] }
+        cost_cents: { type: integer }
+        created_at: { type: string }
+    RunListResponse:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/Run" }
+    RunDetailResponse:
+      type: object
+      required: [run, outputs, context]
+      properties:
+        run: { $ref: "#/components/schemas/Run" }
+        outputs:
+          type: array
+          items: { $ref: "#/components/schemas/RunOutput" }
+        context:
+          type: array
+          items: { $ref: "#/components/schemas/RunContextItem" }
+    RunActivitiesResponse:
+      type: object
+      required: [activities]
+      properties:
+        activities:
+          type: array
+          items: { $ref: "#/components/schemas/RunActivity" }
+    DelegateRequest:
+      type: object
+      required: [agent_id]
+      properties:
+        agent_id: { type: string }
+        prompt:
+          type: string
+          description: Optional extra instruction; becomes the prompt's final Task section.
+    DelegateResponse:
+      type: object
+      required: [run_id]
+      properties:
+        run_id: { type: string }
+    SteerRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string }
+    RunMessage:
+      type: object
+      description: One queued steering message; delivered_at is stamped on handoff.
+      required: [id, run_id, body, state, created_at]
+      properties:
+        id: { type: string }
+        run_id: { type: string }
+        body: { type: string }
+        state: { type: string, enum: [queued, delivered, dropped] }
+        created_at: { type: string }
+        delivered_at: { type: [string, "null"] }
+    StopRunRequest:
+      type: object
+      properties:
+        reason: { type: string }
+    StopRunResponse:
+      type: object
+      required: [run]
+      properties:
+        run: { $ref: "#/components/schemas/Run" }
     StreamEventType:
       type: string
       description: >

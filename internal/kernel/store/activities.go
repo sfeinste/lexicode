@@ -53,6 +53,41 @@ func (r *ActivitiesRepo) AppendNext(ctx context.Context, a *domain.Activity) err
 	return nil
 }
 
+// Update rewrites the activity at (run_id, seq) — the tool_result-merge path: the runtime
+// adapter re-emits an action's sequence once its result arrives, and the scheduler's sink maps
+// that back onto the persisted row (contracts §2.4 RunSink semantics). ErrNotFound when no
+// such row exists.
+func (r *ActivitiesRepo) Update(ctx context.Context, a *domain.Activity) error {
+	res, err := r.h.w.ExecContext(ctx, `
+		UPDATE activities SET type = ?, level = ?, tool_name = ?, group_key = ?, title = ?,
+			payload = ?, ok = ?, attempt = ?, duration_ms = ?, queued_ms = ?, model_ms = ?,
+			tool_ms = ?, cost_cents = ?, tokens_in = ?, tokens_out = ?
+		WHERE run_id = ? AND seq = ?`,
+		string(a.Type), a.Level, a.ToolName, a.GroupKey, a.Title,
+		rawText(a.Payload, "{}"), nullBool(a.OK), a.Attempt,
+		nullInt(a.DurationMS), nullInt(a.QueuedMS), nullInt(a.ModelMS), nullInt(a.ToolMS),
+		a.CostCents, a.TokensIn, a.TokensOut, a.RunID, a.Seq)
+	if err != nil {
+		return mapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MaxSeq returns the highest seq of a run's transcript, or -1 for an empty one.
+func (r *ActivitiesRepo) MaxSeq(ctx context.Context, runID string) (int64, error) {
+	var seq int64
+	err := r.h.r.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(seq), -1) FROM activities WHERE run_id = ?`, runID).Scan(&seq)
+	return seq, mapErr(err)
+}
+
 // ForRun returns a run's transcript in step order.
 func (r *ActivitiesRepo) ForRun(ctx context.Context, runID string) ([]domain.Activity, error) {
 	rows, err := r.h.r.QueryContext(ctx,

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spruce/lexicode/internal/config"
+	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel"
 	"github.com/spruce/lexicode/internal/kernel/audit"
 	"github.com/spruce/lexicode/internal/kernel/auth"
@@ -27,6 +28,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
 	claudecodemod "github.com/spruce/lexicode/internal/module/claudecode"
+	contextmod "github.com/spruce/lexicode/internal/module/context"
 	credentialsmod "github.com/spruce/lexicode/internal/module/credentials"
 	dockermod "github.com/spruce/lexicode/internal/module/docker"
 	githubmod "github.com/spruce/lexicode/internal/module/github"
@@ -36,6 +38,7 @@ import (
 	credsvc "github.com/spruce/lexicode/internal/service/credentials"
 	mcpsvc "github.com/spruce/lexicode/internal/service/mcp"
 	"github.com/spruce/lexicode/internal/service/projects"
+	runsvc "github.com/spruce/lexicode/internal/service/runs"
 	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
 	"github.com/spruce/lexicode/internal/service/tickets"
 	webui "github.com/spruce/lexicode/web"
@@ -143,13 +146,18 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	projectsSvc.Routes(mux, authSvc)
 	boardSvc := board.New(board.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
 	boardSvc.Routes(mux, authSvc)
-	// The tickets service talks to the run scheduler only through the sched seam; until S22
-	// lands, sched.Unscheduled is the documented no-op behind column auto-start and
-	// archive-time run cancellation.
+	// The tickets service talks to the run scheduler only through the sched seam. The
+	// scheduler is constructed further down (it needs the MCP server and the modules), so
+	// the seam is late-bound through a pointer the wiring fills in before serving.
+	var scheduler *sched.Scheduler
 	ticketsSvc := tickets.New(tickets.Options{
-		Store: st, Audit: auditW, Bus: b, Sched: sched.Unscheduled{}, Logger: logger,
+		Store: st, Audit: auditW, Bus: b, Sched: lateRequester{s: &scheduler}, Logger: logger,
 	})
 	ticketsSvc.Routes(mux, authSvc)
+	runsSvc := runsvc.New(runsvc.Options{
+		Store: st, Audit: auditW, Sched: lateRunControl{s: &scheduler}, Logger: logger,
+	})
+	runsSvc.Routes(mux, authSvc)
 	secretsSvc := secretsvc.New(secretsvc.Options{
 		Store: st, Secrets: sec, Audit: auditW, Logger: logger,
 	})
@@ -157,11 +165,19 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	agentsSvc := agentsvc.New(agentsvc.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
 	agentsSvc.Routes(mux, authSvc)
 	// The Lexicode MCP server (S21, D-12): elicitations, approvals, step reporting, wiki
-	// proposals and criterion checks, blocking on humans. SetRunState stays nil until the
-	// S22 scheduler exists — no real runs can start before it, and the seam logs rather than
-	// guesses at the state machine. The MCP endpoint is mounted twice (see mcp doc.go): here
-	// on the main mux, and below on the egress-proxy listener for containers.
-	mcpSvc := mcpsvc.New(mcpsvc.Options{Store: st, Bus: b, Audit: auditW, Logger: logger})
+	// proposals and criterion checks, blocking on humans. SetRunState routes into the S22
+	// scheduler — the only writer of runs.state — through the same late-bound pointer. The
+	// MCP endpoint is mounted twice (see mcp doc.go): here on the main mux, and below on the
+	// egress-proxy listener for containers.
+	mcpSvc := mcpsvc.New(mcpsvc.Options{
+		Store: st, Bus: b, Audit: auditW, Logger: logger,
+		SetRunState: func(ctx context.Context, runID string, state domain.RunState, reason string) error {
+			if scheduler == nil {
+				return fmt.Errorf("sched: the scheduler is not running")
+			}
+			return scheduler.SetRunState(ctx, runID, state, reason)
+		},
+	})
 	mcpSvc.Routes(mux, authSvc)
 	mux.Handle("/mcp/{token}", mcpSvc.Handler())
 
@@ -190,6 +206,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	}
 	credsMod := credentialsmod.New(credentialsmod.Options{Secrets: sec})
 	if err := k.RegisterModule(credsMod); err != nil {
+		return err
+	}
+	// The context-provider module (contracts §2.6): `project` + `ticket` now, wiki and
+	// repofiles with S34. The scheduler resolves them at enqueue for prompt assembly.
+	if err := k.RegisterModule(contextmod.New(contextmod.Options{Store: st})); err != nil {
 		return err
 	}
 	// The credentials settings service checks health through the module's concrete sources —
@@ -223,6 +244,39 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	if proxy := dockerMod.Proxy(); proxy != nil {
 		proxy.SetMCPHandler(mcpSvc.Handler())
 	}
+
+	// The run scheduler (S22, D-14): the kernel-owned centre. Built after Init so the port
+	// registries are populated; its seams — the S19 spec builder, the MCP token authority,
+	// the egress proxy, the tickets category mover — are wired here and nowhere else.
+	builder := &runsvc.Builder{
+		Secrets:    sec,
+		Forge:      k.Forge,
+		Credential: k.CredentialSource,
+		ProxyEnv: func(runID string) (map[string]string, bool) {
+			if p := dockerMod.Proxy(); p != nil {
+				return p.ProxyEnv(runID)
+			}
+			return nil, false
+		},
+		BranchTaken: func(ctx context.Context, projectID, branch string) (bool, error) {
+			return st.Runs().BranchInUse(ctx, projectID, branch)
+		},
+		MCPBaseURL: fmt.Sprintf("http://host.docker.internal:%d", cfg.ProxyPort),
+	}
+	scheduler = sched.New(sched.Options{
+		Store: st, Bus: b, Audit: auditW, Logger: logger,
+		Sandbox:   k.Sandbox,
+		Runtime:   k.Runtime,
+		Providers: k.ContextProviders,
+		Specs:     specBuilderAdapter{b: builder},
+		Tokens:    mcpSvc,
+		Proxy:     proxyAdapter{proxy: dockerMod.Proxy},
+		Tickets: ticketMoverFunc(func(ctx context.Context, ticketID string, cat domain.ColumnCategory, note string) error {
+			return ticketsSvc.MoveTicketToCategory(ctx, ticketID, cat, note)
+		}),
+		GitHosts: gitHostsFor(cfg.GitHubBaseURL),
+	})
+	k.AttachScheduler(scheduler)
 	// Modules stop after everything else this function does, in reverse registration order, with
 	// their own deadline (kernel.StopTimeout). A deferred call is what makes that true on the
 	// serve-error path as well as on the signal path. The signal context is cancelled by then, so
@@ -282,6 +336,14 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// Modules start before the listener is served so that a module which needs to be ready for
 	// the first request is. A Start failure marks the module degraded and boot continues.
 	k.Start(ctx)
+
+	// The scheduler starts after the modules: crash reconciliation (§10.6) needs the sandbox
+	// registered and its daemon preflighted. On SIGINT the scheduler drains WITHOUT
+	// destroying running containers — they keep working and the next boot reattaches them.
+	if err := scheduler.Start(ctx); err != nil {
+		return err
+	}
+	defer scheduler.Stop(context.Background())
 	for _, m := range k.Modules() {
 		if m.State == kernel.StateDegraded {
 			fmt.Fprintf(stdout, "Module %s is degraded: %s\n", m.Name, m.Reason)

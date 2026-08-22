@@ -564,6 +564,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tickets/{id}/delegate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delegate the ticket to an agent (S22): records the agent as the ticket's delegate and enqueues a run through the kernel scheduler (D-14). A nil error means "queued", not "running" — admission control (§10.2) decides when it starts, and the run's `hold_reason` says in words which limit is holding it. */
+        post: operations["delegateTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tickets/{id}/criteria": {
         parameters: {
             query?: never;
@@ -682,6 +699,108 @@ export interface paths {
         post?: never;
         /** Remove one permission rule. */
         delete: operations["deletePermissionRule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A project's runs, newest first (S22; the full list UI is S23). `status` accepts a comma-separated set of run states. */
+        get: operations["listRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One run, with its outputs and its recorded context stack. A queued run's `hold_reason` names, in words, which limit is holding it (§10.2 — never a bare spinner). */
+        get: operations["getRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{id}/activities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The run's transcript in step order (basic; S23 builds the timeline UI on it). */
+        get: operations["getRunActivities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue a steering message ("queue, don't interrupt"): a run_messages row the supervisor delivers between tool calls — "Applied after the current step" is literally true (contracts §3.4). Enabled from queued through provisioning and running (§10.3). 409 `run_ended` once the run is terminal. */
+        post: operations["steerRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop the run: terminal `canceled` with the reason recorded, after the §10.5 failure-artifact push — whatever exists is committed and pushed to the run branch before the container is destroyed. 409 `run_ended` once the run is terminal. */
+        post: operations["stopRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{id}/takeover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Take over the run. Not available until story S24 builds the takeover flow — until then this answers 501 `not_implemented`; stop the run instead (its branch is preserved). */
+        post: operations["takeoverRun"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1549,6 +1668,8 @@ export interface components {
         CommentRunRequest: {
             agent_id: string;
             agent_name: string;
+            /** @description The created run's id, when one was staged. */
+            run_id?: string;
             staged: boolean;
             note: string;
         };
@@ -1565,6 +1686,117 @@ export interface components {
         };
         MemberListResponse: {
             users: components["schemas"]["Member"][];
+        };
+        /**
+         * @description runs.state — only the kernel scheduler writes it (D-14).
+         * @enum {string}
+         */
+        RunState: "queued" | "provisioning" | "running" | "needs_input" | "awaiting_approval" | "completed" | "failed" | "timed_out" | "canceled" | "loop_stopped";
+        /** @description One agent session. Autonomy, directive_version_id, model, effort and the prompt are snapshots taken at enqueue; hold_reason says in words why a queued run is queued. */
+        Run: {
+            id: string;
+            /** @description Per-project; renders as "run #482". */
+            seq: number;
+            project_id: string;
+            agent_id: string;
+            ticket_id: string | null;
+            trigger_id: string | null;
+            state: components["schemas"]["RunState"];
+            state_reason: string;
+            hold_reason: string;
+            autonomy: string;
+            directive_version_id: string | null;
+            model: string;
+            effort: string;
+            branch: string | null;
+            subject_key: string;
+            current_step: string;
+            cost_cents: number;
+            tokens_in: number;
+            tokens_out: number;
+            tokens_cache_read: number;
+            tokens_cache_write: number;
+            step_count: number;
+            error_message: string;
+            queued_at: string;
+            started_at: string | null;
+            ended_at: string | null;
+        };
+        /** @description One artifact a run produced (a branch, a PR, preserved partial work, …). */
+        RunOutput: {
+            id: string;
+            /** @enum {string} */
+            kind: "branch" | "pull_request" | "comment" | "review" | "wiki_proposal" | "ticket" | "partial_work";
+            ref: string;
+            url: string;
+            summary: string;
+            created_at: string;
+        };
+        /** @description One labelled piece of the context stack the run was given — exactly what the run detail's Context panel renders (architecture §11). `reason` is rendered verbatim. */
+        RunContextItem: {
+            provider: string;
+            source_kind: string;
+            source_ref: string;
+            title: string;
+            reason: string;
+            tokens: number;
+            position: number;
+            injected: boolean;
+        };
+        /** @description One step of a run's transcript, keyed (run_id, seq). */
+        RunActivity: {
+            seq: number;
+            /** @enum {string} */
+            type: "thought" | "action" | "elicitation" | "response" | "error" | "system" | "provision";
+            /** @description 0 summary · 1 normal · 2 verbose. */
+            level: number;
+            tool_name: string;
+            group_key: string;
+            title: string;
+            payload: unknown;
+            ok: boolean | null;
+            attempt: number;
+            duration_ms: number | null;
+            cost_cents: number;
+            created_at: string;
+        };
+        RunListResponse: {
+            runs: components["schemas"]["Run"][];
+        };
+        RunDetailResponse: {
+            run: components["schemas"]["Run"];
+            outputs: components["schemas"]["RunOutput"][];
+            context: components["schemas"]["RunContextItem"][];
+        };
+        RunActivitiesResponse: {
+            activities: components["schemas"]["RunActivity"][];
+        };
+        DelegateRequest: {
+            agent_id: string;
+            /** @description Optional extra instruction; becomes the prompt's final Task section. */
+            prompt?: string;
+        };
+        DelegateResponse: {
+            run_id: string;
+        };
+        SteerRequest: {
+            body: string;
+        };
+        /** @description One queued steering message; delivered_at is stamped on handoff. */
+        RunMessage: {
+            id: string;
+            run_id: string;
+            body: string;
+            /** @enum {string} */
+            state: "queued" | "delivered" | "dropped";
+            created_at: string;
+            delivered_at?: string | null;
+        };
+        StopRunRequest: {
+            reason?: string;
+        };
+        StopRunResponse: {
+            run: components["schemas"]["Run"];
         };
         /**
          * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
@@ -2918,6 +3150,37 @@ export interface operations {
             409: components["responses"]["Problem"];
         };
     };
+    delegateTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DelegateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created run's id. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DelegateResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
     addCriterion: {
         parameters: {
             query?: never;
@@ -3209,6 +3472,164 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    listRuns: {
+        parameters: {
+            query?: {
+                status?: string;
+                agent?: string;
+                ticket?: string;
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The matching runs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunListResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run, its outputs and its context items. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetailResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getRunActivities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The transcript. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunActivitiesResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    steerRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SteerRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued message. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunMessage"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    stopRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StopRunRequest"];
+            };
+        };
+        responses: {
+            /** @description The stopped run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopRunResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    takeoverRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            501: components["responses"]["Problem"];
         };
     };
     respondElicitation: {

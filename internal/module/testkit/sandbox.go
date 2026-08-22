@@ -71,7 +71,10 @@ func (s *Sandbox) Prepare(_ context.Context, spec ports.SandboxSpec, sink ports.
 	return inst, nil
 }
 
-// Reattach implements ports.Sandbox: find a previously prepared, undestroyed instance.
+// Reattach implements ports.Sandbox: find a previously prepared, undestroyed instance. A
+// reattach begins a new exec life — a kill delivered to the previous process (the crashed
+// orchestrator's exec) must not poison the resumed stream, so a closed kill channel is
+// replaced.
 func (s *Sandbox) Reattach(_ context.Context, ref ports.InstanceRef) (ports.Instance, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -79,7 +82,14 @@ func (s *Sandbox) Reattach(_ context.Context, ref ports.InstanceRef) (ports.Inst
 	if !ok || inst.destroyed {
 		return nil, ports.ErrInstanceGone
 	}
+	inst.mu.Lock()
 	inst.ref.LogOffset = ref.LogOffset
+	select {
+	case <-inst.killed:
+		inst.killed = make(chan struct{})
+	default:
+	}
+	inst.mu.Unlock()
 	return inst, nil
 }
 
@@ -91,10 +101,13 @@ func (s *Sandbox) Instances() []*Instance {
 	return append([]*Instance(nil), s.prepared...)
 }
 
-// Instance is one fake sandbox instance. Its Exec serves the Script for the agent command,
-// and understands the claudecode adapter's pidfile kill convention: an argv containing
-// "kill -" terminates the playing script, so the adapter's real Stop sequence — TERM, grace,
-// KILL — is exercised end to end without a process.
+// Instance is one fake sandbox instance. Its Exec serves the Script for the agent command
+// (an argv carrying the §3.1 stream-json launch shape), skipping ref.LogOffset bytes the way
+// a real sandbox serves its log stream from an offset on reattach. It understands the
+// claudecode adapter's pidfile kill convention: an argv containing "kill -" terminates the
+// playing script, so the adapter's real Stop sequence — TERM, grace, KILL — is exercised end
+// to end without a process. Any other argv (git artifact pushes, probes) is recorded and
+// succeeds with empty output; Execs() is the test's window into what ran.
 type Instance struct {
 	ref    ports.InstanceRef
 	script Script
@@ -102,7 +115,7 @@ type Instance struct {
 
 	mu        sync.Mutex
 	stdin     bytes.Buffer
-	killOnce  sync.Once
+	execs     [][]string
 	killed    chan struct{}
 	destroyed bool
 }
@@ -114,6 +127,10 @@ func (i *Instance) Ref() ports.InstanceRef { return i.ref }
 func (i *Instance) Exec(_ context.Context, argv []string, _ ports.ExecOpts) (ports.Streams, error) {
 	i.mu.Lock()
 	dead := i.destroyed
+	killed := i.killed
+	logOffset := i.ref.LogOffset
+	script := i.script
+	i.execs = append(i.execs, append([]string(nil), argv...))
 	i.mu.Unlock()
 	if dead {
 		return ports.Streams{}, errors.New("testkit: instance destroyed")
@@ -129,21 +146,42 @@ func (i *Instance) Exec(_ context.Context, argv []string, _ ports.ExecOpts) (por
 		}, nil
 	}
 
-	pr := &pacedReader{lines: splitAfterNewlines(i.script.Stdout), pace: i.script.Pace, killed: i.killed}
+	if !isAgentLaunch(argv) {
+		// A side exec (the §10.5 artifact push, a probe): recorded above, succeeds, no
+		// output. Only the agent launch replays the script.
+		return ports.Streams{
+			Stdin:  nopWriteCloser{},
+			Stdout: bytes.NewReader(nil),
+			Stderr: bytes.NewReader(nil),
+			Wait:   func() (int, error) { return 0, nil },
+		}, nil
+	}
+
+	// The agent launch: serve the script from ref.LogOffset — the fake's version of "the
+	// sandbox serves its log stream from where the last process stopped" (§10.6).
+	stdout := script.Stdout
+	if off := logOffset; off > 0 {
+		if off >= int64(len(stdout)) {
+			stdout = nil
+		} else {
+			stdout = stdout[off:]
+		}
+	}
+	pr := &pacedReader{lines: splitAfterNewlines(stdout), pace: script.Pace, killed: killed}
 	return ports.Streams{
 		Stdin:  &recordingWriter{inst: i},
 		Stdout: pr,
-		Stderr: bytes.NewReader(i.script.Stderr),
+		Stderr: bytes.NewReader(script.Stderr),
 		Wait: func() (int, error) {
 			// The stream always ends — naturally, or cut short by a kill (the paced
 			// reader returns EOF as soon as it sees the signal). A killed script exits
 			// 143 (128+SIGTERM), like a real signalled process.
 			<-pr.drained()
 			select {
-			case <-i.killed:
+			case <-killed:
 				return 143, nil
 			default:
-				return i.script.ExitCode, nil
+				return script.ExitCode, nil
 			}
 		},
 	}, nil
@@ -171,7 +209,13 @@ func (i *Instance) Destroy(context.Context) error {
 
 // Terminate ends the playing script, as a signal would. Safe to call repeatedly.
 func (i *Instance) Terminate() {
-	i.killOnce.Do(func() { close(i.killed) })
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	select {
+	case <-i.killed:
+	default:
+		close(i.killed)
+	}
 }
 
 // StdinWrites returns everything written to the agent exec's stdin so far — the prompt and
@@ -185,6 +229,23 @@ func (i *Instance) StdinWrites() string {
 func isKill(argv []string) bool {
 	joined := strings.Join(argv, " ")
 	return strings.Contains(joined, "kill -")
+}
+
+// isAgentLaunch recognises the contracts §3.1 launch shape (any runtime passing
+// `--output-format stream-json` counts). Everything else is a side exec.
+func isAgentLaunch(argv []string) bool {
+	joined := strings.Join(argv, " ")
+	return strings.Contains(joined, "stream-json")
+}
+
+// Execs returns every argv this instance has executed, in order — the fake's audit trail
+// (the S22 artifact-push assertion reads it).
+func (i *Instance) Execs() [][]string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	out := make([][]string, len(i.execs))
+	copy(out, i.execs)
+	return out
 }
 
 type recordingWriter struct{ inst *Instance }

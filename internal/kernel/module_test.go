@@ -24,6 +24,7 @@ type stubPort struct {
 	ports.Sandbox
 	ports.CredentialSource
 	ports.AgentRuntime
+	ports.ContextProvider
 	id string
 }
 

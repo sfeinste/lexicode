@@ -45,7 +45,9 @@ func (s *Scripted) Launch(ctx context.Context, spec ports.RunSpec, inst ports.In
 		// only the script that plays. Fake instances ignore argv (except kills), so the
 		// claudecode command line runs against this fixture.
 		if fake, ok := inst.(*Instance); ok {
+			fake.mu.Lock()
 			fake.script = Script{Stdout: s.Fixture, Pace: s.Pace, ExitCode: s.ExitCode}
+			fake.mu.Unlock()
 		}
 		rt := claudecode.NewRuntime(claudecode.Options{Grace: s.Grace, Respond: s.Respond})
 		return rt.Launch(ctx, spec, inst, sink)

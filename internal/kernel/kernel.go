@@ -26,15 +26,13 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/httpx"
 	"github.com/spruce/lexicode/internal/kernel/ports"
+	"github.com/spruce/lexicode/internal/kernel/sched"
 	"github.com/spruce/lexicode/internal/kernel/secrets"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
 // Kernel owns the subsystems every module and service shares. Subsystems are added one story at a
-// time; each one is a field here plus an accessor, and nothing else in the shape changes. The
-// accessor that contracts §1 lists but that has no subsystem yet — Scheduler — is
-// deliberately absent rather than stubbed, so that no caller can be
-// written against a stub that later changes meaning.
+// time; each one is a field here plus an accessor, and nothing else in the shape changes.
 type Kernel struct {
 	logger      *slog.Logger
 	mux         *httpx.Mux
@@ -44,6 +42,7 @@ type Kernel struct {
 	audit       *audit.Writer
 	secrets     *secrets.Store
 	sse         *httpx.Hub
+	scheduler   *sched.Scheduler
 	stopTimeout time.Duration
 
 	eventSources      *registry[ports.EventSource]
@@ -173,6 +172,24 @@ func (k *Kernel) Secrets() *secrets.Store { return k.secrets }
 // SSE is the SSE hub (contracts §1, §5.1): the one bridge from the bus to connected browser
 // tabs. Handlers never write to it directly.
 func (k *Kernel) SSE() *httpx.Hub { return k.sse }
+
+// AttachScheduler hands the kernel its run scheduler (contracts §1). Called once, from
+// cmd/lexicode, after the scheduler is constructed — the scheduler's seams (spec builder,
+// MCP token authority) live above the kernel, so it cannot be built inside Options.
+func (k *Kernel) AttachScheduler(s *sched.Scheduler) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.scheduler = s
+}
+
+// Scheduler is the kernel-owned run engine (contracts §1, D-14): the only component that may
+// start a run. Nil until cmd/lexicode attaches it — modules must tolerate a nil scheduler the
+// way they tolerate a degraded sandbox.
+func (k *Kernel) Scheduler() *sched.Scheduler {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.scheduler
+}
 
 // ---------------------------------------------------------------- registration -----
 //

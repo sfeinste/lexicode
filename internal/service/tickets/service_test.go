@@ -35,11 +35,11 @@ type schedRecorder struct {
 	cancels  []string
 }
 
-func (r *schedRecorder) RequestRun(_ context.Context, req sched.RunRequest) error {
+func (r *schedRecorder) RequestRun(_ context.Context, req sched.RunRequest) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.requests = append(r.requests, req)
-	return sched.ErrNotImplemented
+	return "", sched.ErrNotImplemented
 }
 
 func (r *schedRecorder) CancelTicketRuns(_ context.Context, ticketID, reason string) (int64, error) {

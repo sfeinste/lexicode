@@ -54,6 +54,7 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("POST /api/v1/tickets/{id}/subtickets", viaTicket(s.handleSubtickets))
 	mux.Handle("GET /api/v1/tickets/{id}/stream", viaTicket(s.handleStream))
 	mux.Handle("POST /api/v1/tickets/{id}/stream", viaTicket(s.handleComment))
+	mux.Handle("POST /api/v1/tickets/{id}/delegate", viaTicket(s.handleDelegate))
 	mux.Handle("POST /api/v1/tickets/{id}/criteria", viaTicket(s.handleAddCriterion))
 	mux.Handle("PUT /api/v1/tickets/{id}/labels/{label_id}", viaTicket(s.handleAttachLabel))
 	mux.Handle("DELETE /api/v1/tickets/{id}/labels/{label_id}", viaTicket(s.handleDetachLabel))
@@ -420,6 +421,7 @@ type createCommentBody struct {
 type commentRunRequestBody struct {
 	AgentID   string `json:"agent_id"`
 	AgentName string `json:"agent_name"`
+	RunID     string `json:"run_id,omitempty"`
 	Staged    bool   `json:"staged"`
 	Note      string `json:"note"`
 }
@@ -456,6 +458,29 @@ func (s *Service) handleComment(w http.ResponseWriter, r *http.Request) {
 		out.RunRequests = append(out.RunRequests, commentRunRequestBody(rr))
 	}
 	httpx.WriteJSON(w, http.StatusCreated, out)
+}
+
+// delegateBody is a POST /tickets/{id}/delegate request (contracts §5: {agent_id, prompt?}).
+type delegateBody struct {
+	AgentID string `json:"agent_id"`
+	Prompt  string `json:"prompt"`
+}
+
+func (s *Service) handleDelegate(w http.ResponseWriter, r *http.Request) {
+	body, ok := httpx.DecodeJSON[delegateBody](w, r)
+	if !ok {
+		return
+	}
+	runID, ferr, err := s.Delegate(r.Context(), r.PathValue("id"), DelegateInput(body))
+	if len(ferr) > 0 {
+		httpx.WriteValidation(w, ferr)
+		return
+	}
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]string{"run_id": runID})
 }
 
 type addCriterionBody struct {
