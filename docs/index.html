@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lexicode — the workspace where tickets, docs, agents and runs are one thing</title>
+<meta name="description" content="Lexicode is a self-hosted, single-binary workspace for running coding agents: a board, a wiki, triggers with a backtest, loop protection, and runs in real Docker containers. Humans merge. Always.">
+<meta property="og:title" content="Lexicode">
+<meta property="og:description" content="One binary. Your box. Tickets, docs, agents, triggers and run logs in one place.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>◈</text></svg>">
+<style>
+  :root {
+    --bg: #0b0d10;
+    --bg-2: #121519;
+    --card: #14181e;
+    --border: #232830;
+    --text: #e6e9ef;
+    --muted: #98a2b0;
+    --dim: #68727e;
+    --accent: #6c7cff;
+    --accent-2: #3fb8d4;
+    --warn: #e0a33e;
+    --ok: #3fb37f;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--accent); }
+
+  .wrap { width: min(1140px, 100% - 40px); margin-inline: auto; }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 20;
+    background: #0b0d10e6;
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
+  .brand { font-weight: 700; font-size: 19px; letter-spacing: -0.01em; margin-right: auto; }
+  .brand span { color: var(--accent); }
+  nav a.link { color: var(--muted); text-decoration: none; font-size: 15px; }
+  nav a.link:hover { color: var(--text); }
+  @media (max-width: 780px) { nav a.link { display: none; } }
+
+  .btn {
+    display: inline-block; padding: 11px 20px; border-radius: 8px;
+    font-size: 15px; font-weight: 600; text-decoration: none;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #5c6cf5; }
+  .btn-ghost { border-color: var(--border); color: var(--text); background: var(--bg-2); }
+  .btn-ghost:hover { border-color: #39414d; }
+
+  /* ---------- hero ---------- */
+  header.hero { position: relative; overflow: hidden; padding: 96px 0 64px; text-align: center; }
+  header.hero::before {
+    content: ""; position: absolute; inset: -200px 0 auto 0; height: 620px;
+    background: radial-gradient(ellipse 60% 55% at 50% 40%, #6c7cff33, transparent 70%);
+    pointer-events: none;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--border); background: var(--bg-2);
+    border-radius: 999px; padding: 6px 14px; font-size: 13px; color: var(--muted);
+    font-family: var(--mono);
+  }
+  .pill b { color: var(--ok); font-weight: 600; }
+  h1 {
+    font-size: clamp(34px, 6vw, 62px); line-height: 1.08; letter-spacing: -0.03em;
+    margin: 24px auto 0; max-width: 15ch; font-weight: 700;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .sub { color: var(--muted); font-size: clamp(17px, 2.2vw, 20px); max-width: 62ch; margin: 20px auto 0; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 32px; }
+  .terminal {
+    max-width: 560px; margin: 36px auto 0; text-align: left;
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+    font-family: var(--mono); font-size: 14px; overflow: hidden;
+  }
+  .terminal .bar { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .terminal .bar i { width: 10px; height: 10px; border-radius: 50%; background: #2c323b; display: block; }
+  .terminal pre { margin: 0; padding: 16px 18px; overflow-x: auto; color: var(--text); }
+  .terminal .c { color: var(--dim); }
+  .terminal .p { color: var(--ok); }
+
+  /* ---------- shots ---------- */
+  .shot {
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    background: var(--bg-2); box-shadow: 0 30px 70px -30px #000;
+  }
+  .shot .chrome {
+    display: flex; align-items: center; gap: 6px;
+    padding: 9px 12px; border-bottom: 1px solid var(--border); background: #0f1216;
+  }
+  .shot .chrome i { width: 9px; height: 9px; border-radius: 50%; background: #2c323b; display: block; }
+  .shot .chrome span {
+    margin-left: 10px; font-family: var(--mono); font-size: 12px; color: var(--dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+  .hero-shot { margin-top: 56px; }
+
+  /* ---------- sections ---------- */
+  section { padding: 88px 0; border-top: 1px solid var(--border); }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent-2); margin: 0 0 12px;
+  }
+  h2 { font-size: clamp(26px, 3.6vw, 38px); line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 14px; }
+  h3 { font-size: 19px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  p.lead { color: var(--muted); max-width: 66ch; margin: 0; }
+
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 44px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+  .card .ico {
+    width: 38px; height: 38px; border-radius: 9px; display: grid; place-items: center;
+    background: #6c7cff1f; color: var(--accent); font-size: 18px; margin-bottom: 16px;
+  }
+  .card p { color: var(--muted); font-size: 15px; margin: 0; }
+
+  .feature { display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 56px; align-items: center; }
+  .feature + .feature { margin-top: 88px; }
+  .feature.flip .copy { order: 2; }
+  ul.ticks { list-style: none; padding: 0; margin: 22px 0 0; }
+  ul.ticks li { position: relative; padding-left: 26px; margin-bottom: 10px; color: var(--muted); font-size: 15.5px; }
+  ul.ticks li::before { content: "✓"; position: absolute; left: 0; color: var(--ok); }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 44px; counter-reset: s; }
+  .step { border: 1px solid var(--border); border-radius: 12px; padding: 24px; background: var(--card); }
+  .step::before {
+    counter-increment: s; content: counter(s, decimal-leading-zero);
+    font-family: var(--mono); font-size: 13px; color: var(--accent); display: block; margin-bottom: 12px;
+  }
+  .step p { color: var(--muted); font-size: 15px; margin: 0; }
+
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 44px; }
+  .metric { border: 1px solid var(--border); border-radius: 12px; padding: 22px; background: var(--card); }
+  .metric b { display: block; font-size: 30px; font-family: var(--mono); color: var(--text); letter-spacing: -0.02em; }
+  .metric span { color: var(--muted); font-size: 14px; }
+  .note { color: var(--dim); font-size: 14px; margin-top: 22px; max-width: 74ch; }
+
+  .band {
+    margin-top: 48px; border: 1px solid var(--border); border-radius: 14px;
+    background: linear-gradient(180deg, #14181e, #0f1216); padding: 44px; text-align: center;
+  }
+  .band h2 { margin-bottom: 10px; }
+
+  footer { border-top: 1px solid var(--border); padding: 40px 0 64px; color: var(--dim); font-size: 14px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  footer a { color: var(--muted); text-decoration: none; }
+  footer a:hover { color: var(--text); }
+
+  @media (max-width: 900px) {
+    .grid-3, .steps { grid-template-columns: 1fr; }
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+    .feature { grid-template-columns: 1fr; gap: 28px; }
+    .feature.flip .copy { order: 0; }
+    section { padding: 64px 0; }
+    header.hero { padding: 64px 0 48px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand">◈ Lexi<span>code</span></div>
+    <a class="link" href="#features">Features</a>
+    <a class="link" href="#how">How it works</a>
+    <a class="link" href="#numbers">Numbers</a>
+    <a class="btn btn-ghost" href="https://github.com/spruce/lexicode">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="pill"><b>●</b> one binary · self-hosted · no SaaS</div>
+    <h1>Your agents ship. <em>You</em> merge.</h1>
+    <p class="sub">
+      Lexicode is a self-hosted workspace where the tickets, the docs, the agents, the triggers
+      and the run logs are one thing. Point it at a repository, write a ticket, press <b>D</b> —
+      and watch the work happen in a real container you can interrupt at any second.
+    </p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#quickstart">Get started</a>
+      <a class="btn btn-ghost" href="#features">See the product</a>
+    </div>
+
+    <div class="terminal">
+      <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="c"># look around a populated workspace first</span>
+<span class="p">$</span> lexicode serve --demo --data-dir ~/.lexicode-demo
+Lexicode is listening on http://127.0.0.1:7717/</pre>
+    </div>
+
+    <div class="shot hero-shot">
+      <div class="chrome"><i></i><i></i><i></i><span>127.0.0.1:7717/p/PAY/board</span></div>
+      <img src="screenshots/board.webp" width="1440" height="830" alt="The Lexicode board: columns named Icebox, Up next, In progress, Needs review and Shipped, with a Needs you strip pinned above the cards.">
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <p class="eyebrow">The thesis</p>
+    <h2>The scarce resource is not agent capability.<br>It is your attention.</h2>
+    <p class="lead">
+      Everything in Lexicode is downstream of that. It never hides what an agent did, it never
+      merges for you, and it never leaves you staring at a spinner wondering whether to intervene.
+    </p>
+
+    <div class="grid-3">
+      <div class="card">
+        <div class="ico">◧</div>
+        <h3>A board you can rename</h3>
+        <p>Every column carries a fixed category, and automations key off the category — never the
+        name. Rename “Up next” to “Ready” and nothing breaks. Dragging a card never starts a run.</p>
+      </div>
+      <div class="card">
+        <div class="ico">⬡</div>
+        <h3>Runs in real containers</h3>
+        <p>Read-only rootfs, non-root, per-run credentials, a provisioning checklist instead of a
+        spinner, a live activity stream, and steer / stop / take-over at any point.</p>
+      </div>
+      <div class="card">
+        <div class="ico">⚡</div>
+        <h3>Triggers that you can rehearse</h3>
+        <p>A generated editor, a backtest that replays against real history before you enable
+        anything, and eight named outcomes per firing — including the ones where nothing happened.</p>
+      </div>
+      <div class="card">
+        <div class="ico">↻</div>
+        <h3>Loop protection, five layers</h3>
+        <p>On by default. When a chain stops, you get the causal chain rendered — not a throttling
+        notice you have to decode.</p>
+      </div>
+      <div class="card">
+        <div class="ico">▤</div>
+        <h3>A wiki that steers agents</h3>
+        <p>Pages are scoped, owned and expiring agent instructions. Each run shows exactly which
+        pages loaded, why, and what they cost in tokens.</p>
+      </div>
+      <div class="card">
+        <div class="ico">✋</div>
+        <h3>No merge path</h3>
+        <p>Not a permission that is off — an absent capability. The forge port has no merge method,
+        and review submission rejects <code>APPROVE</code> unconditionally.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="feature">
+      <div class="copy">
+        <p class="eyebrow">Runs</p>
+        <h2>Agents are not fire-and-forget</h2>
+        <p class="lead">
+          A run is a conversation you can join. When the agent hits a fork in the road it parks and
+          asks — the run stays paused until you answer, and your answer goes straight back into the
+          running session.
+        </p>
+        <ul class="ticks">
+          <li>Live activity stream at three verbosity levels</li>
+          <li>Loaded context, tokens and cost, per run</li>
+          <li>Outputs — branch, PR, wiki proposal — as they appear</li>
+          <li>Send, stop, or take over the container yourself</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="chrome"><i></i><i></i><i></i><span>127.0.0.1:7717/p/PAY/runs/01M0NQ5C…</span></div>
+        <img src="screenshots/run-question.webp" width="1440" height="860" alt="A paused run: the agent asks where the idempotency key should be stored, with the step list, a failing go test, and a context panel showing 24.2k tokens and $0.41.">
+      </div>
+    </div>
+
+    <div class="feature flip">
+      <div class="copy">
+        <p class="eyebrow">Inbox</p>
+        <h2>Four reasons a run needs you.<br>Never one “waiting” badge.</h2>
+        <p class="lead">
+          Answer a question, approve a step, fix a failure, review output. Each one is a distinct
+          row with the action attached, so triage is reading — not clicking through to find out.
+        </p>
+      </div>
+      <div class="shot">
+        <div class="chrome"><i></i><i></i><i></i><span>127.0.0.1:7717/inbox</span></div>
+        <img src="screenshots/inbox.webp" width="1440" height="560" alt="The inbox listing four items: answer a question, fix a failure, and two review-output rows, each with its own action button.">
+      </div>
+    </div>
+
+    <div class="feature">
+      <div class="copy">
+        <p class="eyebrow">Triggers</p>
+        <h2>Rehearse the automation before you arm it</h2>
+        <p class="lead">
+          WHEN / IF / THEN, generated from the event schema, with loop protection attached to the
+          rule itself. The backtest replays your project's real event history against the rule as
+          written — unsaved edits included. Nothing is executed.
+        </p>
+      </div>
+      <div class="shot">
+        <div class="chrome"><i></i><i></i><i></i><span>127.0.0.1:7717/p/PAY/triggers/01M0NQ5C…</span></div>
+        <img src="screenshots/backtest.webp" width="1440" height="860" alt="Trigger editor showing the run-agent action, a loop protection block with actor suppression, debounce, cancel-in-progress and depth limit, and a backtest panel.">
+      </div>
+    </div>
+
+    <div class="feature flip">
+      <div class="copy">
+        <p class="eyebrow">Agents</p>
+        <h2>Guidance is a prompt. Enforcement is not.</h2>
+        <p class="lead">
+          A directive tells the agent what to do. Permissions and the network policy decide what it
+          <em>can</em> do — checked in the runtime and the forge adapter, never in prompt text.
+        </p>
+        <ul class="ticks">
+          <li>A reviewer with “edit files” unchecked cannot write code</li>
+          <li>Network policy: none, allowlist, or open — via an egress proxy</li>
+          <li>Append-only directive versions, with the token cost shown</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="chrome"><i></i><i></i><i></i><span>127.0.0.1:7717/p/PAY/agents/01M0NQ5C…</span></div>
+        <img src="screenshots/agent-policy.webp" width="1440" height="860" alt="Agent settings: model and effort, a permissions block with eight checkboxes marked as enforced in the runtime, permission rules, and autonomy levels.">
+      </div>
+    </div>
+
+    <div class="feature">
+      <div class="copy">
+        <p class="eyebrow">Tickets &amp; wiki</p>
+        <h2>The ticket is the brief. The wiki is the standing order.</h2>
+        <p class="lead">
+          Acceptance criteria an agent can tick off, a delegate field that decides who does the
+          work, and wiki pages that load into a run by scope — always-on, automatic, or manual —
+          with a token budget you can see.
+        </p>
+      </div>
+      <div class="shot">
+        <div class="chrome"><i></i><i></i><i></i><span>127.0.0.1:7717/p/PAY/t/6</span></div>
+        <img src="screenshots/ticket.webp" width="1440" height="860" alt="Ticket PAY-6 with description, acceptance criteria 1 of 2 ticked, a sidebar with status, priority, assignee and an agent delegate, and a run card in the activity feed.">
+      </div>
+    </div>
+
+    <div class="feature flip">
+      <div class="copy">
+        <p class="eyebrow">Context budget</p>
+        <h2>Every page an agent reads is a page you chose</h2>
+        <p class="lead">
+          The wiki tree shows scope on every page — <b>ALWAYS</b>, <b>AUTO</b>, <b>MANUAL</b> — and
+          the always-on budget above it, in tokens. Agent-proposed pages arrive as proposals, marked
+          as such, and wait for you.
+        </p>
+      </div>
+      <div class="shot">
+        <div class="chrome"><i></i><i></i><i></i><span>127.0.0.1:7717/p/PAY/wiki/database-migrations</span></div>
+        <img src="screenshots/wiki.webp" width="1440" height="760" alt="The wiki: a page tree showing always-on, automatic and proposed pages with a token budget meter, next to the Database migrations page.">
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <p class="eyebrow">How it works</p>
+    <h2>Ticket → run → pull request → review → you</h2>
+    <p class="lead">
+      A ticket can travel from <em>written</em> to <em>reviewed PR waiting for you</em> without
+      anyone touching a keyboard, and every step stays visible and interruptible.
+    </p>
+
+    <div class="steps">
+      <div class="step">
+        <h3>Write the ticket</h3>
+        <p>Description, acceptance criteria, and a delegate. Press <b>D</b> to delegate — starting a
+        run is always an explicit act.</p>
+      </div>
+      <div class="step">
+        <h3>The run happens</h3>
+        <p>A disposable Docker container running Claude Code clones, branches, works, and pushes.
+        You watch it, steer it, or take it over.</p>
+      </div>
+      <div class="step">
+        <h3>A trigger fires</h3>
+        <p>The PR lands, GitHub is polled, and your rule sends a reviewer agent in — with loop
+        protection counting every hop.</p>
+      </div>
+      <div class="step">
+        <h3>The review comes back</h3>
+        <p>Severity-tagged findings on the PR. <code>APPROVE</code> is rejected unconditionally: an
+        agent cannot bless its own work.</p>
+      </div>
+      <div class="step">
+        <h3>The chain stops itself</h3>
+        <p>Five layers of loop protection cap the depth, and the stop is rendered as a causal chain
+        you can read.</p>
+      </div>
+      <div class="step">
+        <h3>You merge</h3>
+        <p>Always. The forge port has no merge method — there is nothing to switch on.</p>
+      </div>
+    </div>
+
+    <div class="shot" style="margin-top:44px">
+      <div class="chrome"><i></i><i></i><i></i><span>127.0.0.1:7717/p/PAY/board — ⌘K</span></div>
+      <img src="screenshots/palette.webp" width="1440" height="860" alt="The command palette open over the board, listing go-to commands with their keyboard shortcuts.">
+    </div>
+  </div>
+</section>
+
+<section id="numbers">
+  <div class="wrap">
+    <p class="eyebrow">Measured, not claimed</p>
+    <h2>Numbers from a real acceptance run</h2>
+    <p class="lead">
+      <code>scripts/s39-acceptance.sh</code> drives the whole product — real binary, real Docker
+      containers, real git over HTTP, the real MCP server, the real GitHub poller, the real trigger
+      engine and the real loop guard — and prints these.
+    </p>
+
+    <div class="metrics">
+      <div class="metric"><b>0.55 s</b><span>Connect a repo → first run in flight (goal: &lt; 5 min)</span></div>
+      <div class="metric"><b>2 ms</b><span>Configuring the six-step chain (goal: &lt; 10 min)</span></div>
+      <div class="metric"><b>42 s</b><span>The whole eight-step chain, six runs in six containers</span></div>
+      <div class="metric"><b>56 s</b><span>Agent image build, once per machine</span></div>
+    </div>
+
+    <p class="note">
+      Read these honestly: they measure the product's share of each goal, not a human's. The agent
+      in the acceptance run is a scripted stand-in — it clones, commits, pushes and calls the real
+      MCP server, but it does not think, so these are floor values for the orchestration rather
+      than estimates of a real agent's work.
+    </p>
+
+    <div class="band" id="quickstart">
+      <h2>Run it on your own box</h2>
+      <p class="lead" style="margin-inline:auto">Three commands. No account, no tenant, no telemetry.</p>
+      <div class="terminal" style="margin-top:28px">
+        <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="p">$</span> make release &amp;&amp; sh scripts/install.sh
+<span class="p">$</span> lexicode doctor      <span class="c"># docker, ports, disk, credentials</span>
+<span class="p">$</span> lexicode serve       <span class="c"># http://127.0.0.1:7717</span></pre>
+      </div>
+      <div class="cta" style="margin-top:28px">
+        <a class="btn btn-primary" href="https://github.com/spruce/lexicode">Read the docs</a>
+        <a class="btn btn-ghost" href="https://github.com/spruce/lexicode">Star on GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>◈ Lexicode — self-hosted agent orchestration. Humans merge. Always.</div>
+    <div>
+      <a href="https://github.com/spruce/lexicode">GitHub</a> ·
+      <a href="https://github.com/spruce/lexicode/blob/main/docs/install.md">Install</a> ·
+      <a href="https://github.com/spruce/lexicode/blob/main/docs/loop-protection.md">Loop protection</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
