@@ -52,6 +52,13 @@ func WriteProblem(w http.ResponseWriter, status int, slug, title, detail string)
 	writeProblemBody(w, Problem{Type: slug, Title: title, Status: status, Detail: detail})
 }
 
+// WriteProblemFields writes a problem+json response that also names the fields at fault —
+// for conflicts that belong to one input (a duplicate name, say), where the frontend wants
+// both a stable slug to switch on and a field to attach the message to.
+func WriteProblemFields(w http.ResponseWriter, status int, slug, title, detail string, errs []FieldError) {
+	writeProblemBody(w, Problem{Type: slug, Title: title, Status: status, Detail: detail, Errors: errs})
+}
+
 // WriteValidation writes a 400 validation_failed problem carrying one entry per invalid field.
 func WriteValidation(w http.ResponseWriter, errs []FieldError) {
 	writeProblemBody(w, Problem{

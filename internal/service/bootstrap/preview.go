@@ -10,6 +10,7 @@ import (
 
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/ports"
+	"github.com/spruce/lexicode/internal/service/agents"
 )
 
 // importMarker is the machine-readable marker Apply appends to every imported ticket's
@@ -82,15 +83,10 @@ type TriggerCandidate struct {
 	AlreadyCreated bool     `json:"already_created"`
 }
 
-// AgentCandidate is one suggested starter agent.
-type AgentCandidate struct {
-	Name           string `json:"name"`
-	Role           string `json:"role"`
-	Model          string `json:"model"`
-	Directive      string `json:"directive"`
-	Checked        bool   `json:"checked"`
-	AlreadyCreated bool   `json:"already_created"`
-}
+// AgentCandidate is one suggested starter agent. The candidate content itself lives in the
+// agents service (S16 extracted it so the bootstrap checklist and the roster's "Use a starter
+// roster" action can never drift); this alias keeps the preview's JSON name.
+type AgentCandidate = agents.Candidate
 
 // OverviewCandidate is the project-description draft generated from the README's first
 // section. AlreadySet means the project has a description; the draft is then offered
@@ -227,7 +223,7 @@ func (s *Service) BuildPreview(ctx context.Context, projectKey string) (Preview,
 	for _, a := range ags {
 		existingAgents[a.Name] = true
 	}
-	for _, cand := range suggestedAgents(stacks) {
+	for _, cand := range agents.StarterCandidates(stacks) {
 		if existingAgents[cand.Name] {
 			cand.Checked = false
 			cand.AlreadyCreated = true
@@ -552,83 +548,4 @@ func jsonArr(ss []string) (string, error) {
 		parts[i] = fmt.Sprintf("%q", s)
 	}
 	return "[" + strings.Join(parts, ",") + "]", nil
-}
-
-// suggestedAgents is the starter pair: a Dev that implements and a Reviewer that structurally
-// cannot edit or push (permissions, not prompt — brief D7).
-func suggestedAgents(stacks []string) []AgentCandidate {
-	stackLine := "this repository's stack"
-	if len(stacks) > 0 {
-		stackLine = strings.Join(stacks, " and ")
-	}
-	devDirective := fmt.Sprintf(`You are Dev, the implementation agent for this project.
-
-You work in %s. For each ticket you take on:
-
-1. Read the ticket's description and acceptance criteria before writing any code.
-2. Make the smallest change that satisfies the acceptance criteria. Do not refactor
-   surrounding code unless the ticket asks for it.
-3. Follow the project's existing conventions — match the style of the files you touch, and
-   read the repository's instruction docs and wiki pages provided in your context.
-4. Run the project's tests and linters before opening a pull request; fix what they find.
-5. Open a focused pull request that names the ticket and explains what changed and why.
-6. When the ticket is ambiguous, ask the delegating human instead of guessing.`, stackLine)
-
-	reviewerDirective := fmt.Sprintf(`You are Reviewer, the code-review agent for this project.
-
-You review pull requests in %s. You cannot edit files or push branches — your output is the
-review itself.
-
-1. Read the linked ticket first: review against its acceptance criteria, not against taste.
-2. Tag every finding with a severity: [blocker], [major], [minor] or [nit].
-3. Check correctness first, then tests, then clarity. Point at exact lines.
-4. Distinguish "this is wrong" from "I would have done this differently" — only the former
-   blocks.
-5. Keep the summary short: what the change does, whether it meets the criteria, and the list
-   of findings. Never restate the diff.`, stackLine)
-
-	return []AgentCandidate{
-		{
-			Name: "Dev", Role: "Implementation", Model: "claude-sonnet-4-5",
-			Directive: devDirective, Checked: true,
-		},
-		{
-			Name: "Reviewer", Role: "Review", Model: "claude-opus-4-1",
-			Directive: reviewerDirective, Checked: true,
-		},
-	}
-}
-
-// agentRow turns a candidate into the agent row Apply persists. The Reviewer's inability to
-// edit or push is a permission, not a sentence in the directive (brief D7).
-func agentRow(cand AgentCandidate, projectID, now string) domain.Agent {
-	a := domain.Agent{
-		ID: domain.NewID(), ProjectID: projectID, Name: cand.Name, Role: cand.Role,
-		RuntimeID: "claude-code", Model: cand.Model,
-		GitAuthorName:  cand.Name + " (Lexicode)",
-		GitAuthorEmail: strings.ToLower(cand.Name) + "@agents.lexicode.local",
-		ConcurrencyCap: 1, MaxWallClockSeconds: 3600, MaxSteps: 200, Enabled: true,
-		CreatedAt: now, UpdatedAt: now,
-	}
-	switch cand.Name {
-	case "Reviewer":
-		a.Color = "#d16ba5"
-		a.Effort = "high"
-		a.Autonomy = domain.AutonomyApproveEach
-		a.Permissions = domain.AgentPermissions{
-			ReadFiles: true, EditFiles: false, RunCommands: true,
-			PushBranches: false, OpenPRs: false, CommentPRs: true,
-			SubmitReviews: true, CreateWikiPages: false,
-		}
-	default: // Dev
-		a.Color = "#5b8def"
-		a.Effort = "medium"
-		a.Autonomy = domain.AutonomyAutoGates
-		a.Permissions = domain.AgentPermissions{
-			ReadFiles: true, EditFiles: true, RunCommands: true,
-			PushBranches: true, OpenPRs: true, CommentPRs: true,
-			SubmitReviews: false, CreateWikiPages: true,
-		}
-	}
-	return a
 }

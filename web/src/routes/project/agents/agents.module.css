@@ -1,0 +1,393 @@
+/* Agents — roster cards and the §5.8 detail sections. The one deliberate styling rule in
+ * here (plan rule 5 / brief D7): the permissions panel and the directive editor must read as
+ * DIFFERENT kinds of control. The directive is a plain monospace editing surface on
+ * --surface; permissions are a bordered enforcement panel on --surface-3 with a strong
+ * left rule and lock icons. A screenshot must tell them apart at a glance. */
+
+.page {
+  padding: 16px 20px 48px;
+  max-width: 960px;
+}
+
+.pageTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pageTitle h1 {
+  margin: 0;
+}
+
+.titleActions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.error {
+  color: var(--fail);
+  font-size: var(--fs-body);
+  margin: 8px 0;
+}
+
+/* ---- roster cards ---------------------------------------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card[data-disabled="true"] {
+  opacity: 0.65;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.cardName {
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.cardName:hover {
+  text-decoration: underline;
+}
+
+.cardRole {
+  color: var(--text-2);
+  font-size: var(--fs-mono);
+}
+
+.cardMeta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.metaChip {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+}
+
+.cardStats {
+  display: flex;
+  gap: 16px;
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+}
+
+.statValue {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cardFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.archivedNote {
+  margin-top: 16px;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+
+/* ---- create form ----------------------------------------------------------------------- */
+
+.createForm {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+}
+
+.fieldError {
+  color: var(--fail);
+  font-size: var(--fs-micro);
+}
+
+/* ---- detail sections ------------------------------------------------------------------- */
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.section h2 {
+  margin: 0 0 4px;
+}
+
+.sectionHint {
+  color: var(--text-2);
+  font-size: var(--fs-mono);
+  margin: 0 0 12px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 16px;
+}
+
+.identityLine {
+  margin-top: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-mono);
+  font-style: italic;
+}
+
+/* Directive: a plain monospace editing surface — guidance, freely editable prose. */
+
+.directiveEditor {
+  width: 100%;
+  min-height: 260px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1.5;
+  resize: vertical;
+  background: var(--surface);
+}
+
+.directiveFoot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.tokenCount {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  margin-left: auto;
+}
+
+.saveNote {
+  flex: 1 1 160px;
+}
+
+.versionList {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.versionRow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+}
+
+.versionRow button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font-size: var(--fs-mono);
+}
+
+.versionCurrent {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.diffView {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1.5;
+  background: var(--surface-2);
+}
+
+.diffView pre {
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.diffAdd {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  display: block;
+}
+
+.diffDel {
+  background: color-mix(in srgb, var(--fail) 12%, transparent);
+  display: block;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--fail) 55%, transparent);
+}
+
+.diffCtx {
+  display: block;
+  color: var(--text-2);
+}
+
+/* Permissions: the enforcement panel. Different surface, strong left rule, lock icons —
+ * unmistakably not a text editor (brief D7). */
+
+.permissionsPanel {
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.permissionsPanel h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.permissionsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 16px;
+  margin-top: 10px;
+}
+
+.permissionRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.lockIcon {
+  flex: none;
+  color: var(--text-2);
+}
+
+.enforcementNote {
+  margin: 10px 0 0;
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+}
+
+/* Autonomy dial */
+
+.autonomyList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.autonomyRow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.autonomyRow[data-active="true"] {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.autonomyName {
+  font-weight: 600;
+  min-width: 150px;
+}
+
+.autonomyDesc {
+  color: var(--text-2);
+  font-size: var(--fs-mono);
+}
+
+.confirmBox {
+  margin-top: 10px;
+  border: 1px solid var(--fail);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: var(--fs-body);
+}
+
+.placeholderCard {
+  color: var(--text-3);
+  font-size: var(--fs-body);
+}

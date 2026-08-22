@@ -12,6 +12,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/audit"
 	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/store"
+	"github.com/spruce/lexicode/internal/service/agents"
 )
 
 // DocChoice is one checked doc in an apply: the path plus the (possibly human-adjusted) scope.
@@ -191,7 +192,7 @@ func (s *Service) Apply(ctx context.Context, projectKey string, in ApplyInput) (
 			existing[a.Name] = true
 		}
 		byName := map[string]AgentCandidate{}
-		for _, c := range suggestedAgents(nil) {
+		for _, c := range agents.StarterCandidates(nil) {
 			byName[c.Name] = c
 		}
 		for _, name := range in.Agents {
@@ -377,31 +378,13 @@ func (s *Service) importDoc(ctx context.Context, p domain.Project, choice DocCho
 	}
 }
 
-// importAgent creates one starter agent and its version-1 directive, then links the agent to
-// that version.
+// importAgent creates one starter agent and its version-1 directive through the shared S16
+// creator, so the bootstrap path and the roster's starter action write identical rows.
 func (s *Service) importAgent(ctx context.Context, p domain.Project, cand AgentCandidate, userID string) error {
 	now := s.now()
-	a := agentRow(cand, p.ID, now)
-	d := domain.AgentDirective{
-		ID: domain.NewID(), AgentID: a.ID, Version: 1, Body: cand.Directive,
-		TokenEstimate: int64(len(cand.Directive) / 4),
-		Note:          "Starter directive from repository bootstrap", CreatedAt: now,
-	}
-	if userID != "" {
-		uid := userID
-		d.AuthorID = &uid
-	}
-	return s.st.Tx(ctx, func(tx *store.Tx) error {
-		if err := tx.Agents().Create(ctx, &a); err != nil {
-			return err
-		}
-		if err := tx.Directives().Create(ctx, &d); err != nil {
-			return err
-		}
-		a.DirectiveVersionID = &d.ID
-		a.UpdatedAt = now
-		return tx.Agents().Update(ctx, &a)
-	})
+	a := agents.StarterAgent(cand, p.ID, now)
+	return agents.CreateWithDirective(ctx, s.st, s.audit, &a, cand.Directive,
+		"Starter directive from repository bootstrap", userID, now)
 }
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)

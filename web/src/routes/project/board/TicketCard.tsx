@@ -31,6 +31,8 @@ export interface TicketCardProps {
   ticket: Ticket;
   variant: "card" | "row";
   labelsById: Map<string, Label>;
+  /** Agent id → name for the delegate badge (S16); an unknown id renders as-is. */
+  agentNamesById?: Map<string, string>;
   show: DisplayProps;
   selected: boolean;
   multiSelected: boolean;
@@ -55,6 +57,7 @@ export function TicketCard({
   ticket: t,
   variant,
   labelsById,
+  agentNamesById,
   show,
   selected,
   multiSelected,
@@ -88,7 +91,9 @@ export function TicketCard({
           {show.people && badges.hasPeopleRow && (
             <span className={styles.cardPeople}>
               {badges.delegate !== null && (
-                <span className={styles.cardDelegate}>[{badges.delegate}]</span>
+                <span className={styles.cardDelegate}>
+                  [{agentNamesById?.get(badges.delegate) ?? badges.delegate}]
+                </span>
               )}
               {badges.delegate !== null && badges.assignee !== null && (
                 <span aria-hidden="true"> ⟶ </span>

@@ -61,6 +61,17 @@ export type DocCandidate = components["schemas"]["DocCandidate"];
 export type TriggerCandidate = components["schemas"]["TriggerCandidate"];
 export type AgentCandidate = components["schemas"]["AgentCandidate"];
 export type AgentScope = components["schemas"]["AgentScope"];
+export type Agent = components["schemas"]["Agent"];
+export type AgentListResponse = components["schemas"]["AgentListResponse"];
+export type AgentPermissions = components["schemas"]["AgentPermissions"];
+export type AgentAutonomy = components["schemas"]["AgentAutonomy"];
+export type CreateAgentRequest = components["schemas"]["CreateAgentRequest"];
+export type UpdateAgentRequest = components["schemas"]["UpdateAgentRequest"];
+export type StarterRosterResult = components["schemas"]["StarterRosterResult"];
+export type Directive = components["schemas"]["Directive"];
+export type DirectiveListResponse = components["schemas"]["DirectiveListResponse"];
+export type SaveDirectiveRequest = components["schemas"]["SaveDirectiveRequest"];
+export type SaveDirectiveResponse = components["schemas"]["SaveDirectiveResponse"];
 export type BootstrapApplyRequest = components["schemas"]["BootstrapApplyRequest"];
 export type BootstrapApplyResult = components["schemas"]["BootstrapApplyResult"];
 export type Secret = components["schemas"]["Secret"];
@@ -328,6 +339,38 @@ export const repoApi = {
     api<Repo>("POST", `/projects/${encodeURIComponent(projectKey)}/repo`, { body }),
   disconnect: (projectKey: string) =>
     api<void>("DELETE", `/projects/${encodeURIComponent(projectKey)}/repo`),
+};
+
+/**
+ * Agents (S16). The list powers both the roster (all agents) and — with eligible=1 — the
+ * delegate pickers and mention autocomplete (enabled, non-archived only). Directive saves are
+ * append-only versioning with a server-side no-op guard for unchanged bodies.
+ */
+export const agentsApi = {
+  list: (projectKey: string, opts?: { eligible?: boolean }, signal?: AbortSignal) =>
+    api<AgentListResponse>(
+      "GET",
+      `/projects/${encodeURIComponent(projectKey)}/agents${opts?.eligible ? "?eligible=1" : ""}`,
+      { signal },
+    ),
+  create: (projectKey: string, body: CreateAgentRequest) =>
+    api<Agent>("POST", `/projects/${encodeURIComponent(projectKey)}/agents`, { body }),
+  starter: (projectKey: string) =>
+    api<StarterRosterResult>(
+      "POST",
+      `/projects/${encodeURIComponent(projectKey)}/agents/starter`,
+    ),
+  get: (id: string, signal?: AbortSignal) =>
+    api<Agent>("GET", `/agents/${encodeURIComponent(id)}`, { signal }),
+  update: (id: string, body: UpdateAgentRequest) =>
+    api<Agent>("PATCH", `/agents/${encodeURIComponent(id)}`, { body }),
+  archive: (id: string) => api<void>("DELETE", `/agents/${encodeURIComponent(id)}`),
+  saveDirective: (id: string, body: SaveDirectiveRequest) =>
+    api<SaveDirectiveResponse>("PUT", `/agents/${encodeURIComponent(id)}/directive`, { body }),
+  directives: (id: string, signal?: AbortSignal) =>
+    api<DirectiveListResponse>("GET", `/agents/${encodeURIComponent(id)}/directives`, {
+      signal,
+    }),
 };
 
 export const bootstrapApi = {

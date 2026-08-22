@@ -43,6 +43,13 @@ export function applyStreamEvent(
       void qc.invalidateQueries({ queryKey: ["ticket", id] });
       void qc.invalidateQueries({ queryKey: ["board", id] });
       break;
+    // Agent events arrive on the project topic: the roster, the detail screen (via the list's
+    // consumers) and every delegate picker read the ["agents", key] family.
+    case "agent.created":
+    case "agent.updated":
+    case "agent.archived":
+      void qc.invalidateQueries({ queryKey: ["agents", id] });
+      break;
     // Label CRUD changes chip names/colors on cards and the filter menu.
     case "label.created":
     case "label.updated":

@@ -26,6 +26,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
 	githubmod "github.com/spruce/lexicode/internal/module/github"
+	agentsvc "github.com/spruce/lexicode/internal/service/agents"
 	"github.com/spruce/lexicode/internal/service/board"
 	"github.com/spruce/lexicode/internal/service/bootstrap"
 	"github.com/spruce/lexicode/internal/service/projects"
@@ -147,6 +148,8 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		Store: st, Secrets: sec, Audit: auditW, Logger: logger,
 	})
 	secretsSvc.Routes(mux, authSvc)
+	agentsSvc := agentsvc.New(agentsvc.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
+	agentsSvc.Routes(mux, authSvc)
 
 	// Modules (architecture §3.1); each is one line here. docker, claudecode, actions, context
 	// and notify arrive with the stories that build them.

@@ -282,6 +282,129 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{key}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A project's agent roster, oldest first, with per-card run stats (runs and spend over a rolling seven days, success rate over the agent's ended history — all zeros until runs exist). `?eligible=1` narrows to delegate-eligible agents: enabled and not archived — the list behind delegate pickers and mention autocomplete. */
+        get: operations["listAgents"];
+        put?: never;
+        /** Create an agent. Git identity defaults from the name (D-9's `Reviewer <reviewer@agents.lexicode.local>` pattern); a version-1 directive (possibly empty) is written in the same transaction. A duplicate name in the project is a 409 `agent_name_taken` whose errors array names the `name` field. */
+        post: operations["createAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/agents/starter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create the starter roster — the same Dev and Reviewer pair the repository bootstrap suggests (shared code, so the two paths cannot drift). Names that already exist are skipped, never duplicated. */
+        post: operations["createStarterRoster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One agent with stats. Disabled and archived agents stay fetchable — history is kept. */
+        get: operations["getAgent"];
+        put?: never;
+        post?: never;
+        /** Archive the agent (D-15 soft delete): stamps archived_at and disables it. Runs, directive versions and mentions stay readable. Idempotent. */
+        delete: operations["archiveAgent"];
+        options?: never;
+        head?: never;
+        /** Patch an agent: identity, model & effort, typed permissions (replaced wholesale — enforcement config, never raw JSON), autonomy, limits, enable/disable. Absent fields are unchanged; `daily_cap_cents: null` clears the cap (inherit the project default). */
+        patch: operations["updateAgent"];
+        trace?: never;
+    };
+    "/agents/{id}/directive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save the directive. Append-only versioning with a no-op guard: an unchanged body writes nothing and answers 200 with the current version (`created: false`); a changed body appends the next version and answers 201. Token estimate is the documented chars/4 heuristic. (POST /agents/{id}/directives is the same operation.) */
+        put: operations["saveDirective"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/directive/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Live token estimate for an unsaved directive body — the same chars/4 heuristic that stamps saved versions, computed server-side. */
+        post: operations["estimateDirectiveTokens"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/directives": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The directive version list, newest first, bodies included — the diff view compares any two versions without another fetch. */
+        get: operations["listDirectives"];
+        put?: never;
+        /** The contracts-inventory spelling of PUT /agents/{id}/directive — same operation. */
+        post: operations["appendDirective"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/directives/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One directive version's full content. */
+        get: operations["getDirectiveVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{key}/columns": {
         parameters: {
             query?: never;
@@ -805,6 +928,120 @@ export interface components {
             /** @description Set when already imported. */
             page_slug?: string;
         };
+        /** @description The agents.permissions object (data model §3.1). Enforcement, not guidance (brief D7): these compile to runtime allow/deny rules and hard refusals, never prompt text. There is deliberately no merge permission (brief D6). */
+        AgentPermissions: {
+            read_files: boolean;
+            edit_files: boolean;
+            run_commands: boolean;
+            push_branches: boolean;
+            open_prs: boolean;
+            comment_prs: boolean;
+            submit_reviews: boolean;
+            create_wiki_pages: boolean;
+        };
+        /**
+         * @description The four-stop autonomy dial, ordered by increasing risk.
+         * @enum {string}
+         */
+        AgentAutonomy: "suggest" | "approve_each" | "auto_gates" | "auto";
+        Agent: {
+            id: string;
+            project_id: string;
+            name: string;
+            role: string;
+            color: string;
+            runtime_id: string;
+            /** @description One of claude-opus-5, claude-sonnet-5, claude-haiku-4-5. */
+            model: string;
+            /** @description Thinking effort: low, medium or high. */
+            effort: string;
+            autonomy: components["schemas"]["AgentAutonomy"];
+            permissions: components["schemas"]["AgentPermissions"];
+            git_author_name: string;
+            git_author_email: string;
+            forge_login: string | null;
+            concurrency_cap: number;
+            /** @description Null inherits the project/workspace default. */
+            daily_cap_cents: number | null;
+            max_wall_clock_seconds: number;
+            max_steps: number;
+            enabled: boolean;
+            directive_version_id: string | null;
+            archived_at: string | null;
+            created_at: string;
+            updated_at: string;
+            /** @description Runs queued in the last seven days. */
+            runs_week: number;
+            /** @description Cost of runs queued in the last seven days. */
+            spend_week_cents: number;
+            /** @description completed / ended over the agent's whole history; null until a run ends. */
+            success_rate: number | null;
+        };
+        AgentListResponse: {
+            agents: components["schemas"]["Agent"][];
+        };
+        CreateAgentRequest: {
+            name: string;
+            role?: string;
+            /** @description #rrggbb; defaults from a palette when omitted. */
+            color?: string;
+            /** @description Defaults to claude-sonnet-5. */
+            model?: string;
+            /** @description Defaults to medium. */
+            effort?: string;
+            autonomy?: components["schemas"]["AgentAutonomy"];
+            /** @description The version-1 directive body (may be empty). */
+            directive?: string;
+        };
+        /** @description Absent fields are unchanged. `daily_cap_cents` null clears the cap. */
+        UpdateAgentRequest: {
+            name?: string;
+            role?: string;
+            color?: string;
+            model?: string;
+            effort?: string;
+            autonomy?: components["schemas"]["AgentAutonomy"];
+            permissions?: components["schemas"]["AgentPermissions"];
+            git_author_name?: string;
+            git_author_email?: string;
+            enabled?: boolean;
+            concurrency_cap?: number;
+            daily_cap_cents?: number | null;
+            max_wall_clock_seconds?: number;
+            max_steps?: number;
+        };
+        StarterRosterResult: {
+            /** @description The agent names created; existing names are skipped. */
+            created: string[];
+        };
+        Directive: {
+            id: string;
+            agent_id: string;
+            version: number;
+            body: string;
+            /** @description The documented heuristic — body characters / 4. */
+            token_estimate: number;
+            author_id: string | null;
+            note: string;
+            created_at: string;
+        };
+        DirectiveListResponse: {
+            directives: components["schemas"]["Directive"][];
+        };
+        SaveDirectiveRequest: {
+            body: string;
+            note?: string;
+        };
+        SaveDirectiveResponse: components["schemas"]["Directive"] & {
+            /** @description True when a new version was appended; false on the unchanged no-op. */
+            created: boolean;
+        };
+        EstimateRequest: {
+            body: string;
+        };
+        EstimateResponse: {
+            token_estimate: number;
+        };
         /** @enum {string} */
         AgentScope: "always" | "auto" | "paths" | "manual" | "never";
         /** @description A pre-filled suggested trigger. Created DISABLED — the toggles ship off (§6.3). */
@@ -1123,7 +1360,7 @@ export interface components {
          * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;
@@ -1708,6 +1945,330 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BootstrapApplyResult"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    listAgents: {
+        parameters: {
+            query?: {
+                /** @description When "1", only enabled, non-archived agents. */
+                eligible?: "1";
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The roster. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    createAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description The created agent. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    createStarterRoster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The names created (possibly empty when both already exist). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StarterRosterResult"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The agent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    archiveAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    updateAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated agent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    saveDirective: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveDirectiveRequest"];
+            };
+        };
+        responses: {
+            /** @description Unchanged body — the current version, created: false. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveDirectiveResponse"];
+                };
+            };
+            /** @description New version appended. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveDirectiveResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    estimateDirectiveTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EstimateRequest"];
+            };
+        };
+        responses: {
+            /** @description The estimate. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EstimateResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    listDirectives: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All versions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectiveListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    appendDirective: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveDirectiveRequest"];
+            };
+        };
+        responses: {
+            /** @description Unchanged body — the current version, created: false. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveDirectiveResponse"];
+                };
+            };
+            /** @description New version appended. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveDirectiveResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    getDirectiveVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The version. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Directive"];
                 };
             };
             400: components["responses"]["Problem"];

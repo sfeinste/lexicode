@@ -1,4 +1,4 @@
-# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S12).
+# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S16).
 #
 # This file is the source of truth for request/response shapes (contracts §5). The frontend's
 # TypeScript types are generated from it: `make api-types` regenerates
@@ -396,6 +396,237 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BootstrapApplyResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/agents:
+    get:
+      operationId: listAgents
+      summary: >
+        A project's agent roster, oldest first, with per-card run stats (runs and spend over a
+        rolling seven days, success rate over the agent's ended history — all zeros until runs
+        exist). `?eligible=1` narrows to delegate-eligible agents: enabled and not archived —
+        the list behind delegate pickers and mention autocomplete.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - name: eligible
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: When "1", only enabled, non-archived agents.
+      responses:
+        "200":
+          description: The roster.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createAgent
+      summary: >
+        Create an agent. Git identity defaults from the name (D-9's
+        `Reviewer <reviewer@agents.lexicode.local>` pattern); a version-1 directive (possibly
+        empty) is written in the same transaction. A duplicate name in the project is a 409
+        `agent_name_taken` whose errors array names the `name` field.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAgentRequest" }
+      responses:
+        "201":
+          description: The created agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/agents/starter:
+    post:
+      operationId: createStarterRoster
+      summary: >
+        Create the starter roster — the same Dev and Reviewer pair the repository bootstrap
+        suggests (shared code, so the two paths cannot drift). Names that already exist are
+        skipped, never duplicated.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The names created (possibly empty when both already exist).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StarterRosterResult" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /agents/{id}:
+    get:
+      operationId: getAgent
+      summary: One agent with stats. Disabled and archived agents stay fetchable — history is kept.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    patch:
+      operationId: updateAgent
+      summary: >
+        Patch an agent: identity, model & effort, typed permissions (replaced wholesale —
+        enforcement config, never raw JSON), autonomy, limits, enable/disable. Absent fields
+        are unchanged; `daily_cap_cents: null` clears the cap (inherit the project default).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAgentRequest" }
+      responses:
+        "200":
+          description: The updated agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: archiveAgent
+      summary: >
+        Archive the agent (D-15 soft delete): stamps archived_at and disables it. Runs,
+        directive versions and mentions stay readable. Idempotent.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Archived.
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /agents/{id}/directive:
+    put:
+      operationId: saveDirective
+      summary: >
+        Save the directive. Append-only versioning with a no-op guard: an unchanged body
+        writes nothing and answers 200 with the current version (`created: false`); a changed
+        body appends the next version and answers 201. Token estimate is the documented
+        chars/4 heuristic. (POST /agents/{id}/directives is the same operation.)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SaveDirectiveRequest" }
+      responses:
+        "200":
+          description: "Unchanged body — the current version, created: false."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SaveDirectiveResponse" }
+        "201":
+          description: New version appended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SaveDirectiveResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /agents/{id}/directive/estimate:
+    post:
+      operationId: estimateDirectiveTokens
+      summary: >
+        Live token estimate for an unsaved directive body — the same chars/4 heuristic that
+        stamps saved versions, computed server-side.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EstimateRequest" }
+      responses:
+        "200":
+          description: The estimate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EstimateResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /agents/{id}/directives:
+    get:
+      operationId: listDirectives
+      summary: >
+        The directive version list, newest first, bodies included — the diff view compares any
+        two versions without another fetch.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: All versions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectiveListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: appendDirective
+      summary: The contracts-inventory spelling of PUT /agents/{id}/directive — same operation.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SaveDirectiveRequest" }
+      responses:
+        "200":
+          description: "Unchanged body — the current version, created: false."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SaveDirectiveResponse" }
+        "201":
+          description: New version appended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SaveDirectiveResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /agents/{id}/directives/{version}:
+    get:
+      operationId: getDirectiveVersion
+      summary: One directive version's full content.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: version, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Directive" }
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
@@ -1279,6 +1510,151 @@ components:
         checked: { type: boolean }
         already_imported: { type: boolean }
         page_slug: { type: string, description: Set when already imported. }
+    AgentPermissions:
+      type: object
+      description: >
+        The agents.permissions object (data model §3.1). Enforcement, not guidance (brief D7):
+        these compile to runtime allow/deny rules and hard refusals, never prompt text. There
+        is deliberately no merge permission (brief D6).
+      required: [read_files, edit_files, run_commands, push_branches, open_prs, comment_prs,
+        submit_reviews, create_wiki_pages]
+      properties:
+        read_files: { type: boolean }
+        edit_files: { type: boolean }
+        run_commands: { type: boolean }
+        push_branches: { type: boolean }
+        open_prs: { type: boolean }
+        comment_prs: { type: boolean }
+        submit_reviews: { type: boolean }
+        create_wiki_pages: { type: boolean }
+    AgentAutonomy:
+      type: string
+      description: The four-stop autonomy dial, ordered by increasing risk.
+      enum: [suggest, approve_each, auto_gates, auto]
+    Agent:
+      type: object
+      required: [id, project_id, name, role, color, runtime_id, model, effort, autonomy,
+        permissions, git_author_name, git_author_email, forge_login, concurrency_cap,
+        daily_cap_cents, max_wall_clock_seconds, max_steps, enabled, directive_version_id,
+        archived_at, created_at, updated_at, runs_week, spend_week_cents, success_rate]
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        role: { type: string }
+        color: { type: string }
+        runtime_id: { type: string }
+        model:
+          type: string
+          description: One of claude-opus-5, claude-sonnet-5, claude-haiku-4-5.
+        effort: { type: string, description: "Thinking effort: low, medium or high." }
+        autonomy: { $ref: "#/components/schemas/AgentAutonomy" }
+        permissions: { $ref: "#/components/schemas/AgentPermissions" }
+        git_author_name: { type: string }
+        git_author_email: { type: string }
+        forge_login: { type: [string, "null"] }
+        concurrency_cap: { type: integer }
+        daily_cap_cents:
+          type: [integer, "null"]
+          description: Null inherits the project/workspace default.
+        max_wall_clock_seconds: { type: integer }
+        max_steps: { type: integer }
+        enabled: { type: boolean }
+        directive_version_id: { type: [string, "null"] }
+        archived_at: { type: [string, "null"] }
+        created_at: { type: string }
+        updated_at: { type: string }
+        runs_week: { type: integer, description: Runs queued in the last seven days. }
+        spend_week_cents: { type: integer, description: Cost of runs queued in the last seven days. }
+        success_rate:
+          type: [number, "null"]
+          description: completed / ended over the agent's whole history; null until a run ends.
+    AgentListResponse:
+      type: object
+      required: [agents]
+      properties:
+        agents: { type: array, items: { $ref: "#/components/schemas/Agent" } }
+    CreateAgentRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        role: { type: string }
+        color: { type: string, description: "#rrggbb; defaults from a palette when omitted." }
+        model: { type: string, description: Defaults to claude-sonnet-5. }
+        effort: { type: string, description: Defaults to medium. }
+        autonomy: { $ref: "#/components/schemas/AgentAutonomy" }
+        directive: { type: string, description: The version-1 directive body (may be empty). }
+    UpdateAgentRequest:
+      type: object
+      description: Absent fields are unchanged. `daily_cap_cents` null clears the cap.
+      properties:
+        name: { type: string }
+        role: { type: string }
+        color: { type: string }
+        model: { type: string }
+        effort: { type: string }
+        autonomy: { $ref: "#/components/schemas/AgentAutonomy" }
+        permissions: { $ref: "#/components/schemas/AgentPermissions" }
+        git_author_name: { type: string }
+        git_author_email: { type: string }
+        enabled: { type: boolean }
+        concurrency_cap: { type: integer }
+        daily_cap_cents: { type: [integer, "null"] }
+        max_wall_clock_seconds: { type: integer }
+        max_steps: { type: integer }
+    StarterRosterResult:
+      type: object
+      required: [created]
+      properties:
+        created:
+          type: array
+          items: { type: string }
+          description: The agent names created; existing names are skipped.
+    Directive:
+      type: object
+      required: [id, agent_id, version, body, token_estimate, author_id, note, created_at]
+      properties:
+        id: { type: string }
+        agent_id: { type: string }
+        version: { type: integer }
+        body: { type: string }
+        token_estimate:
+          type: integer
+          description: The documented heuristic — body characters / 4.
+        author_id: { type: [string, "null"] }
+        note: { type: string }
+        created_at: { type: string }
+    DirectiveListResponse:
+      type: object
+      required: [directives]
+      properties:
+        directives: { type: array, items: { $ref: "#/components/schemas/Directive" } }
+    SaveDirectiveRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string }
+        note: { type: string }
+    SaveDirectiveResponse:
+      allOf:
+        - $ref: "#/components/schemas/Directive"
+        - type: object
+          required: [created]
+          properties:
+            created:
+              type: boolean
+              description: True when a new version was appended; false on the unchanged no-op.
+    EstimateRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string }
+    EstimateResponse:
+      type: object
+      required: [token_estimate]
+      properties:
+        token_estimate: { type: integer }
     AgentScope:
       type: string
       enum: [always, auto, paths, manual, never]
@@ -1753,6 +2129,9 @@ components:
         - ticket.moved
         - ticket.archived
         - ticket.unarchived
+        - agent.created
+        - agent.updated
+        - agent.archived
         - label.created
         - label.updated
         - label.deleted

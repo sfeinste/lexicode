@@ -17,8 +17,8 @@
  * ["board", key] queries, so a move in one tab appears in a second tab without a reload.
  *
  * Known S11 seams, closed by later stories:
- * - The delegate picker (D) lists agents — the agents API is S16; it renders the "No agents
- *   yet" empty state until then.
+ * - The delegate picker (D) lists the delegate-eligible agents (S16); the "No agents yet"
+ *   empty state renders only while the project truly has none.
  * - The assign picker (A) offers Me / Unassigned — there is no user-list endpoint yet, so
  *   other members cannot be picked (and assignee groups render shortened ids).
  * - The needs-you lane query 404s into an empty lane until S21/S22 implement the runs view.
@@ -29,9 +29,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { BoardSearch } from "../../../app/router";
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
+import { useAgentsQuery } from "../../../lib/api/agentQueries";
 import {
   ApiProblem,
   authApi,
+  type Agent,
   type Label,
   type Ticket,
   type TicketPriority,
@@ -124,6 +126,19 @@ type Overlay =
 
 export function BoardPage() {
   const { key } = useParams({ from: ROUTE_ID });
+  // Agents (S16): the D picker offers the delegate-eligible subset (enabled, non-archived);
+  // card badges resolve any delegate id — including a since-disabled one — to its name.
+  const agentsQuery = useAgentsQuery(key);
+  const eligibleAgents = useMemo(
+    () =>
+      (agentsQuery.data?.agents ?? []).filter((a) => a.enabled && a.archived_at === null),
+    [agentsQuery.data],
+  );
+  const agentNamesById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of agentsQuery.data?.agents ?? []) m.set(a.id, a.name);
+    return m;
+  }, [agentsQuery.data]);
   const search = useSearch({ from: ROUTE_ID });
   const navigate = useNavigate();
 
@@ -455,6 +470,7 @@ export function BoardPage() {
     ticket: t,
     variant,
     labelsById,
+    agentNamesById,
     show,
     selected: t.key === search.sel,
     multiSelected: multi.has(t.id),
@@ -788,6 +804,7 @@ export function BoardPage() {
           targets={overlay.targets}
           columns={columns}
           labels={labels}
+          agents={eligibleAgents}
           meId={me.data?.id}
           meName={me.data?.display_name}
           onClose={() => setOverlay({ kind: "none" })}
@@ -1026,6 +1043,7 @@ function BoardPicker({
   targets,
   columns,
   labels,
+  agents,
   meId,
   meName,
   onClose,
@@ -1035,6 +1053,7 @@ function BoardPicker({
   targets: Ticket[];
   columns: Array<{ id: string; name: string; category: string }>;
   labels: Label[];
+  agents: Agent[];
   meId: string | undefined;
   meName: string | undefined;
   onClose: () => void;
@@ -1081,10 +1100,20 @@ function BoardPicker({
       break;
     case "delegate":
       title = "Delegate (agent)";
-      // The agents API arrives with S16 — an empty picker with the §8 empty state.
-      options = [];
-      empty = "No agents yet";
-      apply = () => () => undefined;
+      // Enabled, non-archived agents only (S16); the §8 empty state until any exist.
+      options = [
+        ...agents.map((a) => ({
+          id: a.id,
+          text: a.name,
+          active: one?.delegate_agent_id === a.id,
+        })),
+        ...(agents.length > 0 ? [{ id: NONE_GROUP, text: "No delegate" }] : []),
+      ];
+      empty = agents.length === 0 ? "No agents yet" : null;
+      apply = (id) => (t, m) => {
+        const next = id === NONE_GROUP ? null : id;
+        if (t.delegate_agent_id !== next) m.patch({ delegate_agent_id: next });
+      };
       break;
     case "label":
       title = "Labels";

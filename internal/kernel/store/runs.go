@@ -130,3 +130,44 @@ func scanRun(row rowScanner) (domain.Run, error) {
 	run.AcknowledgedAt = strPtr(acknowledgedAt)
 	return run, nil
 }
+
+// AgentRunStats is the roster-card aggregate for one agent, computed from the runs table.
+// "Since" fields count runs queued at or after the caller's window start (the roster uses a
+// rolling seven days); Ended/Succeeded cover the agent's whole history, so the success rate
+// stays meaningful in a quiet week. All zeros until runs exist (S22).
+type AgentRunStats struct {
+	RunsSince       int64 // runs queued in the window
+	SpendCentsSince int64 // cost of runs queued in the window
+	Ended           int64 // all-time runs in a terminal state
+	Succeeded       int64 // all-time runs that completed
+}
+
+// terminal run states, as the schema CHECK spells them.
+const terminalStates = `('completed','failed','timed_out','canceled','loop_stopped')`
+
+// StatsForProjectAgents aggregates per-agent run stats for a whole project in one query —
+// the roster renders N cards without N queries. Agents with no runs are absent from the map.
+func (r *RunsRepo) StatsForProjectAgents(ctx context.Context, projectID, since string) (map[string]AgentRunStats, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT agent_id,
+			SUM(CASE WHEN queued_at >= ? THEN 1 ELSE 0 END),
+			SUM(CASE WHEN queued_at >= ? THEN cost_cents ELSE 0 END),
+			SUM(CASE WHEN state IN `+terminalStates+` THEN 1 ELSE 0 END),
+			SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END)
+		FROM runs WHERE project_id = ? GROUP BY agent_id`, since, since, projectID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]AgentRunStats{}
+	for rows.Next() {
+		var id string
+		var s AgentRunStats
+		if err := rows.Scan(&id, &s.RunsSince, &s.SpendCentsSince, &s.Ended, &s.Succeeded); err != nil {
+			return nil, mapErr(err)
+		}
+		out[id] = s
+	}
+	return out, rows.Err()
+}

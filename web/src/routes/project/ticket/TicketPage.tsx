@@ -9,10 +9,10 @@
  * Selection in the description + ⌘⇧O opens the sub-ticket preview: N non-empty selected
  * lines → N titles shown before anything is created; confirming calls POST subtickets.
  *
- * Known S12 seams, closed by later stories: the delegate picker and agent/wiki mention
- * sources render their empty states until the agents (S15/16) and wiki APIs exist; run
- * cards appear in the stream when S23 writes kind='run' entries; linked PR and branch
- * populate with the forge (S14+) and runs (S23+).
+ * Known S12 seams, closed by later stories: the wiki mention source renders its empty
+ * state until the wiki API exists (the delegate picker and agent mentions are live as of
+ * S16); run cards appear in the stream when S23 writes kind='run' entries; linked PR and
+ * branch populate with the forge (S14+) and runs (S23+).
  */
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -21,8 +21,10 @@ import type { EditorHandle } from "../../../components/Editor/Editor";
 import { MarkdownView } from "../../../components/Editor/MarkdownView";
 import type { MentionSources } from "../../../components/Editor/engine";
 import { collapseToSingleLine } from "../../../components/Editor/engine";
+import { useEligibleAgents } from "../../../lib/api/agentQueries";
 import {
   ApiProblem,
+  type Agent,
   type Column,
   type CommentRunRequest,
   type Criterion,
@@ -128,6 +130,9 @@ function LoadedTicket({
   const columns = columnsQuery.data?.columns ?? [];
   const labels = labelsQuery.data?.labels ?? [];
   const members = useMemo(() => membersQuery.data?.users ?? [], [membersQuery.data]);
+  // Delegate-eligible agents (S16): enabled, non-archived — the sidebar picker and the
+  // mention autocomplete's agent source.
+  const { agents: eligibleAgents } = useEligibleAgents(projectKey);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -153,19 +158,18 @@ function LoadedTicket({
     );
   }, []);
 
-  // One mention source set for every Editor on the page. Agents and wiki pages stay empty
-  // until their APIs exist (S15/16, wiki stories) — the menu renders their honest empty
-  // state rather than pretending.
+  // One mention source set for every Editor on the page. Wiki pages stay empty until the
+  // wiki API exists — the menu renders their honest empty state rather than pretending.
   const mentions: MentionSources = useMemo(
     () => ({
       users: members.map((m: Member) => ({ kind: "user" as const, id: m.id, label: m.display_name })),
-      agents: [],
+      agents: eligibleAgents.map((a) => ({ kind: "agent" as const, id: a.id, label: a.name })),
       wiki: [],
       tickets: (listQuery.data?.tickets ?? [])
         .filter((t) => t.id !== detail.id && t.archived_at === null)
         .map((t) => ({ kind: "ticket" as const, id: t.id, label: t.key, hint: t.title })),
     }),
-    [members, listQuery.data, detail.id],
+    [members, eligibleAgents, listQuery.data, detail.id],
   );
 
   const membersById = useMemo(() => {
@@ -417,6 +421,13 @@ function LoadedTicket({
           onAssignee={(userId) =>
             patch.mutate(
               { id: detail.id, body: { assignee_id: userId } },
+              { onError: onMutationError },
+            )
+          }
+          agents={eligibleAgents}
+          onDelegate={(agentId) =>
+            patch.mutate(
+              { id: detail.id, body: { delegate_agent_id: agentId } },
               { onError: onMutationError },
             )
           }
@@ -703,18 +714,22 @@ function Sidebar({
   columns,
   labels,
   members,
+  agents,
   onStatus,
   onPriority,
   onAssignee,
+  onDelegate,
   onLabel,
 }: {
   detail: TicketDetail;
   columns: Column[];
   labels: Label[];
   members: Member[];
+  agents: Agent[];
   onStatus: (columnId: string) => void;
   onPriority: (p: TicketPriority) => void;
   onAssignee: (userId: string | null) => void;
+  onDelegate: (agentId: string | null) => void;
   onLabel: (labelId: string, attach: boolean) => void;
 }) {
   const copyBranch = () => {
@@ -791,10 +806,29 @@ function Sidebar({
           Delegate
           <span className={styles.kindTag}>agent</span>
         </span>
-        {/* The agents API is S15/16; until then the picker is the honest empty state. */}
-        <span className={styles.sideEmpty}>
-          {detail.delegate_agent_id ?? "No agents yet"}
-        </span>
+        {agents.length === 0 && detail.delegate_agent_id === null ? (
+          <span className={styles.sideEmpty}>No agents yet</span>
+        ) : (
+          <select
+            className={styles.sideSelect}
+            aria-label="Delegate (agent)"
+            value={detail.delegate_agent_id ?? ""}
+            onChange={(e) => onDelegate(e.target.value === "" ? null : e.target.value)}
+          >
+            <option value="">No delegate</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+            {/* A disabled/archived delegate stays visible (history intact), just not pickable
+                fresh. */}
+            {detail.delegate_agent_id !== null &&
+              !agents.some((a) => a.id === detail.delegate_agent_id) && (
+                <option value={detail.delegate_agent_id}>(disabled agent)</option>
+              )}
+          </select>
+        )}
       </div>
 
       <div className={styles.sideRow}>

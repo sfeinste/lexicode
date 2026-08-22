@@ -30,15 +30,47 @@ func (r *DirectivesRepo) Create(ctx context.Context, d *domain.AgentDirective) e
 
 // ByID returns one directive version.
 func (r *DirectivesRepo) ByID(ctx context.Context, id string) (domain.AgentDirective, error) {
+	return scanDirective(r.h.r.QueryRowContext(ctx, `
+		SELECT id, agent_id, version, body, token_estimate, author_id, note, created_at
+		FROM agent_directives WHERE id = ?`, id))
+}
+
+// ByAgentVersion returns one directive version addressed by (agent, version) — what the diff
+// view fetches.
+func (r *DirectivesRepo) ByAgentVersion(ctx context.Context, agentID string, version int64) (domain.AgentDirective, error) {
+	return scanDirective(r.h.r.QueryRowContext(ctx, `
+		SELECT id, agent_id, version, body, token_estimate, author_id, note, created_at
+		FROM agent_directives WHERE agent_id = ? AND version = ?`, agentID, version))
+}
+
+// ForAgent returns an agent's directive versions, newest first (the version-list order).
+func (r *DirectivesRepo) ForAgent(ctx context.Context, agentID string) ([]domain.AgentDirective, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT id, agent_id, version, body, token_estimate, author_id, note, created_at
+		FROM agent_directives WHERE agent_id = ? ORDER BY version DESC`, agentID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.AgentDirective
+	for rows.Next() {
+		d, err := scanDirective(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func scanDirective(row rowScanner) (domain.AgentDirective, error) {
 	var (
 		d      domain.AgentDirective
 		author sql.NullString
 	)
-	err := r.h.r.QueryRowContext(ctx, `
-		SELECT id, agent_id, version, body, token_estimate, author_id, note, created_at
-		FROM agent_directives WHERE id = ?`, id).
-		Scan(&d.ID, &d.AgentID, &d.Version, &d.Body, &d.TokenEstimate, &author, &d.Note,
-			&d.CreatedAt)
+	err := row.Scan(&d.ID, &d.AgentID, &d.Version, &d.Body, &d.TokenEstimate, &author, &d.Note,
+		&d.CreatedAt)
 	if err != nil {
 		return domain.AgentDirective{}, mapErr(err)
 	}
