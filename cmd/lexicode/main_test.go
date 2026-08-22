@@ -184,9 +184,9 @@ func newTestServer(t *testing.T) string {
 // TestSystemModulesIsServed checks the kernel is actually wired into serve: its route answers on
 // the real server, and the /api/ catch-all does not shadow it. Since S05 the route sits behind
 // auth, so the test walks the first-run path: with zero users every API call is 401
-// "setup_required", and after setup the cookie unlocks the list. This build registers no modules
-// yet — github, docker and the rest arrive with the stories that build them — so the list is
-// legitimately empty, and must be an empty array rather than null.
+// "setup_required", and after setup the cookie unlocks the list. Since S14 the github module is
+// wired in; with no repository connected it has nothing to verify at boot, so it reports ready.
+// docker and the rest arrive with the stories that build them.
 func TestSystemModulesIsServed(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -237,7 +237,8 @@ func TestSystemModulesIsServed(t *testing.T) {
 		t.Errorf("content-type = %q, want application/json", ct)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if got := strings.TrimSpace(string(body)); got != `{"modules":[]}` {
-		t.Errorf("body = %s, want {\"modules\":[]}", got)
+	want := `{"modules":[{"name":"github","state":"ready"}]}`
+	if got := strings.TrimSpace(string(body)); got != want {
+		t.Errorf("body = %s, want %s", got, want)
 	}
 }

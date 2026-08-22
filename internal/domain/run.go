@@ -47,6 +47,19 @@ type Run struct {
 	AcknowledgedAt     *string
 }
 
+// RunOutput is a row of run_outputs — one artifact a run produced: a branch, a PR, a comment,
+// a review, a wiki proposal, a ticket, or preserved partial work. The forge adapter records one
+// for every successful write (contracts §2.2).
+type RunOutput struct {
+	ID        string
+	RunID     string
+	Kind      RunOutputKind
+	Ref       string // the artifact's stable reference: PR number, comment ID, branch name
+	URL       string
+	Summary   string
+	CreatedAt string
+}
+
 // Activity is a row of activities — one step of a run's transcript, keyed (run_id, seq).
 // Payload is typed per tool by the runtime adapter (S19); the store carries it raw.
 type Activity struct {

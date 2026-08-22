@@ -180,6 +180,34 @@ func (k *Kernel) Modules() []ModuleStatus {
 	return out
 }
 
+// SetModuleState lets a module report a health transition after boot, so that a condition
+// discovered at runtime — a forge rate limit exhausted, a Docker daemon that went away — shows
+// up in GET /api/v1/system/modules just like a Start failure does (story S14). It is additive
+// to the frozen contracts-§1 surface: Start-time degradation still works exactly as before.
+// The name must be the module's own Name(); reporting for an unregistered module is an error.
+func (k *Kernel) SetModuleState(name string, state ModuleState, reason string) error {
+	if state != StateReady && state != StateDegraded {
+		return fmt.Errorf("module %q reported unknown state %q", name, state)
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for _, e := range k.modules {
+		if e.module.Name() != name {
+			continue
+		}
+		if e.state == state && e.reason == reason {
+			return nil
+		}
+		e.state = state
+		e.reason = reason
+		k.logger.Info("module state changed",
+			slog.String("module", name), slog.String("state", string(state)),
+			slog.String("reason", reason))
+		return nil
+	}
+	return fmt.Errorf("no module named %q is registered", name)
+}
+
 func (k *Kernel) moduleEntries() []*moduleEntry {
 	k.mu.Lock()
 	defer k.mu.Unlock()

@@ -15,7 +15,14 @@ import (
 // stubPort stands in for any of the eight ports. Every port interface currently declares only
 // ID(), so one stub satisfies all of them; when a story fills in a port's real method set it also
 // replaces the stub it needs with a real fake.
-type stubPort struct{ id string }
+// stubPort satisfies every port interface for registry tests. The embedded ForgeProvider
+// supplies the transcribed method set (S14) by promotion — calling any of those methods panics,
+// which is fine: these tests exercise registration and lookup, never the port behaviour. As
+// later stories transcribe the other ports, embed them here the same way.
+type stubPort struct {
+	ports.ForgeProvider
+	id string
+}
 
 func (s stubPort) ID() string { return s.id }
 

@@ -25,6 +25,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
+	githubmod "github.com/spruce/lexicode/internal/module/github"
 	"github.com/spruce/lexicode/internal/service/board"
 	"github.com/spruce/lexicode/internal/service/projects"
 	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
@@ -146,9 +147,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	})
 	secretsSvc.Routes(mux, authSvc)
 
-	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
-	// stories that build them (architecture §3.1); each is one line here.
-	if err := k.RegisterModule(); err != nil {
+	// Modules (architecture §3.1); each is one line here. docker, claudecode, actions, context
+	// and notify arrive with the stories that build them.
+	if err := k.RegisterModule(
+		githubmod.New(githubmod.Options{}),
+	); err != nil {
 		return err
 	}
 

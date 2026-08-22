@@ -10,15 +10,7 @@ type EventSource interface {
 	ID() string
 }
 
-// ForgeProvider is a git host: pull requests, reviews, comments, checks and clone URLs.
-// It deliberately has no Merge, no ForcePush and no Approve — brief D6 is implemented as an
-// absent capability, not as a permission check.
-//
-// Method set: contracts §2.2, transcribed in story S14.
-type ForgeProvider interface {
-	// ID is the stable identifier, e.g. "github". It must be unique across registered forges.
-	ID() string
-}
+// ForgeProvider lives in forge.go (contracts §2.2, transcribed in story S14).
 
 // Sandbox is an execution substrate for a run: it prepares an isolated workspace and hands back
 // an instance that commands can be executed in.
