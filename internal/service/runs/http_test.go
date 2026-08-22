@@ -1,6 +1,9 @@
-// S22's HTTP-level acceptance: the run endpoints over a REAL scheduler — a queued run's GET
-// shows the specific hold reason (§10.2: the UI says which limit, by name — never a bare
-// spinner), steering queues, stop cancels with artifacts, delegate enqueues, takeover 501s.
+// S22/S24 HTTP-level acceptance: the run endpoints over a REAL scheduler — a queued run's
+// GET shows the specific hold reason (§10.2: the UI says which limit, by name — never a
+// bare spinner), steering queues, stop cancels with artifacts, delegate enqueues, takeover
+// stops with reason `takeover` and injects the note into the next run on the ticket
+// (§10.7), the needs-you view computes the §4.3 flavor in words, and acknowledge dismisses
+// a terminal failure from the needs-you surfaces.
 package runs_test
 
 import (
@@ -312,12 +315,6 @@ func TestDelegateAndQueuedRunShowsHoldReason(t *testing.T) {
 		t.Fatalf("stopped run = %v", run)
 	}
 
-	// Takeover honestly 501s until S24.
-	status, _ = e.doJSON("POST", "/api/v1/runs/"+first+"/takeover", "")
-	if status != http.StatusNotImplemented {
-		t.Fatalf("takeover = %d, want 501", status)
-	}
-
 	// Activities endpoint serves the transcript.
 	waitFor(t, "first run terminal", func() bool {
 		r, err := e.st.Runs().ByID(context.Background(), first)
@@ -326,5 +323,153 @@ func TestDelegateAndQueuedRunShowsHoldReason(t *testing.T) {
 	status, body = e.doJSON("GET", "/api/v1/runs/"+first+"/activities", "")
 	if status != http.StatusOK || len(body["activities"].([]any)) == 0 {
 		t.Fatalf("activities = %d: %v", status, body)
+	}
+}
+
+// S24: take over a live run — canceled with reason `takeover`, the artifact push recorded,
+// the checkout block returned, and the note injected into the next run on the same ticket
+// (§10.7).
+func TestTakeoverStoresNoteAndInjectsIntoNextRun(t *testing.T) {
+	e := newEnv(t, 400*time.Millisecond) // slow enough to be taken over mid-session
+
+	status, body := e.doJSON("POST", "/api/v1/tickets/"+e.ticket.ID+"/delegate",
+		`{"agent_id":"`+e.agent.ID+`"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("delegate = %d: %v", status, body)
+	}
+	first := body["run_id"].(string)
+	waitFor(t, "first run running", func() bool {
+		r, err := e.st.Runs().ByID(context.Background(), first)
+		return err == nil && r.State == domain.RunRunning
+	})
+
+	status, body = e.doJSON("POST", "/api/v1/runs/"+first+"/takeover",
+		`{"note":"I renamed the retry helper and fixed the config loader myself."}`)
+	if status != http.StatusOK {
+		t.Fatalf("takeover = %d: %v", status, body)
+	}
+	if got := body["checkout"]; got != "git fetch origin && git checkout dev/run-1" {
+		t.Fatalf("checkout block = %v", got)
+	}
+
+	waitFor(t, "taken-over run terminal", func() bool {
+		r, err := e.st.Runs().ByID(context.Background(), first)
+		return err == nil && r.State.Terminal()
+	})
+	after, err := e.st.Runs().ByID(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.State != domain.RunCanceled || after.StateReason != "takeover" {
+		t.Fatalf("run after takeover = %s (%s)", after.State, after.StateReason)
+	}
+	if !strings.Contains(after.TakeoverNote, "renamed the retry helper") {
+		t.Fatalf("takeover note not stored: %q", after.TakeoverNote)
+	}
+
+	// The §10.5 artifact push ran: partial work is recorded against the run branch.
+	status, body = e.doJSON("GET", "/api/v1/runs/"+first, "")
+	if status != http.StatusOK {
+		t.Fatalf("GET run = %d: %v", status, body)
+	}
+	var partial bool
+	for _, o := range body["outputs"].([]any) {
+		if o.(map[string]any)["kind"] == "partial_work" {
+			partial = true
+		}
+	}
+	if !partial {
+		t.Fatalf("no partial_work output after takeover: %v", body["outputs"])
+	}
+
+	// The next run on the same ticket reads the note in its prompt — the prompt is the
+	// run's first stdin message (contracts §3.1).
+	status, body = e.doJSON("POST", "/api/v1/tickets/"+e.ticket.ID+"/delegate",
+		`{"agent_id":"`+e.agent.ID+`"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("second delegate = %d: %v", status, body)
+	}
+	second := body["run_id"].(string)
+	next, err := e.st.Runs().ByID(context.Background(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next.Prompt, "# Human takeover") ||
+		!strings.Contains(next.Prompt, "renamed the retry helper") {
+		t.Fatalf("takeover note not injected into the next run's prompt:\n%s", next.Prompt)
+	}
+	if !strings.Contains(next.Prompt, "took over run #1") {
+		t.Fatalf("takeover section does not name the taken-over run:\n%s", next.Prompt)
+	}
+}
+
+// S24: the needs-you view computes the §4.3 flavor in words — question first, then
+// approval, then failure — and acknowledge dismisses a terminal failure from it.
+func TestNeedsYouViewAndAcknowledge(t *testing.T) {
+	e := newEnv(t, time.Millisecond)
+	ctx := context.Background()
+	now := domain.Now()
+
+	mkRun := func(seq int64, state domain.RunState) string {
+		run := domain.Run{
+			ID: domain.NewID(), Seq: seq, ProjectID: e.project.ID, AgentID: e.agent.ID,
+			State: state, Autonomy: domain.AutonomyAuto, Model: "fake-model",
+			Effort: "medium", Prompt: "p", RuntimeID: "scripted", SandboxID: "fake",
+			SubjectKey: "ticket:" + e.ticket.Key, QueuedAt: now,
+		}
+		tid := e.ticket.ID
+		run.TicketID = &tid
+		if err := e.st.Runs().Create(ctx, &run); err != nil {
+			t.Fatal(err)
+		}
+		return run.ID
+	}
+	failed := mkRun(101, domain.RunFailed)
+	question := mkRun(102, domain.RunNeedsInput)
+	approval := mkRun(103, domain.RunAwaitingApproval)
+	live := mkRun(104, domain.RunRunning) // never a needs-you row
+
+	status, body := e.doJSON("GET", "/api/v1/projects/PAY/runs?view=needs_you", "")
+	if status != http.StatusOK {
+		t.Fatalf("needs_you = %d: %v", status, body)
+	}
+	rows := body["runs"].([]any)
+	var got []string
+	for _, r := range rows {
+		row := r.(map[string]any)
+		got = append(got, fmt.Sprintf("%s:%s", row["id"], row["flavor"]))
+		if row["ticket_key"] != e.ticket.Key || row["agent"] != "Dev" ||
+			row["project_key"] != "PAY" {
+			t.Fatalf("row joins wrong: %v", row)
+		}
+	}
+	want := []string{question + ":question", approval + ":approval", failed + ":failure"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("needs_you rows = %v, want %v", got, want)
+	}
+
+	// /inbox renders the same query workspace-wide.
+	status, body = e.doJSON("GET", "/api/v1/inbox", "")
+	if status != http.StatusOK || len(body["runs"].([]any)) != 3 {
+		t.Fatalf("inbox = %d: %v", status, body)
+	}
+
+	// A live run cannot be acknowledged.
+	status, _ = e.doJSON("POST", "/api/v1/runs/"+live+"/acknowledge", "")
+	if status != http.StatusConflict {
+		t.Fatalf("acknowledge live = %d, want 409", status)
+	}
+
+	// Acknowledging the failure dismisses it from the surfaces.
+	status, body = e.doJSON("POST", "/api/v1/runs/"+failed+"/acknowledge", "")
+	if status != http.StatusOK {
+		t.Fatalf("acknowledge = %d: %v", status, body)
+	}
+	if body["run"].(map[string]any)["acknowledged_at"] == nil {
+		t.Fatalf("acknowledged_at not set: %v", body["run"])
+	}
+	status, body = e.doJSON("GET", "/api/v1/projects/PAY/runs?view=needs_you", "")
+	if status != http.StatusOK || len(body["runs"].([]any)) != 2 {
+		t.Fatalf("needs_you after acknowledge = %d: %v", status, body)
 	}
 }

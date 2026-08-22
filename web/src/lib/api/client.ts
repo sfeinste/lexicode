@@ -89,6 +89,18 @@ export type RunActivity = components["schemas"]["RunActivity"];
 export type RunListResponse = components["schemas"]["RunListResponse"];
 export type RunDetailResponse = components["schemas"]["RunDetailResponse"];
 export type RunActivitiesResponse = components["schemas"]["RunActivitiesResponse"];
+export type RunMessage = components["schemas"]["RunMessage"];
+export type Elicitation = components["schemas"]["Elicitation"];
+export type RespondElicitationRequest = components["schemas"]["RespondElicitationRequest"];
+export type RespondElicitationResponse = components["schemas"]["RespondElicitationResponse"];
+export type TakeoverResponse = components["schemas"]["TakeoverResponse"];
+export type NeedsYouRun = components["schemas"]["NeedsYouRun"];
+export type NeedsYouListResponse = components["schemas"]["NeedsYouListResponse"];
+export type Notification = components["schemas"]["Notification"];
+export type NotificationListResponse = components["schemas"]["NotificationListResponse"];
+export type NotificationResponse = components["schemas"]["NotificationResponse"];
+export type PermissionRule = components["schemas"]["PermissionRule"];
+export type PermissionRuleList = components["schemas"]["PermissionRuleList"];
 
 export const API_BASE = "/api/v1";
 
@@ -399,6 +411,15 @@ export const agentsApi = {
     api<DirectiveListResponse>("GET", `/agents/${encodeURIComponent(id)}/directives`, {
       signal,
     }),
+  permissionRules: (id: string, signal?: AbortSignal) =>
+    api<PermissionRuleList>("GET", `/agents/${encodeURIComponent(id)}/permission-rules`, {
+      signal,
+    }),
+  deletePermissionRule: (id: string, ruleID: string) =>
+    api<void>(
+      "DELETE",
+      `/agents/${encodeURIComponent(id)}/permission-rules/${encodeURIComponent(ruleID)}`,
+    ),
 };
 
 /**
@@ -413,6 +434,40 @@ export const runsApi = {
     api<RunDetailResponse>("GET", `/runs/${encodeURIComponent(id)}`, { signal }),
   activities: (id: string, signal?: AbortSignal) =>
     api<RunActivitiesResponse>("GET", `/runs/${encodeURIComponent(id)}/activities`, { signal }),
+  steer: (id: string, body: string) =>
+    api<RunMessage>("POST", `/runs/${encodeURIComponent(id)}/messages`, { body: { body } }),
+  stop: (id: string, reason: string) =>
+    api<{ run: Run }>("POST", `/runs/${encodeURIComponent(id)}/stop`, { body: { reason } }),
+  takeover: (id: string, note: string) =>
+    api<TakeoverResponse>("POST", `/runs/${encodeURIComponent(id)}/takeover`, {
+      body: { note },
+    }),
+  acknowledge: (id: string) =>
+    api<{ run: Run }>("POST", `/runs/${encodeURIComponent(id)}/acknowledge`, { body: {} }),
+};
+
+export const elicitationsApi = {
+  respond: (id: string, body: RespondElicitationRequest) =>
+    api<RespondElicitationResponse>("POST", `/elicitations/${encodeURIComponent(id)}/respond`, {
+      body,
+    }),
+};
+
+export const inboxApi = {
+  get: (signal?: AbortSignal) => api<NeedsYouListResponse>("GET", "/inbox", { signal }),
+};
+
+export const notificationsApi = {
+  list: (signal?: AbortSignal) =>
+    api<NotificationListResponse>("GET", "/notifications", { signal }),
+  read: (id: string) =>
+    api<NotificationResponse>("POST", `/notifications/${encodeURIComponent(id)}/read`, {
+      body: {},
+    }),
+  dismiss: (id: string) =>
+    api<NotificationResponse>("POST", `/notifications/${encodeURIComponent(id)}/dismiss`, {
+      body: {},
+    }),
 };
 
 export const bootstrapApi = {

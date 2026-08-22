@@ -91,6 +91,11 @@ export function applyStreamEvent(
     case "run.elicitation":
       void qc.invalidateQueries({ queryKey: ["run", id] });
       break;
+    // A steering message was handed to the adapter: the queued chip flips to delivered.
+    // The detail response carries the messages, so refetching it is the whole update.
+    case "run.message":
+      void qc.invalidateQueries({ queryKey: ["run", id, "detail"] });
+      break;
     // Ticket events arrive on the project topic ("project:PAY" → id "PAY"). Every one of
     // them can change what the board shows (S11), so they invalidate the ["board", key]
     // family alongside the ticket cache.

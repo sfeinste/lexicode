@@ -35,6 +35,7 @@ import { formatDuration, formatRelativeTime, formatTokenCount } from "../../../l
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
 import { useStreamTopics } from "../../../lib/sse/useStreamTopics";
 import { ActivityDetail } from "./renderers";
+import { InterventionBar } from "./Intervention";
 import styles from "./runs.module.css";
 import {
   buildTimeline,
@@ -302,7 +303,15 @@ export function RunDetailPage() {
         {/* Centre — the tool-aware detail of the selected step. */}
         <main className={styles.detailPane} aria-label="Step detail">
           {selected !== undefined ? (
-            <ActivityDetail a={selected} sel={{ selected: line, onSelect: selectLine }} />
+            <ActivityDetail
+              a={selected}
+              sel={{ selected: line, onSelect: selectLine }}
+              intervene={{
+                projectKey: key,
+                agentID: run.agent_id,
+                elicitations: detailQuery.data.elicitations,
+              }}
+            />
           ) : (
             <p className={styles.muted}>
               {activities.length === 0
@@ -340,21 +349,8 @@ export function RunDetailPage() {
         </span>
       </footer>
 
-      {/* Steering structure (S23 renders it; S24 wires it). */}
-      <footer className={styles.steeringBar}>
-        <input
-          className={styles.steeringInput}
-          placeholder="Send a message to this run… (applied after the current step)"
-          disabled
-          title="Steering arrives with story S24"
-        />
-        <button type="button" className={styles.steeringButton} disabled title="Story S24">
-          Stop
-        </button>
-        <button type="button" className={styles.steeringButton} disabled title="Story S24">
-          Take over
-        </button>
-      </footer>
+      {/* S24: the live steering composer, Stop, and Take over. */}
+      <InterventionBar run={run} messages={detailQuery.data.messages} />
     </div>
   );
 }

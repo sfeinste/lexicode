@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -566,13 +567,25 @@ func (f *Forge) SubmitReview(ctx context.Context, c ports.Creds, r domain.RepoRe
 
 // CloneURL implements ports.ForgeProvider: the x-access-token form the container clones with.
 // The token is registered with the redactor before the URL exists, so even a caller that logs
-// the result through this module's logger emits the placeholder.
+// the result through this module's logger emits the placeholder. When the module runs against
+// a BaseURL override (GitHub Enterprise, or a fixture server speaking git smart-HTTP), the
+// clone URL is derived from that override's scheme and host instead of github.com — the same
+// host the API calls hit is the host git talks to.
 func (f *Forge) CloneURL(_ context.Context, c ports.Creds, r domain.RepoRef) (string, error) {
 	f.redactor.Add(c.Token)
 	if c.Token == "" {
 		return "", fmt.Errorf("github: no token to build a clone URL for %s", r)
 	}
-	return fmt.Sprintf("https://x-access-token:%s@github.com/%s/%s.git", c.Token, r.Owner, r.Name), nil
+	scheme, host := "https", "github.com"
+	if f.baseURL != "" {
+		u, err := url.Parse(f.baseURL)
+		if err != nil || u.Host == "" {
+			return "", fmt.Errorf("github: cannot derive a clone host from base URL %q", f.baseURL)
+		}
+		scheme, host = u.Scheme, u.Host
+	}
+	return fmt.Sprintf("%s://x-access-token:%s@%s/%s/%s.git",
+		scheme, c.Token, host, r.Owner, r.Name), nil
 }
 
 // ----------------------------------------------------------------------------- helpers -----

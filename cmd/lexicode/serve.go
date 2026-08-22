@@ -37,6 +37,7 @@ import (
 	"github.com/spruce/lexicode/internal/service/bootstrap"
 	credsvc "github.com/spruce/lexicode/internal/service/credentials"
 	mcpsvc "github.com/spruce/lexicode/internal/service/mcp"
+	notifysvc "github.com/spruce/lexicode/internal/service/notify"
 	"github.com/spruce/lexicode/internal/service/projects"
 	runsvc "github.com/spruce/lexicode/internal/service/runs"
 	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
@@ -180,6 +181,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	})
 	mcpSvc.Routes(mux, authSvc)
 	mux.Handle("/mcp/{token}", mcpSvc.Handler())
+	// The notify service (S24, architecture §12): the escalation ticker that turns an
+	// unanswered elicitation into the delegating human's notification row, and the
+	// endpoints the inbox badge reads. The ticker starts alongside the bus, below.
+	notifySvc := notifysvc.New(notifysvc.Options{Store: st, Bus: b, Logger: logger})
+	notifySvc.Routes(mux, authSvc)
 
 	// Modules (architecture §3.1); each is one line here. actions, context and notify
 	// arrive with the stories that build them. testkit is never wired here — it ships as a
@@ -274,6 +280,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		Tickets: ticketMoverFunc(func(ctx context.Context, ticketID string, cat domain.ColumnCategory, note string) error {
 			return ticketsSvc.MoveTicketToCategory(ctx, ticketID, cat, note)
 		}),
+		// §10.4 step 6 (S24): the orchestrator opens a completed run's PR from its pushed
+		// branch — through the forge port, so the open_prs grant and the D-9 marker are
+		// enforced in the adapter.
+		PRs: &runsvc.PROpener{
+			Store: st, Secrets: sec, Forge: k.Forge, Logger: logger,
+		},
 		GitHosts: gitHostsFor(cfg.GitHubBaseURL),
 	})
 	k.AttachScheduler(scheduler)
@@ -297,6 +309,8 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	if err := b.Start(ctx); err != nil {
 		return err
 	}
+	notifySvc.Start(ctx)
+	defer notifySvc.Wait()
 
 	srv := &http.Server{
 		Handler:           newHandler(mux, authSvc),

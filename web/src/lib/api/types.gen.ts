@@ -711,7 +711,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A project's runs, newest first (S22; the full list UI is S23). `status` accepts a comma-separated set of run states. */
+        /** A project's runs, newest first (S22; the full list UI is S23). `status` accepts a comma-separated set of run states. `view=needs_you` (S24) returns the board lane's rows instead — the same query the home strip and /inbox render, scoped to one project, each row carrying the §4.3 flavor in words. */
         get: operations["listRuns"];
         put?: never;
         post?: never;
@@ -798,8 +798,93 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Take over the run. Not available until story S24 builds the takeover flow — until then this answers 501 `not_implemented`; stop the run instead (its branch is preserved). */
+        /** Take over the run (architecture §10.7): stop with reason `takeover` (the §10.5 artifact push preserved), store the note on the run — it is injected into the prompt of the next run on the same ticket — and return the copy-paste checkout block. 409 `run_ended` once the run is terminal. */
         post: operations["takeoverRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{id}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss a terminal run from the needs-you surfaces (S24). 409 `run_not_ended` while the run is still live — a live run needs answering, not dismissing. */
+        post: operations["acknowledgeRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace-wide needs-you rows for the caller's projects — the one query behind the home strip, the left rail and /inbox (architecture §12). S24 ships the run rows; the S36 inbox adds outputs awaiting review. */
+        get: operations["getInbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's notifications (non-dismissed, most recently updated first) and the unread count the inbox badge renders. One row per run, updated in place — never stacked (interaction rule 3). */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark one of the caller's notifications read. */
+        post: operations["readNotification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss one of the caller's notifications. */
+        post: operations["dismissNotification"];
         delete?: never;
         options?: never;
         head?: never;
@@ -997,6 +1082,8 @@ export interface components {
         Elicitation: {
             id: string;
             run_id: string;
+            /** @description The timeline row this elicitation is anchored to (S24). */
+            activity_seq?: number;
             /** @enum {string} */
             kind: "question" | "approval";
             /** @enum {string} */
@@ -1718,9 +1805,13 @@ export interface components {
             tokens_cache_write: number;
             step_count: number;
             error_message: string;
+            /** @description The note stored when a human took the run over (§10.7). */
+            takeover_note: string;
             queued_at: string;
             started_at: string | null;
             ended_at: string | null;
+            /** @description When set, a terminal run is dismissed from the needs-you surfaces. */
+            acknowledged_at: string | null;
         };
         /** @description One artifact a run produced (a branch, a PR, preserved partial work, …). */
         RunOutput: {
@@ -1773,6 +1864,10 @@ export interface components {
             run: components["schemas"]["Run"];
             outputs: components["schemas"]["RunOutput"][];
             context: components["schemas"]["RunContextItem"][];
+            /** @description The steering queue — queued chips flip to delivered (S24). */
+            messages: components["schemas"]["RunMessage"][];
+            /** @description The run's questions and approvals, correlated to timeline rows by activity_seq — what the S24 respond surfaces answer. */
+            elicitations: components["schemas"]["Elicitation"][];
         };
         RunActivitiesResponse: {
             activities: components["schemas"]["RunActivity"][];
@@ -1804,11 +1899,63 @@ export interface components {
         StopRunResponse: {
             run: components["schemas"]["Run"];
         };
+        TakeoverRequest: {
+            /** @description "Tell the agent what you changed before resuming" — stored on the run and injected into the prompt of the next run on the same ticket (§10.7). */
+            note?: string;
+        };
+        TakeoverResponse: {
+            run: components["schemas"]["Run"];
+            /** @description The copy-paste block, e.g. `git fetch origin && git checkout dev/PAY-14`. Empty when the run never got a branch. */
+            checkout: string;
+        };
+        /** @description One row of the needs-you surfaces (architecture §12). `flavor` is the §4.3 vocabulary and every renderer prints it in words (interaction rule 1). */
+        NeedsYouRun: {
+            id: string;
+            project_key: string;
+            ticket_id: string | null;
+            ticket_key: string | null;
+            ticket_title: string | null;
+            /** @description The agent's display name. */
+            agent: string;
+            /** @enum {string} */
+            flavor: "question" | "approval" | "review" | "failure";
+            /** @description The underlying run state. */
+            status: string;
+            started_at: string;
+        };
+        NeedsYouListResponse: {
+            runs: components["schemas"]["NeedsYouRun"][];
+        };
+        /** @description One attention row — one per (user, run), updated in place, never stacked (interaction rule 3; architecture §12). */
+        Notification: {
+            id: string;
+            user_id: string;
+            project_id: string;
+            run_id: string | null;
+            /** @enum {string} */
+            flavor: "question" | "approval" | "review" | "failure";
+            title: string;
+            body: string;
+            /** @enum {string} */
+            state: "unread" | "read" | "dismissed";
+            created_at: string;
+            updated_at: string;
+            /** @description Present on list responses — what the dropdown links with. */
+            project_key?: string;
+        };
+        NotificationListResponse: {
+            notifications: components["schemas"]["Notification"][];
+            /** @description The inbox badge count. */
+            unread: number;
+        };
+        NotificationResponse: {
+            notification: components["schemas"]["Notification"];
+        };
         /**
          * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;
@@ -3486,6 +3633,7 @@ export interface operations {
                 status?: string;
                 agent?: string;
                 ticket?: string;
+                view?: "needs_you";
             };
             header?: never;
             path: {
@@ -3495,13 +3643,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The matching runs. */
+            /** @description The matching runs — RunListResponse normally, NeedsYouListResponse when `view=needs_you`. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunListResponse"];
+                    "application/json": components["schemas"]["RunListResponse"] | components["schemas"]["NeedsYouListResponse"];
                 };
             };
             400: components["responses"]["Problem"];
@@ -3630,12 +3778,141 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TakeoverRequest"];
+            };
+        };
         responses: {
+            /** @description The taken-over run and the checkout command. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TakeoverResponse"];
+                };
+            };
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
-            501: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    acknowledgeRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The acknowledged run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopRunResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    getInbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The needs-you rows, question → approval → failure, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NeedsYouListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notifications and the unread count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    readNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The updated notification. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    dismissNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The updated notification. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
         };
     };
     respondElicitation: {

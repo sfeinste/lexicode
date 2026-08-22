@@ -75,6 +75,13 @@ func (l lateRunControl) StopRun(ctx context.Context, runID, reason string) error
 	return (*l.s).StopRun(ctx, runID, reason)
 }
 
+func (l lateRunControl) TakeoverRun(ctx context.Context, runID, note string) error {
+	if *l.s == nil {
+		return errors.New("the run scheduler is not running")
+	}
+	return (*l.s).TakeoverRun(ctx, runID, note)
+}
+
 func (l lateRunControl) NotifySteering(runID string) {
 	if *l.s != nil {
 		(*l.s).NotifySteering(runID)

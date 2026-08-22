@@ -4,25 +4,46 @@
  * later stories run agents) and the create-project flow. The needs-you cards land in S28 —
  * the strip renders its empty state.
  */
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { EmptyState } from "../../components/EmptyState/EmptyState";
-import type { ProjectListItem } from "../../lib/api/client";
+import type { NeedsYouRun, ProjectListItem } from "../../lib/api/client";
+import { useInboxQuery } from "../../lib/api/attentionQueries";
 import { useProjectsQuery } from "../../lib/api/projectQueries";
 import { formatRelativeTime, formatUSD } from "../../lib/format/format";
+import { NEEDS_YOU_FLAVORS } from "../project/board/TicketCard";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import styles from "./home.module.css";
+
+/** The single inline action per card (UI spec §5.1). All four land on the run detail,
+ * where answering/approving happens inline in the timeline. */
+const FLAVOR_ACTIONS: Record<string, string> = {
+  question: "Answer",
+  approval: "Approve",
+  review: "View diff",
+  failure: "View run",
+};
 
 export function HomePage() {
   const [creating, setCreating] = useState(false);
   const projects = useProjectsQuery();
+  const inbox = useInboxQuery();
+  const needsYou = inbox.data?.runs ?? [];
 
   return (
     <div className={styles.root}>
       <section aria-label="Needs you">
         <h2 className={styles.sectionTitle}>Needs you</h2>
-        <p className={styles.quiet}>Nothing is waiting on you.</p>
+        {needsYou.length === 0 ? (
+          <p className={styles.quiet}>Nothing is waiting on you.</p>
+        ) : (
+          <div className={styles.needsYouStrip}>
+            {needsYou.map((r) => (
+              <NeedsYouCard key={r.id} row={r} />
+            ))}
+          </div>
+        )}
       </section>
       <section aria-label="Projects">
         <div className={styles.sectionHeader}>
@@ -55,6 +76,32 @@ export function HomePage() {
         )}
       </section>
       {creating && <CreateProjectDialog onClose={() => setCreating(false)} />}
+    </div>
+  );
+}
+
+/** One blocked item, the flavor in words, one inline action (interaction rule 1). */
+function NeedsYouCard({ row }: { row: NeedsYouRun }) {
+  const flavor = NEEDS_YOU_FLAVORS[row.flavor as keyof typeof NEEDS_YOU_FLAVORS] ?? row.flavor;
+  return (
+    <div className={styles.needsYouCard}>
+      <div className={styles.needsYouTop}>
+        <span className={styles.needsYouProject}>{row.project_key}</span>
+        <span className={styles.needsYouAge}>{formatRelativeTime(row.started_at)}</span>
+      </div>
+      <div className={styles.needsYouTicket}>
+        {row.ticket_key !== null ? `${row.ticket_key} · ${row.ticket_title ?? ""}` : row.agent}
+      </div>
+      <div className={styles.needsYouBottom}>
+        <span className={styles.needsYouFlavor}>▲ {flavor}</span>
+        <Link
+          to="/p/$key/runs/$id"
+          params={{ key: row.project_key, id: row.id }}
+          className={styles.needsYouAction}
+        >
+          {FLAVOR_ACTIONS[row.flavor] ?? "Open"}
+        </Link>
+      </div>
     </div>
   );
 }

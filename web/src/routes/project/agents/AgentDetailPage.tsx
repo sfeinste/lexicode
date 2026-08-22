@@ -22,6 +22,7 @@ import {
   IdentitySection,
   LimitsSection,
   ModelSection,
+  PermissionRulesSection,
   PermissionsSection,
 } from "./sections";
 
@@ -113,6 +114,7 @@ export function AgentDetailPage() {
           permissions={agent.permissions}
           onChange={(permissions) => patch({ permissions })}
         />
+        <PermissionRulesSection agentID={agent.id} />
         <AutonomySection autonomy={agent.autonomy} onChange={(autonomy) => patch({ autonomy })} />
         <LimitsSection agent={agent} onPatch={patch} />
         <ContextPreviewSection />

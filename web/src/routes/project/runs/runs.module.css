@@ -187,8 +187,9 @@
 .detailPage {
   display: flex;
   flex-direction: column;
-  /* Fill the space under the top bar + project tabs so the panes own their scroll. */
-  height: calc(100vh - var(--topbar-height) - 41px);
+  /* Fill the space under the top bar + project header (42px) + tabs (41px) so the panes own
+     their scroll and the S24 intervention bar is never pushed below the fold. */
+  height: calc(100vh - var(--topbar-height) - 83px);
   min-height: 0;
 }
 
@@ -843,4 +844,311 @@
 .steeringButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* ---- S24 intervention: steering chips, stop, take over ---------------------------------- */
+
+.steerList {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding: 6px 16px;
+  background: var(--surface);
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.steerRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--fs-body);
+}
+
+.steerBody {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.steerState {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+.steerRow[data-state="queued"] .steerState {
+  color: var(--running);
+}
+
+.steerRow[data-state="delivered"] .steerState {
+  color: var(--ok);
+}
+
+.steeringButton[data-danger="true"] {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+
+.takeoverBlock {
+  flex: none;
+  border-top: 1px solid var(--border);
+  padding: 10px 16px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.takeoverLead {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+}
+
+.takeoverNote {
+  font-size: var(--fs-body);
+  color: var(--text-3);
+}
+
+.copyLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.copyLineText {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.copyButton {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: var(--fs-body);
+}
+
+.takeoverDialogBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.takeoverDialog {
+  width: min(480px, calc(100vw - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.takeoverDialogTitle {
+  margin: 0;
+  font-size: var(--fs-title);
+}
+
+.takeoverDialogBody {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+}
+
+.takeoverLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-body);
+  color: var(--text-2);
+}
+
+.takeoverTextarea {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: var(--fs-body);
+  resize: vertical;
+}
+
+.takeoverDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---- S24: answer + approval respond surfaces -------------------------------------------- */
+
+button.optionCard {
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+button.optionCard:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.optionCard[data-selected] {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+}
+
+.optionCard[data-other] {
+  background: var(--surface-2);
+}
+
+.otherInput {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: var(--fs-body);
+}
+
+.answerButton:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+  cursor: pointer;
+}
+
+.respondError {
+  color: var(--fail);
+  font-size: var(--fs-body);
+}
+
+.resolvedChip {
+  align-self: flex-start;
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.resolvedChip[data-state="answered"] {
+  color: var(--ok);
+}
+
+.resolvedChip[data-state="denied"] {
+  color: var(--fail);
+}
+
+.approvalTitle {
+  color: var(--needs-you);
+}
+
+.approvalFields {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.approvalField {
+  display: flex;
+  gap: 8px;
+  font-size: var(--fs-body);
+}
+
+.approvalField dt {
+  flex: none;
+  width: 92px;
+  color: var(--text-3);
+}
+
+.approvalField dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.approvalControls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approvalEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.approvalTextarea {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  resize: vertical;
+}
+
+.approvalButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.approvalSecondary {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.approvalSecondary[data-active] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.approvalSecondary[data-danger="true"] {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+
+.alwaysAllow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-body);
+  color: var(--text-2);
+}
+
+.ruleAdded {
+  font-size: var(--fs-body);
+  color: var(--ok);
+}
+
+.ruleLink {
+  color: var(--accent);
+  text-decoration: underline;
 }

@@ -70,6 +70,23 @@ func (s *Scheduler) assemblePrompt(ctx context.Context, agent domain.Agent, tick
 		}
 	}
 
+	// §10.7: when a previous run on this ticket was taken over, the human's note is
+	// injected into this run's prompt — the prompt IS the run's first stdin message
+	// (contracts §3.1), so a labelled section here is "the first message of the next run".
+	if ticket != nil {
+		note, seq, err := s.st.Runs().LatestTakeoverNote(ctx, ticket.ID)
+		if err != nil {
+			return "", nil, fmt.Errorf("sched: reading takeover note: %w", err)
+		}
+		if strings.TrimSpace(note) != "" {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(&b, "# Human takeover\n\nA human took over run #%d on this ticket and worked on its branch directly. Their note:\n\n%s\n",
+				seq, strings.TrimSpace(note))
+		}
+	}
+
 	if strings.TrimSpace(req.PromptOverride) != "" {
 		if b.Len() > 0 {
 			b.WriteString("\n")

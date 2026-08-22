@@ -67,6 +67,17 @@ type TicketMover interface {
 	MoveTicketToCategory(ctx context.Context, ticketID string, category domain.ColumnCategory, note string) error
 }
 
+// PROpener opens a completed run's pull request from its pushed branch (§10.4 step 6: "on
+// result, outputs are collected: pushed branch, opened PR"). The orchestrator — not the
+// agent — talks to the forge, so the D-9 actor marker and the open_prs grant check are
+// enforced in the adapter, never by prompt. The service layer implements it (it needs the
+// forge port and the repo's stored token, which the kernel does not touch); nil disables PR
+// opening. Implementations return (false, nil) when there is nothing to open — no
+// permission, no branch, no ticket, or a PR already recorded.
+type PROpener interface {
+	OpenForRun(ctx context.Context, run domain.Run) (bool, error)
+}
+
 // Options configures New. Store, Bus and Audit are required; the seams degrade individually
 // (a nil Tokens mints nothing, a nil Proxy registers nothing, a nil Tickets moves nothing) so
 // tests wire exactly what they exercise.
@@ -88,6 +99,7 @@ type Options struct {
 	Tokens  TokenAuthority
 	Proxy   ProxyRegistrar
 	Tickets TicketMover
+	PRs     PROpener
 
 	// SandboxID is which sandbox runs execute in ("docker" in production, "fake" in tests).
 	// Empty means "docker".

@@ -15,9 +15,16 @@
  *   saved versions (agents.EstimateTokens), computed locally so it updates on every
  *   keystroke with zero latency and can never disagree with the saved value.
  */
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import type { Agent, AgentAutonomy, AgentPermissions, Directive } from "../../../lib/api/client";
+import {
+  agentsApi,
+  type Agent,
+  type AgentAutonomy,
+  type AgentPermissions,
+  type Directive,
+} from "../../../lib/api/client";
 import styles from "./agents.module.css";
 import {
   AUTONOMY_STOPS,
@@ -321,6 +328,67 @@ export function PermissionsSection({
         A reviewer with edit unchecked <em>cannot</em> write code; that is stronger than
         telling it not to.
       </p>
+    </section>
+  );
+}
+
+// ---- Permission rules (S24, interaction rule 8) -----------------------------------------
+
+/**
+ * The rules "Always allow" writes — one concrete, scoped, inspectable row each, never a
+ * global mute. Listed here so the approval card's "rule added — view in agent settings"
+ * link lands on something real; deletable, because a remembered allowance must be
+ * revocable where it is visible.
+ */
+export function PermissionRulesSection({ agentID }: { agentID: string }) {
+  const qc = useQueryClient();
+  const rules = useQuery({
+    queryKey: ["agent", agentID, "permission-rules"],
+    queryFn: ({ signal }) => agentsApi.permissionRules(agentID, signal),
+  });
+  const remove = useMutation({
+    mutationFn: (ruleID: string) => agentsApi.deletePermissionRule(agentID, ruleID),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["agent", agentID, "permission-rules"] });
+    },
+  });
+  const list = rules.data?.rules ?? [];
+  return (
+    <section
+      className={styles.permissionsPanel}
+      aria-label="Permission rules"
+      data-section="permission-rules"
+      data-enforcement="true"
+    >
+      <h2>
+        <LockIcon />
+        Permission rules
+      </h2>
+      <p className={styles.sectionHint}>
+        Written by “Always allow” on approval cards — one scoped rule each, checked before
+        autonomy on every approval.
+      </p>
+      {list.length === 0 ? (
+        <p className={styles.sectionHint}>No rules yet.</p>
+      ) : (
+        <ul className={styles.ruleList}>
+          {list.map((r) => (
+            <li key={r.id} className={styles.ruleRow}>
+              <code className={styles.ruleCode}>
+                {r.decision} {r.tool}({r.pattern})
+              </code>
+              <button
+                type="button"
+                className={styles.ruleDelete}
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(r.id)}
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

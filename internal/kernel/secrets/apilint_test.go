@@ -53,6 +53,12 @@ func TestNoAPIHandlerTouchesSecretValues(t *testing.T) {
 		// run's Redactor only; no HTTP handler calls into the file, and the runs service's
 		// future handlers live in other files that stay under this lint.
 		filepath.Join("service", "runs", "prep.go"): true,
+		// S24: the PR opener is the contracts §2.2 pattern again — "the service layer
+		// resolves the token from the secret store and passes it down; the adapter never
+		// reads secrets itself". Its Get feeds forge.OpenPullRequest only; the scheduler
+		// calls it at run completion, no HTTP handler reaches the file, and the token never
+		// appears in a response body.
+		filepath.Join("service", "runs", "propen.go"): true,
 	}
 	forbiddenWords := []string{"ciphertext", "plaintext", "nonce"}
 

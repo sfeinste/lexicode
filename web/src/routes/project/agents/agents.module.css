@@ -391,3 +391,43 @@
   color: var(--text-3);
   font-size: var(--fs-body);
 }
+
+/* ---- S24: permission rules --------------------------------------------------------------- */
+
+.ruleList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ruleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ruleCode {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.ruleDelete {
+  flex: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: var(--fs-body);
+  cursor: pointer;
+}

@@ -22,6 +22,7 @@ import (
 // RunControl is the slice of the scheduler this service needs. *sched.Scheduler satisfies it.
 type RunControl interface {
 	StopRun(ctx context.Context, runID, reason string) error
+	TakeoverRun(ctx context.Context, runID, note string) error
 	NotifySteering(runID string)
 }
 

@@ -588,7 +588,9 @@ func TestWritePermissionDeniedMakesZeroNetworkCalls(t *testing.T) {
 func TestCloneURLTokenNeverAppearsInLogs(t *testing.T) {
 	h := newHarness(t)
 
-	url, err := h.forge.CloneURL(ctx(), testCreds, testRepo)
+	// A default forge (no BaseURL override) clones from github.com.
+	plain := New(Options{}).Forge()
+	url, err := plain.CloneURL(ctx(), testCreds, testRepo)
 	if err != nil {
 		t.Fatalf("CloneURL: %v", err)
 	}
@@ -596,6 +598,17 @@ func TestCloneURLTokenNeverAppearsInLogs(t *testing.T) {
 	if url != want {
 		t.Fatalf("CloneURL = %q; want %q", url, want)
 	}
+
+	// A BaseURL override (GHE, fixture servers — S24) redirects the clone to the same
+	// scheme+host the API calls hit.
+	overridden, err := h.forge.CloneURL(ctx(), testCreds, testRepo)
+	if err != nil {
+		t.Fatalf("CloneURL (override): %v", err)
+	}
+	if base := h.forge.baseURL; !strings.Contains(overridden, strings.TrimSuffix(strings.TrimPrefix(base, "http://"), "/")) {
+		t.Fatalf("CloneURL (override) = %q; want the fixture host from %q", overridden, base)
+	}
+	url = overridden // exercise the redaction path below with the overridden URL too
 
 	// Simulate the accident the redactor exists for: the URL (and the raw token) logged
 	// through the module's logger, as a message, an attr, and inside an error value.

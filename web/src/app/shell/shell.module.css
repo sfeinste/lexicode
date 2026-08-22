@@ -351,3 +351,59 @@
   flex: 1;
   min-height: 0;
 }
+
+/* ---- S24: the notifications bell + dropdown ---------------------------------------------- */
+
+.notifyMenu {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.iconButton[data-unread] {
+  color: var(--needs-you);
+}
+
+.notifyMenu .menu {
+  right: auto;
+  left: 0;
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.notifyRow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.notifyRow:hover {
+  background: var(--surface-2);
+}
+
+.notifyRow[data-state="read"] {
+  color: var(--text-3);
+}
+
+.notifyTitle {
+  font-weight: 600;
+  font-size: var(--fs-body);
+}
+
+.notifyBody {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}

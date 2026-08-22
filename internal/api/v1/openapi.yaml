@@ -1174,18 +1174,26 @@ paths:
       operationId: listRuns
       summary: >
         A project's runs, newest first (S22; the full list UI is S23). `status` accepts a
-        comma-separated set of run states.
+        comma-separated set of run states. `view=needs_you` (S24) returns the board lane's
+        rows instead — the same query the home strip and /inbox render, scoped to one
+        project, each row carrying the §4.3 flavor in words.
       parameters:
         - { name: key, in: path, required: true, schema: { type: string } }
         - { name: status, in: query, schema: { type: string } }
         - { name: agent, in: query, schema: { type: string } }
         - { name: ticket, in: query, schema: { type: string } }
+        - { name: view, in: query, schema: { type: string, enum: [needs_you] } }
       responses:
         "200":
-          description: The matching runs.
+          description: >
+            The matching runs — RunListResponse normally, NeedsYouListResponse when
+            `view=needs_you`.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/RunListResponse" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RunListResponse"
+                  - $ref: "#/components/schemas/NeedsYouListResponse"
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
@@ -1277,15 +1285,100 @@ paths:
     post:
       operationId: takeoverRun
       summary: >
-        Take over the run. Not available until story S24 builds the takeover flow — until
-        then this answers 501 `not_implemented`; stop the run instead (its branch is
-        preserved).
+        Take over the run (architecture §10.7): stop with reason `takeover` (the §10.5
+        artifact push preserved), store the note on the run — it is injected into the
+        prompt of the next run on the same ticket — and return the copy-paste checkout
+        block. 409 `run_ended` once the run is terminal.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TakeoverRequest" }
+      responses:
+        "200":
+          description: The taken-over run and the checkout command.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TakeoverResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /runs/{id}/acknowledge:
+    post:
+      operationId: acknowledgeRun
+      summary: >
+        Dismiss a terminal run from the needs-you surfaces (S24). 409 `run_not_ended` while
+        the run is still live — a live run needs answering, not dismissing.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
-        "501": { $ref: "#/components/responses/Problem" }
+        "200":
+          description: The acknowledged run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StopRunResponse" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /inbox:
+    get:
+      operationId: getInbox
+      summary: >
+        The workspace-wide needs-you rows for the caller's projects — the one query behind
+        the home strip, the left rail and /inbox (architecture §12). S24 ships the run rows;
+        the S36 inbox adds outputs awaiting review.
+      responses:
+        "200":
+          description: The needs-you rows, question → approval → failure, oldest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NeedsYouListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /notifications:
+    get:
+      operationId: listNotifications
+      summary: >
+        The caller's notifications (non-dismissed, most recently updated first) and the
+        unread count the inbox badge renders. One row per run, updated in place — never
+        stacked (interaction rule 3).
+      responses:
+        "200":
+          description: The notifications and the unread count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /notifications/{id}/read:
+    post:
+      operationId: readNotification
+      summary: Mark one of the caller's notifications read.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The updated notification.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /notifications/{id}/dismiss:
+    post:
+      operationId: dismissNotification
+      summary: Dismiss one of the caller's notifications.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The updated notification.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
   /elicitations/{id}/respond:
     post:
@@ -1578,6 +1671,9 @@ components:
       properties:
         id: { type: string }
         run_id: { type: string }
+        activity_seq:
+          type: integer
+          description: The timeline row this elicitation is anchored to (S24).
         kind: { type: string, enum: [question, approval] }
         state: { type: string, enum: [pending, answered, denied, expired, canceled] }
         request: {}
@@ -2548,7 +2644,8 @@ components:
         [id, seq, project_id, agent_id, ticket_id, trigger_id, state, state_reason,
          hold_reason, autonomy, directive_version_id, model, effort, branch, subject_key,
          current_step, cost_cents, tokens_in, tokens_out, tokens_cache_read,
-         tokens_cache_write, step_count, error_message, queued_at, started_at, ended_at]
+         tokens_cache_write, step_count, error_message, takeover_note, queued_at,
+         started_at, ended_at, acknowledged_at]
       properties:
         id: { type: string }
         seq: { type: integer, description: 'Per-project; renders as "run #482".' }
@@ -2573,9 +2670,15 @@ components:
         tokens_cache_write: { type: integer }
         step_count: { type: integer }
         error_message: { type: string }
+        takeover_note:
+          type: string
+          description: The note stored when a human took the run over (§10.7).
         queued_at: { type: string }
         started_at: { type: [string, "null"] }
         ended_at: { type: [string, "null"] }
+        acknowledged_at:
+          type: [string, "null"]
+          description: When set, a terminal run is dismissed from the needs-you surfaces.
     RunOutput:
       type: object
       description: One artifact a run produced (a branch, a PR, preserved partial work, …).
@@ -2641,7 +2744,7 @@ components:
           items: { $ref: "#/components/schemas/Run" }
     RunDetailResponse:
       type: object
-      required: [run, outputs, context]
+      required: [run, outputs, context, messages, elicitations]
       properties:
         run: { $ref: "#/components/schemas/Run" }
         outputs:
@@ -2650,6 +2753,16 @@ components:
         context:
           type: array
           items: { $ref: "#/components/schemas/RunContextItem" }
+        messages:
+          type: array
+          description: The steering queue — queued chips flip to delivered (S24).
+          items: { $ref: "#/components/schemas/RunMessage" }
+        elicitations:
+          type: array
+          description: >
+            The run's questions and approvals, correlated to timeline rows by
+            activity_seq — what the S24 respond surfaces answer.
+          items: { $ref: "#/components/schemas/Elicitation" }
     RunActivitiesResponse:
       type: object
       required: [activities]
@@ -2695,6 +2808,84 @@ components:
       required: [run]
       properties:
         run: { $ref: "#/components/schemas/Run" }
+    TakeoverRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          description: >
+            "Tell the agent what you changed before resuming" — stored on the run and
+            injected into the prompt of the next run on the same ticket (§10.7).
+    TakeoverResponse:
+      type: object
+      required: [run, checkout]
+      properties:
+        run: { $ref: "#/components/schemas/Run" }
+        checkout:
+          type: string
+          description: >
+            The copy-paste block, e.g. `git fetch origin && git checkout dev/PAY-14`.
+            Empty when the run never got a branch.
+    NeedsYouRun:
+      type: object
+      description: >
+        One row of the needs-you surfaces (architecture §12). `flavor` is the §4.3
+        vocabulary and every renderer prints it in words (interaction rule 1).
+      required:
+        [id, project_key, ticket_id, ticket_key, ticket_title, agent, flavor, status,
+         started_at]
+      properties:
+        id: { type: string }
+        project_key: { type: string }
+        ticket_id: { type: [string, "null"] }
+        ticket_key: { type: [string, "null"] }
+        ticket_title: { type: [string, "null"] }
+        agent: { type: string, description: The agent's display name. }
+        flavor: { type: string, enum: [question, approval, review, failure] }
+        status: { type: string, description: The underlying run state. }
+        started_at: { type: string }
+    NeedsYouListResponse:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/NeedsYouRun" }
+    Notification:
+      type: object
+      description: >
+        One attention row — one per (user, run), updated in place, never stacked
+        (interaction rule 3; architecture §12).
+      required:
+        [id, user_id, project_id, run_id, flavor, title, body, state, created_at,
+         updated_at]
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        project_id: { type: string }
+        run_id: { type: [string, "null"] }
+        flavor: { type: string, enum: [question, approval, review, failure] }
+        title: { type: string }
+        body: { type: string }
+        state: { type: string, enum: [unread, read, dismissed] }
+        created_at: { type: string }
+        updated_at: { type: string }
+        project_key:
+          type: string
+          description: Present on list responses — what the dropdown links with.
+    NotificationListResponse:
+      type: object
+      required: [notifications, unread]
+      properties:
+        notifications:
+          type: array
+          items: { $ref: "#/components/schemas/Notification" }
+        unread: { type: integer, description: The inbox badge count. }
+    NotificationResponse:
+      type: object
+      required: [notification]
+      properties:
+        notification: { $ref: "#/components/schemas/Notification" }
     StreamEventType:
       type: string
       description: >
@@ -2706,6 +2897,7 @@ components:
         - run.step
         - run.usage
         - run.elicitation
+        - run.message
         - ticket.created
         - ticket.updated
         - ticket.commented

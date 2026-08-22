@@ -72,6 +72,51 @@ func (r *ElicitationsRepo) PendingForRun(ctx context.Context, runID string) ([]d
 	return out, rows.Err()
 }
 
+// ForRun returns every elicitation of a run, oldest first — the run detail's respond
+// surface correlates them to timeline rows by activity_seq (S24).
+func (r *ElicitationsRepo) ForRun(ctx context.Context, runID string) ([]domain.Elicitation, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+elicitationCols+` FROM elicitations
+		WHERE run_id = ? ORDER BY created_at, id`, runID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Elicitation
+	for rows.Next() {
+		e, err := scanElicitation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// PendingOlderThan returns every pending elicitation created at or before cutoff (RFC3339),
+// oldest first — the S24 escalation ticker's scan (interaction rule 11: an unanswered
+// question escalates to the inbox).
+func (r *ElicitationsRepo) PendingOlderThan(ctx context.Context, cutoff string) ([]domain.Elicitation, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+elicitationCols+` FROM elicitations
+		WHERE state = 'pending' AND created_at <= ? ORDER BY created_at, id`, cutoff)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Elicitation
+	for rows.Next() {
+		e, err := scanElicitation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // Respond moves one pending elicitation to a resolved state with its response and responder
 // attribution, guarded on state = 'pending' so two concurrent responders cannot both win:
 // the loser gets ErrNotFound and must re-read the row to see what happened.

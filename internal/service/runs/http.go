@@ -1,9 +1,11 @@
 package runs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/spruce/lexicode/internal/domain"
@@ -29,6 +31,10 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("POST /api/v1/runs/{id}/messages", viaRun(s.handleSteer))
 	mux.Handle("POST /api/v1/runs/{id}/stop", viaRun(s.handleStop))
 	mux.Handle("POST /api/v1/runs/{id}/takeover", viaRun(s.handleTakeover))
+	mux.Handle("POST /api/v1/runs/{id}/acknowledge", viaRun(s.handleAcknowledge))
+	mux.Handle("GET /api/v1/inbox", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handleInbox(w, r, a)
+	})))
 }
 
 // requireRunMember checks project membership through the run in the path. Must sit inside
@@ -98,9 +104,11 @@ type runBody struct {
 	TokensCacheWrite   int64   `json:"tokens_cache_write"`
 	StepCount          int64   `json:"step_count"`
 	ErrorMessage       string  `json:"error_message"`
+	TakeoverNote       string  `json:"takeover_note"`
 	QueuedAt           string  `json:"queued_at"`
 	StartedAt          *string `json:"started_at"`
 	EndedAt            *string `json:"ended_at"`
+	AcknowledgedAt     *string `json:"acknowledged_at"`
 }
 
 func toRunBody(r domain.Run) runBody {
@@ -113,8 +121,50 @@ func toRunBody(r domain.Run) runBody {
 		CurrentStep: r.CurrentStep, CostCents: r.CostCents,
 		TokensIn: r.TokensIn, TokensOut: r.TokensOut,
 		TokensCacheRead: r.TokensCacheRead, TokensCacheWrite: r.TokensCacheWrite,
-		StepCount: r.StepCount, ErrorMessage: r.ErrorMessage,
+		StepCount: r.StepCount, ErrorMessage: r.ErrorMessage, TakeoverNote: r.TakeoverNote,
 		QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, EndedAt: r.EndedAt,
+		AcknowledgedAt: r.AcknowledgedAt,
+	}
+}
+
+// runMessageBody is one steering message: queued renders the "Applied after the current
+// step." chip; delivered_at flips it.
+type runMessageBody struct {
+	ID          string  `json:"id"`
+	RunID       string  `json:"run_id"`
+	Body        string  `json:"body"`
+	State       string  `json:"state"`
+	CreatedAt   string  `json:"created_at"`
+	DeliveredAt *string `json:"delivered_at"`
+}
+
+func toRunMessageBody(m domain.RunMessage) runMessageBody {
+	return runMessageBody{
+		ID: m.ID, RunID: m.RunID, Body: m.Body, State: string(m.State),
+		CreatedAt: m.CreatedAt, DeliveredAt: m.DeliveredAt,
+	}
+}
+
+// runElicitationBody mirrors the elicitation wire shape the respond endpoint uses, plus
+// activity_seq so the timeline row and the respond surface stay one thing.
+type runElicitationBody struct {
+	ID          string          `json:"id"`
+	RunID       string          `json:"run_id"`
+	ActivitySeq int64           `json:"activity_seq"`
+	Kind        string          `json:"kind"`
+	State       string          `json:"state"`
+	Request     json.RawMessage `json:"request"`
+	Response    json.RawMessage `json:"response,omitempty"`
+	RespondedBy *string         `json:"responded_by,omitempty"`
+	RespondedAt *string         `json:"responded_at,omitempty"`
+	CreatedAt   string          `json:"created_at"`
+}
+
+func toRunElicitationBody(el domain.Elicitation) runElicitationBody {
+	return runElicitationBody{
+		ID: el.ID, RunID: el.RunID, ActivitySeq: el.ActivitySeq, Kind: string(el.Kind),
+		State: string(el.State), Request: el.Request, Response: el.Response,
+		RespondedBy: el.RespondedBy, RespondedAt: el.RespondedAt, CreatedAt: el.CreatedAt,
 	}
 }
 
@@ -160,11 +210,32 @@ type activityBody struct {
 
 // ---------------------------------------------------------------- handlers -----
 
-// handleList is GET /projects/{key}/runs?status=&agent=&ticket=.
+// handleList is GET /projects/{key}/runs?status=&agent=&ticket=&view=. `view=needs_you`
+// returns the board lane's rows — the same query the home strip and /inbox render, scoped
+// to one project (architecture §12).
 func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	p, err := s.st.Projects().ByKey(r.Context(), r.PathValue("key"))
 	if err != nil {
 		s.writeError(w, err)
+		return
+	}
+	if view := r.URL.Query().Get("view"); view != "" {
+		if view != "needs_you" {
+			httpx.WriteValidation(w, []httpx.FieldError{{Field: "view",
+				Message: "Unknown view: " + view}})
+			return
+		}
+		runs, err := s.st.Runs().NeedsYou(r.Context(), p.ID)
+		if err != nil {
+			s.writeError(w, err)
+			return
+		}
+		rows, err := s.needsYouRows(r.Context(), runs)
+		if err != nil {
+			s.writeError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"runs": rows})
 		return
 	}
 	var f store.RunFilter
@@ -193,7 +264,9 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"runs": out})
 }
 
-// handleGet is GET /runs/{id}: the run plus its outputs and context items.
+// handleGet is GET /runs/{id}: the run plus its outputs, context items, steering messages
+// (queued chips flip to delivered live) and elicitations (what the S24 respond surfaces
+// answer, correlated to timeline rows by activity_seq).
 func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 	run, err := s.st.Runs().ByID(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -206,6 +279,16 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := s.st.RunContextItems().ForRun(r.Context(), run.ID)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	messages, err := s.st.RunMessages().ForRun(r.Context(), run.ID)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	elicitations, err := s.st.Elicitations().ForRun(r.Context(), run.ID)
 	if err != nil {
 		s.writeError(w, err)
 		return
@@ -225,8 +308,17 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 			Position: it.Position, Injected: it.Injected,
 		})
 	}
+	messageBodies := make([]runMessageBody, 0, len(messages))
+	for _, m := range messages {
+		messageBodies = append(messageBodies, toRunMessageBody(m))
+	}
+	elicitationBodies := make([]runElicitationBody, 0, len(elicitations))
+	for _, el := range elicitations {
+		elicitationBodies = append(elicitationBodies, toRunElicitationBody(el))
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"run": toRunBody(run), "outputs": outBodies, "context": itemBodies,
+		"messages": messageBodies, "elicitations": elicitationBodies,
 	})
 }
 
@@ -360,12 +452,231 @@ func (s *Service) handleStop(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"run": toRunBody(after)})
 }
 
-// handleTakeover is POST /runs/{id}/takeover: not before S24, and honest about it (the
-// copy-paste checkout block and the takeover note UI are that story's).
-func (s *Service) handleTakeover(w http.ResponseWriter, _ *http.Request) {
-	httpx.WriteProblem(w, http.StatusNotImplemented, "not_implemented",
-		"Take over is not available yet",
-		"Take over arrives with story S24. Stop the run instead; its branch is preserved.")
+// takeoverBody is a POST /runs/{id}/takeover request.
+type takeoverBody struct {
+	Note string `json:"note"`
+}
+
+// handleTakeover is POST /runs/{id}/takeover (§10.7): stop with reason `takeover` (artifact
+// push preserved), store the note on the run — it is injected into the next run on the same
+// ticket — and return the copy-paste checkout block.
+func (s *Service) handleTakeover(w http.ResponseWriter, r *http.Request) {
+	body, ok := httpx.DecodeJSON[takeoverBody](w, r)
+	if !ok {
+		return
+	}
+	run, err := s.st.Runs().ByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	if run.State.Terminal() {
+		httpx.WriteProblem(w, http.StatusConflict, "run_ended",
+			"This run has ended", "A finished run cannot be taken over.")
+		return
+	}
+	if s.sched == nil {
+		httpx.WriteProblem(w, http.StatusServiceUnavailable, "scheduler_unavailable",
+			"No scheduler", "The run scheduler is not running.")
+		return
+	}
+	if err := s.audit.Write(r.Context(), "run.takeover",
+		audit.Target{Kind: "run", ID: run.ID, ProjectID: run.ProjectID, Note: body.Note},
+		map[string]any{"state": string(run.State)}, nil); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	if err := s.sched.TakeoverRun(r.Context(), run.ID, body.Note); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	after, err := s.st.Runs().ByID(r.Context(), run.ID)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"run":      toRunBody(after),
+		"checkout": checkoutBlock(after.Branch),
+	})
+}
+
+// checkoutBlock is the §10.7 copy-paste command. Empty when the run never got a branch
+// (stopped while queued).
+func checkoutBlock(branch *string) string {
+	if branch == nil || *branch == "" {
+		return ""
+	}
+	return "git fetch origin && git checkout " + *branch
+}
+
+// handleAcknowledge is POST /runs/{id}/acknowledge: dismiss a terminal run from the
+// needs-you surfaces. 409 while the run is still live — a live run needs answering, not
+// dismissing.
+func (s *Service) handleAcknowledge(w http.ResponseWriter, r *http.Request) {
+	run, err := s.st.Runs().ByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	if !run.State.Terminal() {
+		httpx.WriteProblem(w, http.StatusConflict, "run_not_ended",
+			"This run is still live", "Only a finished run can be acknowledged.")
+		return
+	}
+	if err := s.st.Runs().Acknowledge(r.Context(), run.ID, s.now()); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	if err := s.audit.Write(r.Context(), "run.acknowledge",
+		audit.Target{Kind: "run", ID: run.ID, ProjectID: run.ProjectID},
+		nil, nil); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	after, err := s.st.Runs().ByID(r.Context(), run.ID)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"run": toRunBody(after)})
+}
+
+// ---------------------------------------------------------------- needs-you -----
+
+// needsYouBody is one row of the needs-you surfaces (architecture §12): the flavor is the
+// §4.3 vocabulary, and every renderer prints it in words (interaction rule 1).
+type needsYouBody struct {
+	ID          string  `json:"id"`
+	ProjectKey  string  `json:"project_key"`
+	TicketID    *string `json:"ticket_id"`
+	TicketKey   *string `json:"ticket_key"`
+	TicketTitle *string `json:"ticket_title"`
+	Agent       string  `json:"agent"`
+	Flavor      string  `json:"flavor"`
+	Status      string  `json:"status"`
+	StartedAt   string  `json:"started_at"`
+}
+
+// needsYouFlavor is the §4.3 flavor computation, one place: parked runs are a question or
+// an approval by state; unacknowledged terminal failures are a failure. (The fourth flavor,
+// review — outputs awaiting a human — joins the query in S36.)
+func needsYouFlavor(state domain.RunState) string {
+	switch state {
+	case domain.RunNeedsInput:
+		return "question"
+	case domain.RunAwaitingApproval:
+		return "approval"
+	default:
+		return "failure"
+	}
+}
+
+// flavorRank is the home-strip sort (UI spec §5.1): answer a question first, then approve,
+// then failed, then review.
+func flavorRank(flavor string) int {
+	switch flavor {
+	case "question":
+		return 0
+	case "approval":
+		return 1
+	case "failure":
+		return 2
+	default:
+		return 3
+	}
+}
+
+// needsYouRows joins runs with their agent and ticket names and sorts by flavor rank, then
+// oldest first (the longest-blocked row surfaces first).
+func (s *Service) needsYouRows(ctx context.Context, runs []domain.Run) ([]needsYouBody, error) {
+	agents := map[string]string{}
+	projects := map[string]string{}
+	out := make([]needsYouBody, 0, len(runs))
+	for _, run := range runs {
+		name, ok := agents[run.AgentID]
+		if !ok {
+			if a, err := s.st.Agents().ByID(ctx, run.AgentID); err == nil {
+				name = a.Name
+			} else {
+				name = "agent"
+			}
+			agents[run.AgentID] = name
+		}
+		key, ok := projects[run.ProjectID]
+		if !ok {
+			if p, err := s.st.Projects().ByID(ctx, run.ProjectID); err == nil {
+				key = p.Key
+			}
+			projects[run.ProjectID] = key
+		}
+		row := needsYouBody{
+			ID:         run.ID,
+			ProjectKey: key,
+			TicketID:   run.TicketID,
+			Agent:      name,
+			Flavor:     needsYouFlavor(run.State),
+			Status:     string(run.State),
+			StartedAt:  run.QueuedAt,
+		}
+		if run.StartedAt != nil {
+			row.StartedAt = *run.StartedAt
+		}
+		if run.TicketID != nil {
+			if tk, err := s.st.Tickets().ByID(ctx, *run.TicketID); err == nil {
+				k, t := tk.Key, tk.Title
+				row.TicketKey, row.TicketTitle = &k, &t
+			}
+		}
+		out = append(out, row)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return flavorRank(out[i].Flavor) < flavorRank(out[j].Flavor)
+	})
+	return out, nil
+}
+
+// handleInbox is GET /inbox: the workspace-wide needs-you rows, restricted to projects the
+// user is a member of — the home strip, the left rail and /inbox render this one query
+// (architecture §12; the S36 inbox adds outputs awaiting review on top).
+func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request, a *auth.Service) {
+	u, ok := auth.UserFrom(r.Context())
+	if !ok {
+		httpx.WriteProblem(w, http.StatusUnauthorized, "unauthenticated",
+			"Not authenticated", "Sign in to use this endpoint.")
+		return
+	}
+	runs, err := s.st.Runs().NeedsYouAll(r.Context())
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	visible := runs[:0]
+	memberOf := map[string]bool{}
+	for _, run := range runs {
+		allowed, seen := memberOf[run.ProjectID]
+		if !seen {
+			p, err := s.st.Projects().ByID(r.Context(), run.ProjectID)
+			if err != nil {
+				continue
+			}
+			allowed, err = a.IsProjectMember(r.Context(), u, p)
+			if err != nil {
+				s.writeError(w, err)
+				return
+			}
+			memberOf[run.ProjectID] = allowed
+		}
+		if allowed {
+			visible = append(visible, run)
+		}
+	}
+	rows, err := s.needsYouRows(r.Context(), visible)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"runs": rows})
 }
 
 // writeError maps store errors onto problems.

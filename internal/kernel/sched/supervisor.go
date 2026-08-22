@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spruce/lexicode/internal/domain"
@@ -357,7 +358,8 @@ func (s *Scheduler) NotifySteering(runID string) {
 
 // drainSteering hands every queued message to the adapter, in order, and stamps delivered_at
 // when the adapter accepts it (delivery to the model happens between tool calls, per
-// contracts §3.4 — "Applied after the current step").
+// contracts §3.4 — "Applied after the current step"). Each delivery publishes a run.message
+// frame so the composer's queued chip flips to delivered live (S24).
 func (s *Scheduler) drainSteering(ctx context.Context, sup *supervisor, runID string) {
 	sup.mu.Lock()
 	handle := sup.handle
@@ -371,17 +373,44 @@ func (s *Scheduler) drainSteering(ctx context.Context, sup *supervisor, runID st
 			slog.String("run", runID), slog.String("error", err.Error()))
 		return
 	}
+	if len(msgs) == 0 {
+		return
+	}
+	run, err := s.st.Runs().ByID(ctx, runID)
+	if err != nil {
+		s.logger.Error("sched: steering run read failed",
+			slog.String("run", runID), slog.String("error", err.Error()))
+		return
+	}
 	for _, m := range msgs {
 		if err := handle.Steer(ctx, m.Body); err != nil {
 			s.logger.Warn("sched: steering delivery failed; message stays queued",
 				slog.String("run", runID), slog.String("error", err.Error()))
 			return
 		}
-		if err := s.st.RunMessages().MarkDelivered(ctx, m.ID, s.now()); err != nil &&
+		at := s.now()
+		if err := s.st.RunMessages().MarkDelivered(ctx, m.ID, at); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
 			s.logger.Error("sched: steering delivery mark failed",
 				slog.String("run", runID), slog.String("error", err.Error()))
 		}
+		s.emitRunEvent(ctx, run, "message", map[string]any{"message": map[string]any{
+			"id": m.ID, "run_id": runID, "state": "delivered", "delivered_at": at,
+		}})
+	}
+}
+
+// appendSystemActivity records a level-2 system line on a run — post-terminal notes like a
+// failed PR open, honest in the transcript rather than lost in a log file.
+func (s *Scheduler) appendSystemActivity(ctx context.Context, runID, title string) {
+	a := domain.Activity{
+		RunID: runID, Type: domain.ActivitySystem, Level: 2, GroupKey: "system",
+		Title: truncate(title, 200), Payload: mustJSON(map[string]any{"text": title}),
+		Attempt: 1, CreatedAt: s.now(),
+	}
+	if err := s.st.Activities().AppendNext(ctx, &a); err != nil {
+		s.logger.Error("sched: system activity append failed",
+			slog.String("run", runID), slog.String("error", err.Error()))
 	}
 }
 
@@ -432,6 +461,24 @@ func (s *Scheduler) StopRun(ctx context.Context, runID, reason string) error {
 	}
 	s.Wake()
 	return nil
+}
+
+// TakeoverRun is §10.7: store the human's note on the run, then stop it with reason
+// `takeover` — the artifact push and teardown run exactly as for any stop, so the branch the
+// human checks out carries whatever the agent had. The note is injected into the prompt of
+// the next run on the same ticket (see assemblePrompt).
+func (s *Scheduler) TakeoverRun(ctx context.Context, runID, note string) error {
+	run, err := s.st.Runs().ByID(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if run.State.Terminal() {
+		return nil
+	}
+	if err := s.st.Runs().SetTakeoverNote(ctx, runID, note); err != nil {
+		return err
+	}
+	return s.StopRun(ctx, runID, "takeover")
 }
 
 // ---------------------------------------------------------------- terminal path -----
@@ -488,6 +535,20 @@ func (s *Scheduler) finish(ctx context.Context, sup *supervisor, run domain.Run,
 		s.logger.Error("sched: terminal transition failed",
 			slog.String("run", run.ID), slog.String("state", string(kind)),
 			slog.String("error", err.Error()))
+	}
+
+	// §10.4 step 6 — outputs are collected. The orchestrator opens the PR from the pushed
+	// branch when the agent's grants allow it and no PR is recorded yet; the forge adapter
+	// enforces the open_prs grant and appends the D-9 marker.
+	if kind == domain.RunCompleted && s.opts.PRs != nil {
+		if opened, err := s.opts.PRs.OpenForRun(ctx, after); err != nil {
+			s.logger.Error("sched: opening the run's pull request failed",
+				slog.String("run", run.ID), slog.String("error", err.Error()))
+			s.appendSystemActivity(ctx, run.ID,
+				"could not open a pull request: "+err.Error())
+		} else if opened {
+			s.logger.Info("sched: pull request opened for run", slog.String("run", run.ID))
+		}
 	}
 
 	// Ticket coupling: a completed run that opened a PR moves its ticket to the
@@ -549,12 +610,21 @@ func (s *Scheduler) pushArtifact(ctx context.Context, run domain.Run, inst ports
 	if streams.Stdin != nil {
 		_ = streams.Stdin.Close()
 	}
-	if streams.Stdout != nil {
-		_, _ = io.Copy(io.Discard, streams.Stdout)
+	// Drain stdout and stderr CONCURRENTLY: the docker exec demultiplexer feeds both
+	// through unbuffered pipes, so reading one to EOF before touching the other deadlocks
+	// the moment the ignored stream produces a frame (git push reports on stderr).
+	var drains sync.WaitGroup
+	for _, r := range []io.Reader{streams.Stdout, streams.Stderr} {
+		if r == nil {
+			continue
+		}
+		drains.Add(1)
+		go func(r io.Reader) {
+			defer drains.Done()
+			_, _ = io.Copy(io.Discard, r)
+		}(r)
 	}
-	if streams.Stderr != nil {
-		_, _ = io.Copy(io.Discard, streams.Stderr)
-	}
+	drains.Wait()
 	if streams.Wait != nil {
 		if _, err := streams.Wait(); err != nil {
 			s.logger.Warn("sched: artifact push wait failed",

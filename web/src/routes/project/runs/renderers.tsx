@@ -10,10 +10,12 @@
  * numbers lines and reports clicks so the page can write ?line=. The selected line
  * highlights and scrolls into view.
  */
+import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import type { RunActivity } from "../../../lib/api/client";
+import type { Elicitation, RunActivity } from "../../../lib/api/client";
 import { CostChip } from "../../../components/CostChip/CostChip";
+import { useRespondElicitation } from "../../../lib/api/runQueries";
 import { formatDuration } from "../../../lib/format/format";
 import styles from "./runs.module.css";
 import { timingSplit, toolDisplayName } from "./timeline";
@@ -318,13 +320,23 @@ function TodoDetail({ a }: { a: RunActivity }) {
   );
 }
 
-/** ask_human — read-only in S23: header chips, option cards, the disabled Answer control.
- * Answering (option pick + the "Other" free-text) is S24's composer. A resolution row
- * (the MCP server's "Answered: …" activity, payload {elicitation_id, response}) renders
- * the response, not a question card. */
-function ElicitationDetail({ a }: { a: RunActivity }) {
-  const p = payloadOf(a) as KnownPayload & { elicitation_id?: string; response?: unknown };
-  if (p.elicitation_id !== undefined && p.questions === undefined) {
+/** The S24 respond context: what the elicitation renderers need to answer inline. */
+export interface InterveneContext {
+  projectKey: string;
+  agentID: string;
+  elicitations: Elicitation[];
+}
+
+/** ask_human / request_approval rows. A pending elicitation renders its interactive
+ * respond surface inline — never a modal (interaction rule; UI spec §5.7). A resolution
+ * row (payload {elicitation_id, response}) renders the response. */
+function ElicitationDetail({ a, intervene }: { a: RunActivity; intervene?: InterveneContext }) {
+  const p = payloadOf(a) as KnownPayload & {
+    elicitation_id?: string;
+    response?: unknown;
+    tool_name?: string;
+  };
+  if (p.elicitation_id !== undefined && p.questions === undefined && p.tool_name === undefined) {
     return (
       <DetailCard title={a.title} meta={<StepMeta a={a} />}>
         {p.response !== undefined && (
@@ -335,40 +347,368 @@ function ElicitationDetail({ a }: { a: RunActivity }) {
       </DetailCard>
     );
   }
-  const questions = p.questions ?? [];
+  const el = intervene?.elicitations.find((e) => e.activity_seq === a.seq);
+  if (el !== undefined && el.kind === "approval") {
+    return <ApprovalRow a={a} el={el} intervene={intervene!} />;
+  }
+  return <QuestionRow a={a} el={el} intervene={intervene} />;
+}
+
+// ---- ask_human ---------------------------------------------------------------------------
+
+/** One question's chosen answer: option labels, or the "Other" free text. */
+interface Chosen {
+  labels: string[];
+  other: string;
+  useOther: boolean;
+}
+
+function QuestionRow({
+  a,
+  el,
+  intervene,
+}: {
+  a: RunActivity;
+  el?: Elicitation;
+  intervene?: InterveneContext;
+}) {
+  const questions = payloadOf(a).questions ?? [];
+  const pending = el?.state === "pending" && intervene !== undefined;
+  const respond = useRespondElicitation(el?.run_id ?? "");
+  const [chosen, setChosen] = useState<Record<number, Chosen>>({});
+
+  const choiceOf = (i: number): Chosen => chosen[i] ?? { labels: [], other: "", useOther: false };
+  const setChoice = (i: number, c: Chosen) => setChosen((prev) => ({ ...prev, [i]: c }));
+
+  const complete =
+    questions.length > 0 &&
+    questions.every((_, i) => {
+      const c = choiceOf(i);
+      return c.useOther ? c.other.trim() !== "" : c.labels.length > 0;
+    });
+
+  const submit = () => {
+    if (el === undefined || !complete) return;
+    const answers: Record<string, string[]> = {};
+    questions.forEach((q, i) => {
+      const c = choiceOf(i);
+      answers[q.question ?? String(i)] = c.useOther ? [c.other.trim()] : c.labels;
+    });
+    respond.mutate({ id: el.id, body: { action: "answer", answers } });
+  };
+
   return (
     <DetailCard title={a.title} meta={<StepMeta a={a} />}>
-      {questions.map((q, i) => (
-        <div key={i} className={styles.questionCard}>
-          {q.header !== undefined && q.header !== "" && (
-            <span className={styles.questionHeader}>{q.header}</span>
-          )}
-          <div className={styles.questionText}>{q.question}</div>
-          <ul className={styles.optionList}>
-            {(q.options ?? []).map((o, j) => (
-              <li key={j} className={styles.optionCard}>
-                <span className={styles.optionLabel}>{o.label}</span>
-                {o.description !== undefined && o.description !== "" && (
-                  <span className={styles.optionDesc}>{o.description}</span>
-                )}
+      {questions.map((q, i) => {
+        const c = choiceOf(i);
+        const multi = q.multiSelect === true;
+        return (
+          <div key={i} className={styles.questionCard}>
+            {q.header !== undefined && q.header !== "" && (
+              <span className={styles.questionHeader}>{q.header}</span>
+            )}
+            <div className={styles.questionText}>{q.question}</div>
+            <ul className={styles.optionList}>
+              {(q.options ?? []).map((o, j) => {
+                const label = o.label ?? "";
+                const selected = !c.useOther && c.labels.includes(label);
+                return (
+                  <li key={j}>
+                    <button
+                      type="button"
+                      className={styles.optionCard}
+                      data-selected={selected || undefined}
+                      disabled={!pending}
+                      onClick={() => {
+                        const labels = multi
+                          ? selected
+                            ? c.labels.filter((l) => l !== label)
+                            : [...c.labels, label]
+                          : [label];
+                        setChoice(i, { labels, other: c.other, useOther: false });
+                      }}
+                    >
+                      <span className={styles.optionLabel}>{label}</span>
+                      {o.description !== undefined && o.description !== "" && (
+                        <span className={styles.optionDesc}>{o.description}</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+              <li>
+                <div
+                  className={styles.optionCard}
+                  data-selected={c.useOther || undefined}
+                  data-other="true"
+                >
+                  <span className={styles.optionLabel}>Other</span>
+                  <input
+                    className={styles.otherInput}
+                    placeholder="Type your own answer…"
+                    disabled={!pending}
+                    value={c.other}
+                    onFocus={() => setChoice(i, { ...c, useOther: true })}
+                    onChange={(e) =>
+                      setChoice(i, { labels: [], other: e.target.value, useOther: true })
+                    }
+                  />
+                </div>
               </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+            </ul>
+          </div>
+        );
+      })}
       {questions.length === 0 && (
         <pre className={styles.rawFallback}>{JSON.stringify(a.payload, null, 2)}</pre>
       )}
-      <button
-        type="button"
-        className={styles.answerButton}
-        disabled
-        title="Answering arrives with story S24"
-      >
-        Answer
-      </button>
+      {pending && intervene !== undefined ? (
+        <>
+          <button
+            type="button"
+            className={styles.answerButton}
+            disabled={!complete || respond.isPending}
+            onClick={submit}
+          >
+            Answer
+          </button>
+          {respond.isError && (
+            <div className={styles.respondError} role="alert">
+              {respond.error.message}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className={styles.resolvedChip} data-state={el?.state ?? "pending"}>
+          {resolvedLabel(el)}
+        </div>
+      )}
     </DetailCard>
   );
+}
+
+// ---- request_approval --------------------------------------------------------------------
+
+interface ApprovalRequestPayload {
+  tool_name?: string;
+  input?: unknown;
+  action?: string;
+  scope?: string;
+  impact?: string;
+  reason?: string;
+  alternatives?: string;
+  recovery?: string;
+}
+
+/** The inline approval row (never a modal): the six card fields the server enriched, the
+ * four responses — Approve · Approve with edits · Respond · Deny — and the "Always allow"
+ * checkbox, which writes exactly ONE scoped permission rule and links to it in agent
+ * settings (interaction rule 8). "Respond" sends the typed text as a deny message the
+ * agent reads — a redirect in words rather than a bare no. */
+function ApprovalRow({
+  a,
+  el,
+  intervene,
+}: {
+  a: RunActivity;
+  el: Elicitation;
+  intervene: InterveneContext;
+}) {
+  const req = (el.request ?? {}) as ApprovalRequestPayload;
+  const pending = el.state === "pending";
+  const respond = useRespondElicitation(el.run_id);
+  const [mode, setMode] = useState<"none" | "edits" | "respond">("none");
+  const [alwaysAllow, setAlwaysAllow] = useState(false);
+  const [edited, setEdited] = useState(() => JSON.stringify(req.input ?? {}, null, 2));
+  const [message, setMessage] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [ruleID, setRuleID] = useState<string | null>(null);
+
+  const act = (body: Parameters<typeof respond.mutate>[0]["body"]) => {
+    respond.mutate(
+      { id: el.id, body },
+      {
+        onSuccess: (res) => {
+          if (res.rule_id !== undefined && res.rule_id !== "") setRuleID(res.rule_id);
+        },
+      },
+    );
+  };
+
+  const fields: Array<[string, string | undefined]> = [
+    ["Scope", req.scope],
+    ["Impact", req.impact],
+    ["Reason", req.reason],
+    ["Alternatives", req.alternatives],
+    ["Recovery", req.recovery],
+  ];
+
+  return (
+    <DetailCard
+      title={<span className={styles.approvalTitle}>▲ {req.action ?? a.title}</span>}
+      meta={<StepMeta a={a} />}
+    >
+      <dl className={styles.approvalFields}>
+        {fields.map(([label, value]) =>
+          value !== undefined && value !== "" ? (
+            <div key={label} className={styles.approvalField}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ) : null,
+        )}
+      </dl>
+      {req.input !== undefined && (
+        <Collapsible label="tool input">
+          <pre className={styles.rawFallback}>{JSON.stringify(req.input, null, 2)}</pre>
+        </Collapsible>
+      )}
+
+      {pending ? (
+        <div className={styles.approvalControls}>
+          {mode === "edits" && (
+            <div className={styles.approvalEditor}>
+              <textarea
+                className={styles.approvalTextarea}
+                value={edited}
+                rows={8}
+                onChange={(e) => {
+                  setEdited(e.target.value);
+                  setEditError(null);
+                }}
+                aria-label="Edited tool input (JSON)"
+              />
+              {editError !== null && (
+                <div className={styles.respondError} role="alert">
+                  {editError}
+                </div>
+              )}
+            </div>
+          )}
+          {mode === "respond" && (
+            <textarea
+              className={styles.approvalTextarea}
+              value={message}
+              rows={3}
+              placeholder="Tell the agent what to do instead…"
+              onChange={(e) => setMessage(e.target.value)}
+              aria-label="Response to the agent"
+            />
+          )}
+          <div className={styles.approvalButtons}>
+            {mode === "edits" ? (
+              <button
+                type="button"
+                className={styles.answerButton}
+                disabled={respond.isPending}
+                onClick={() => {
+                  try {
+                    const parsed: unknown = JSON.parse(edited);
+                    act({
+                      action: "approve_with_edits",
+                      updated_input: parsed as Record<string, never>,
+                    });
+                  } catch {
+                    setEditError("The edited input is not valid JSON.");
+                  }
+                }}
+              >
+                ✓ Approve with these edits
+              </button>
+            ) : mode === "respond" ? (
+              <button
+                type="button"
+                className={styles.answerButton}
+                disabled={respond.isPending || message.trim() === ""}
+                onClick={() => act({ action: "deny", message: message.trim() })}
+              >
+                ↩ Send response
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={styles.answerButton}
+                disabled={respond.isPending}
+                onClick={() => act(alwaysAllow ? { action: "remember" } : { action: "approve" })}
+              >
+                ✓ Approve
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.approvalSecondary}
+              data-active={mode === "edits" || undefined}
+              onClick={() => setMode(mode === "edits" ? "none" : "edits")}
+            >
+              Approve with edits
+            </button>
+            <button
+              type="button"
+              className={styles.approvalSecondary}
+              data-active={mode === "respond" || undefined}
+              onClick={() => setMode(mode === "respond" ? "none" : "respond")}
+            >
+              Respond
+            </button>
+            <button
+              type="button"
+              className={styles.approvalSecondary}
+              data-danger="true"
+              disabled={respond.isPending}
+              onClick={() => act({ action: "deny" })}
+            >
+              ✕ Deny
+            </button>
+          </div>
+          <label className={styles.alwaysAllow}>
+            <input
+              type="checkbox"
+              checked={alwaysAllow}
+              onChange={(e) => setAlwaysAllow(e.target.checked)}
+            />
+            Always allow {req.tool_name ?? "this tool"} like this — writes one scoped rule in
+            agent settings
+          </label>
+          {respond.isError && (
+            <div className={styles.respondError} role="alert">
+              {respond.error.message}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className={styles.resolvedChip} data-state={el.state}>
+          {resolvedLabel(el)}
+        </div>
+      )}
+      {ruleID !== null && (
+        <div className={styles.ruleAdded}>
+          Rule added —{" "}
+          <Link
+            to="/p/$key/agents/$id"
+            params={{ key: intervene.projectKey, id: intervene.agentID }}
+            className={styles.ruleLink}
+          >
+            view in agent settings
+          </Link>
+        </div>
+      )}
+    </DetailCard>
+  );
+}
+
+function resolvedLabel(el?: Elicitation): string {
+  switch (el?.state) {
+    case "answered":
+      return el.kind === "approval" ? "✓ Approved" : "↩ Answered";
+    case "denied":
+      return "✕ Denied";
+    case "expired":
+      return "Expired without an answer";
+    case "canceled":
+      return "Canceled with the run";
+    default:
+      return "Waiting…";
+  }
 }
 
 /** The lexicode MCP tools get labelled cards; other MCP tools a labelled honest card. */
@@ -459,7 +799,15 @@ function ProvisionDetail({ a }: { a: RunActivity }) {
 
 // ---- the dispatcher ---------------------------------------------------------------------
 
-export function ActivityDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
+export function ActivityDetail({
+  a,
+  sel,
+  intervene,
+}: {
+  a: RunActivity;
+  sel: LineSelection;
+  intervene?: InterveneContext;
+}) {
   switch (a.type) {
     case "thought":
       return (
@@ -487,7 +835,7 @@ export function ActivityDetail({ a, sel }: { a: RunActivity; sel: LineSelection 
       );
     }
     case "elicitation":
-      return <ElicitationDetail a={a} />;
+      return <ElicitationDetail a={a} intervene={intervene} />;
     case "provision":
       return <ProvisionDetail a={a} />;
     case "system":

@@ -8,6 +8,7 @@
  */
 import { Link } from "@tanstack/react-router";
 
+import { useInboxQuery } from "../../lib/api/attentionQueries";
 import { useProjectsQuery } from "../../lib/api/projectQueries";
 import styles from "./shell.module.css";
 
@@ -17,14 +18,20 @@ export const NEEDS_YOU_RAIL_CAP = 5;
 interface NeedsYouRow {
   id: string;
   ticketKey: string;
-  href: string;
+  projectKey: string;
 }
 
 export function LeftRail({ collapsed }: { collapsed: boolean }) {
-  // Projects wired to GET /projects (S08); the needs-you feed arrives in S28.
   const projectsQuery = useProjectsQuery();
   const projects = projectsQuery.data?.projects ?? [];
-  const needsYou: NeedsYouRow[] = [];
+  // The rail block renders the same GET /inbox query as the home strip and /inbox
+  // (architecture §12 — one query, three renderings).
+  const inbox = useInboxQuery();
+  const needsYou: NeedsYouRow[] = (inbox.data?.runs ?? []).map((r) => ({
+    id: r.id,
+    ticketKey: r.ticket_key ?? r.agent,
+    projectKey: r.project_key,
+  }));
 
   const shown = needsYou.slice(0, NEEDS_YOU_RAIL_CAP);
   const overflow = needsYou.length - shown.length;
@@ -60,9 +67,13 @@ export function LeftRail({ collapsed }: { collapsed: boolean }) {
         <ul className={styles.railList}>
           {shown.map((row) => (
             <li key={row.id}>
-              <a href={row.href} className={styles.railLink}>
+              <Link
+                to="/p/$key/runs/$id"
+                params={{ key: row.projectKey, id: row.id }}
+                className={styles.railLink}
+              >
                 ▲ {row.ticketKey}
-              </a>
+              </Link>
             </li>
           ))}
         </ul>

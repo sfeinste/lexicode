@@ -198,6 +198,99 @@ func (r *RunsRepo) ActiveForTicket(ctx context.Context, ticketID string) ([]doma
 	return collectRuns(rows)
 }
 
+// needsYouWhere is the one needs-you predicate all three surfaces render (architecture §12):
+// runs parked on a human, plus unacknowledged terminal failures. `timed_out` is excluded on
+// purpose — it matches the S23 "Needs attention" saved view (needs input · awaiting approval
+// · failed · loop stopped) exactly.
+const needsYouWhere = `(state IN ('needs_input','awaiting_approval')
+	OR (state IN ('failed','loop_stopped') AND acknowledged_at IS NULL))`
+
+// NeedsYou returns one project's needs-you runs, oldest first (the longest-blocked row
+// surfaces first). The §4.3 flavor is computed by the service layer from state.
+func (r *RunsRepo) NeedsYou(ctx context.Context, projectID string) ([]domain.Run, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+runCols+` FROM runs
+		WHERE project_id = ? AND `+needsYouWhere+`
+		ORDER BY queued_at, seq`, projectID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectRuns(rows)
+}
+
+// NeedsYouAll is NeedsYou across every project — the home strip, the left rail and /inbox
+// (the caller filters to the projects the user can see).
+func (r *RunsRepo) NeedsYouAll(ctx context.Context) ([]domain.Run, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+runCols+` FROM runs
+		WHERE `+needsYouWhere+`
+		ORDER BY queued_at, seq`)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectRuns(rows)
+}
+
+// Acknowledge stamps acknowledged_at on a terminal run, dismissing it from the needs-you
+// surfaces. Only terminal runs can be acknowledged; a non-terminal id returns ErrNotFound.
+func (r *RunsRepo) Acknowledge(ctx context.Context, id, at string) error {
+	res, err := r.h.w.ExecContext(ctx, `
+		UPDATE runs SET acknowledged_at = ?
+		WHERE id = ? AND state IN `+terminalStates, at, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetTakeoverNote stores the note a human left when taking a run over (§10.7). It is
+// injected into the prompt of the next run on the same ticket.
+func (r *RunsRepo) SetTakeoverNote(ctx context.Context, id, note string) error {
+	res, err := r.h.w.ExecContext(ctx,
+		`UPDATE runs SET takeover_note = ? WHERE id = ?`, note, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// LatestTakeoverNote returns the most recent non-empty takeover note among the ticket's
+// runs, with the seq of the run that carries it — what §10.7 injects into the next run's
+// prompt. ("", 0, nil) when no run of the ticket was ever taken over.
+func (r *RunsRepo) LatestTakeoverNote(ctx context.Context, ticketID string) (string, int64, error) {
+	var (
+		note string
+		seq  int64
+	)
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT takeover_note, seq FROM runs
+		WHERE ticket_id = ? AND takeover_note != ''
+		ORDER BY queued_at DESC, seq DESC LIMIT 1`, ticketID).Scan(&note, &seq)
+	if err != nil {
+		if mapErr(err) == ErrNotFound {
+			return "", 0, nil
+		}
+		return "", 0, mapErr(err)
+	}
+	return note, seq, nil
+}
+
 // RunFilter narrows ForProjectFiltered. Zero fields mean "any".
 type RunFilter struct {
 	States   []domain.RunState

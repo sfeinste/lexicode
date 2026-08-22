@@ -5,9 +5,13 @@
  * ["run", id, "activities"] for the transcript (streamed activities are appended/merged
  * into this cache without a refetch).
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { runsApi } from "./client";
+import {
+  elicitationsApi,
+  runsApi,
+  type RespondElicitationRequest,
+} from "./client";
 
 export const runKeys = {
   list: (projectKey: string) => ["runs", projectKey] as const,
@@ -40,5 +44,69 @@ export function useRunActivitiesQuery(id: string, enabled = true) {
     queryKey: runKeys.activities(id),
     queryFn: ({ signal }) => runsApi.activities(id, signal),
     enabled,
+  });
+}
+
+// ---- S24 intervention mutations ---------------------------------------------------------
+
+/** Queue a steering message; the detail refetch shows the queued chip immediately, and the
+ * run.message SSE frame flips it to delivered. */
+export function useSteerRun(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) => runsApi.steer(id, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: runKeys.detail(id) });
+    },
+  });
+}
+
+/** Stop the run: terminal canceled, §10.5 artifact push preserved. */
+export function useStopRun(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (reason: string) => runsApi.stop(id, reason),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["run", id] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
+/** Take over: stop + note + the copy-paste checkout block (§10.7). */
+export function useTakeoverRun(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (note: string) => runsApi.takeover(id, note),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["run", id] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
+/** Answer / approve / deny / approve-with-edits / remember a blocked elicitation. */
+export function useRespondElicitation(runID: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: RespondElicitationRequest }) =>
+      elicitationsApi.respond(id, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["run", runID] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
+/** Dismiss a terminal failure from the needs-you surfaces. */
+export function useAcknowledgeRun(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => runsApi.acknowledge(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["run", id] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: ["inbox"] });
+    },
   });
 }

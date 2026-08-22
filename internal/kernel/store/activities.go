@@ -89,6 +89,33 @@ func (r *ActivitiesRepo) MaxSeq(ctx context.Context, runID string) (int64, error
 }
 
 // ForRun returns a run's transcript in step order.
+// ByRunSeq returns one activity row by its (run_id, seq) key, or ErrNotFound — how the
+// notify service reads the elicitation's level-0 title (S24).
+func (r *ActivitiesRepo) ByRunSeq(ctx context.Context, runID string, seq int64) (domain.Activity, error) {
+	row := r.h.r.QueryRowContext(ctx,
+		`SELECT `+activityCols+` FROM activities WHERE run_id = ? AND seq = ?`, runID, seq)
+	var (
+		a                                domain.Activity
+		typ, payload                     string
+		ok                               sql.NullInt64
+		duration, queued, model, toolDur sql.NullInt64
+	)
+	err := row.Scan(&a.RunID, &a.Seq, &typ, &a.Level, &a.ToolName, &a.GroupKey, &a.Title,
+		&payload, &ok, &a.Attempt, &duration, &queued, &model, &toolDur,
+		&a.CostCents, &a.TokensIn, &a.TokensOut, &a.CreatedAt)
+	if err != nil {
+		return domain.Activity{}, mapErr(err)
+	}
+	a.Type = domain.ActivityType(typ)
+	a.Payload = json.RawMessage(payload)
+	a.OK = boolPtr(ok)
+	a.DurationMS = intPtr(duration)
+	a.QueuedMS = intPtr(queued)
+	a.ModelMS = intPtr(model)
+	a.ToolMS = intPtr(toolDur)
+	return a, nil
+}
+
 func (r *ActivitiesRepo) ForRun(ctx context.Context, runID string) ([]domain.Activity, error) {
 	rows, err := r.h.r.QueryContext(ctx,
 		`SELECT `+activityCols+` FROM activities WHERE run_id = ? ORDER BY seq`, runID)

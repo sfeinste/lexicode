@@ -281,3 +281,73 @@
   gap: 8px;
   margin-top: 4px;
 }
+
+/* ---- S24: the needs-you strip ------------------------------------------------------------ */
+
+.needsYouStrip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.needsYouCard {
+  flex: none;
+  width: 260px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--needs-you);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.needsYouTop {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.needsYouProject {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.needsYouTicket {
+  font-size: var(--fs-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needsYouBottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.needsYouFlavor {
+  color: var(--needs-you);
+  font-size: var(--fs-body);
+}
+
+.needsYouAction {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: var(--fs-body);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.needsYouAction:hover {
+  background: var(--surface-2);
+}
+
+.needsYouAge {
+  color: var(--text-3);
+}

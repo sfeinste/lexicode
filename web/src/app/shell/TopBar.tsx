@@ -8,15 +8,26 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { TabBadge } from "../../components/TabBadge/TabBadge";
-import { authApi, type User } from "../../lib/api/client";
+import { authApi, type Notification, type User } from "../../lib/api/client";
+import {
+  useMarkNotificationRead,
+  useNotificationsQuery,
+} from "../../lib/api/attentionQueries";
 import { queryClient } from "../../lib/api/queryClient";
 import { chordLabel } from "../../lib/keyboard/hooks";
+import { useStreamTopics } from "../../lib/sse/useStreamTopics";
 import { useUIStore, type Density, type ThemePreference } from "../../stores/ui";
 import styles from "./shell.module.css";
 
 export function TopBar({ user }: { user: User }) {
   const setPaletteOpen = useUIStore((s) => s.setPaletteOpen);
   const setCheatsheetOpen = useUIStore((s) => s.setCheatsheetOpen);
+
+  // The inbox topic keeps the badge live: escalation upserts arrive as
+  // notification.updated frames and invalidate ["notifications"] (S24).
+  useStreamTopics(["inbox"]);
+  const notifications = useNotificationsQuery();
+  const unread = notifications.data?.unread ?? 0;
 
   return (
     <header className={styles.topbar}>
@@ -29,9 +40,9 @@ export function TopBar({ user }: { user: User }) {
         </Link>
         <Link to="/inbox" className={styles.topnavLink} activeProps={{ "data-active": "" }}>
           Inbox
-          {/* Wired to the actionable needs-you count when the inbox API lands (S28). */}
-          <TabBadge count={undefined} />
+          <TabBadge count={unread > 0 ? unread : undefined} />
         </Link>
+        <NotificationsMenu items={notifications.data?.notifications ?? []} unread={unread} />
       </nav>
       <button
         type="button"
@@ -53,6 +64,74 @@ export function TopBar({ user }: { user: User }) {
         <UserMenu user={user} />
       </div>
     </header>
+  );
+}
+
+/**
+ * The minimal S24 notification affordance: a bell with the unread count and a dropdown of
+ * the rows — one per run, updated in place (interaction rule 3). Clicking a row marks it
+ * read and jumps to the run; the full inbox page is S36.
+ */
+function NotificationsMenu({ items, unread }: { items: Notification[]; unread: number }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const markRead = useMarkNotificationRead();
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className={styles.notifyMenu}>
+      <button
+        type="button"
+        className={styles.iconButton}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
+        data-unread={unread > 0 || undefined}
+        onClick={() => setOpen((o) => !o)}
+      >
+        ◔
+      </button>
+      {open && (
+        <div role="menu" className={styles.menu} aria-label="Notifications">
+          {items.length === 0 && (
+            <div className={styles.menuMeta} style={{ padding: "8px 12px" }}>
+              Nothing is waiting on you.
+            </div>
+          )}
+          {items.map((n) => (
+            <button
+              key={n.id}
+              type="button"
+              role="menuitem"
+              className={styles.notifyRow}
+              data-state={n.state}
+              onClick={() => {
+                setOpen(false);
+                markRead.mutate(n.id);
+                if (n.run_id !== null && n.project_key !== undefined && n.project_key !== "") {
+                  void navigate({
+                    to: "/p/$key/runs/$id",
+                    params: { key: n.project_key, id: n.run_id },
+                  });
+                }
+              }}
+            >
+              <span className={styles.notifyTitle}>{n.title}</span>
+              <span className={styles.notifyBody}>{n.body}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
