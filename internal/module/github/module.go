@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel"
 	"github.com/spruce/lexicode/internal/kernel/audit"
+	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 )
 
@@ -56,10 +58,13 @@ type Options struct {
 	MaxRateLimitSleep time.Duration
 }
 
-// Module is the github module: it implements the kernel Module lifecycle and registers the one
-// ForgeProvider this binary ships (story S14).
+// Module is the github module: it implements the kernel Module lifecycle and registers two
+// ports — the ForgeProvider this binary ships (story S14) and the github.poll EventSource
+// (story S25). The poller reuses the forge's transport, so one rate-limit policy governs both.
 type Module struct {
-	forge *Forge
+	forge  *Forge
+	poller *Poller
+	emit   ports.Emit // wired from the kernel bus in Init; Start hands it to the poller
 }
 
 // New builds the module. See Options for what may be left zero.
@@ -90,11 +95,19 @@ func New(opts Options) *Module {
 		f.logger.Info("github: rate limit recovered; module ready")
 		f.health(kernel.StateReady, "")
 	}
-	return &Module{forge: f}
+	m := &Module{forge: f}
+	m.poller = newPoller(f)
+	if opts.Logger != nil {
+		m.poller.logger = opts.Logger.With("module", moduleName)
+	}
+	return m
 }
 
 // Name implements kernel.Module.
 func (m *Module) Name() string { return moduleName }
+
+// Poller returns the concrete event source, for tests and the one wiring site.
+func (m *Module) Poller() *Poller { return m.poller }
 
 // Forge returns the concrete adapter. cmd/lexicode (the wiring site) uses it to satisfy the
 // bootstrap service's DocLister seam with the adapter's extra ListDir method — a capability the
@@ -134,20 +147,79 @@ func (m *Module) Init(k *kernel.Kernel) error {
 				slog.String("error", err.Error()))
 		}
 	}
-	return k.RegisterForge(m.forge)
+	if err := k.RegisterForge(m.forge); err != nil {
+		return err
+	}
+
+	// The poller (S25): store and credential wiring, the bus emit, and the repo lifecycle
+	// subscriptions. Subscriptions are registered here in Init so the bus's Start (which the
+	// wiring site calls after every module's Init) delivers boot recovery to them too.
+	m.poller.logger = m.forge.logger
+	if m.poller.store == nil {
+		m.poller.store = k.Store()
+	}
+	if m.poller.creds == nil && k.Secrets() != nil {
+		sec := k.Secrets()
+		m.poller.creds = func(ctx context.Context, rp domain.Repo) (ports.Creds, error) {
+			if rp.TokenSecretID == nil {
+				return ports.Creds{}, errors.New("github.poll: the connected repo has no stored token; reconnect the repository")
+			}
+			token, err := sec.Get(ctx, *rp.TokenSecretID)
+			if err != nil {
+				return ports.Creds{}, err
+			}
+			return ports.Creds{Token: token}, nil
+		}
+	}
+	if b := k.Bus(); b != nil {
+		m.emit = func(ctx context.Context, e domain.Event) error {
+			// Idempotent per contracts §2.1: a duplicate dedupe key means the event is
+			// already persisted — the cursors' overlap window, not a failure.
+			if err := b.Publish(ctx, e); err != nil && !errors.Is(err, bus.ErrDuplicate) {
+				return err
+			}
+			return nil
+		}
+		if err := b.SubscribeKind("github.poll.repo-connected", "repo.connected",
+			func(_ context.Context, e domain.Event) error {
+				if e.ProjectID != nil {
+					m.poller.EnsureWorker(*e.ProjectID)
+				}
+				return nil
+			}); err != nil {
+			return err
+		}
+		if err := b.SubscribeKind("github.poll.repo-disconnected", "repo.disconnected",
+			func(ctx context.Context, e domain.Event) error {
+				if e.ProjectID != nil {
+					m.poller.RemoveWorker(ctx, *e.ProjectID)
+				}
+				return nil
+			}); err != nil {
+			return err
+		}
+	}
+	return k.RegisterEventSource(m.poller)
 }
 
-// Start implements kernel.Module. There is nothing to verify at boot: no repository may be
-// connected yet and this module holds no credentials of its own (they arrive per call as
-// ports.Creds), so the module reports ready and stays that way until the rate-limit transport
-// degrades it at runtime.
-func (m *Module) Start(context.Context) error { return nil }
+// Start implements kernel.Module: it starts the poller's per-project workers (the EventSource
+// port's Start, with the bus-publish emit wired in Init). Nothing else needs verifying at
+// boot: the forge holds no credentials of its own, so it reports ready and stays that way
+// until the rate-limit transport degrades it at runtime. Without a store or bus (forge-only
+// tests) there is nothing to poll and Start is a no-op.
+func (m *Module) Start(ctx context.Context) error {
+	if m.poller.store == nil || m.emit == nil {
+		return nil
+	}
+	return m.poller.Start(ctx, m.emit)
+}
 
-// Stop implements kernel.Module. The module runs no background work.
-func (m *Module) Stop(context.Context) error { return nil }
+// Stop implements kernel.Module: drains the poller's workers.
+func (m *Module) Stop(ctx context.Context) error { return m.poller.Stop(ctx) }
 
 // compile-time checks: the module fits the kernel lifecycle and the forge fits the port.
 var (
 	_ kernel.Module       = (*Module)(nil)
 	_ ports.ForgeProvider = (*Forge)(nil)
+	_ ports.EventSource   = (*Poller)(nil)
 )

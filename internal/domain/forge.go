@@ -48,9 +48,18 @@ type PullRequest struct {
 	HeadRef     string
 	HeadSHA     string
 	BaseRef     string
+	Labels      []string
 	URL         string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+
+	// Additions, Deletions and ChangedFiles are populated only by the single-PR read
+	// (Forge.GetPullRequest) — GitHub's list endpoint does not carry them. The poller
+	// fetches the detail for PRs it is about to emit events for, so the normalized
+	// pr.additions / pr.deletions / pr.files_changed fields (contracts §4) are accurate.
+	Additions    int
+	Deletions    int
+	ChangedFiles int
 }
 
 // Review is one submitted pull-request review.
@@ -73,6 +82,7 @@ type Comment struct {
 	AuthorLogin   string
 	Body          string
 	Path          string // review comments only: the file the comment anchors to
+	Line          int    // review comments only: the line the comment anchors to; 0 otherwise
 	URL           string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
@@ -87,6 +97,7 @@ type CheckSuite struct {
 	Conclusion string // "success" | "failure" | … ; empty until completed
 	App        string // the app that owns the suite, e.g. "GitHub Actions"
 	URL        string
+	UpdatedAt  time.Time // when the suite last changed; the poller's check_suites cursor
 }
 
 // DirEntry is one entry of a repository directory listing, as bootstrap doc detection (S15)

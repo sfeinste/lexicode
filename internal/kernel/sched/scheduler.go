@@ -429,7 +429,7 @@ func subjectKey(ticket *domain.Ticket) string {
 // and, later, trigger evaluation. Best-effort: the mutation is committed by the time this
 // runs; a failure is logged, never unwound.
 func (s *Scheduler) emitRunState(ctx context.Context, run domain.Run) {
-	s.emitRunEvent(ctx, run, "state", map[string]any{"run": runEventBody(run)})
+	s.emitRunEvent(ctx, run, "state", map[string]any{"run": s.normalizedRun(ctx, run)})
 }
 
 func (s *Scheduler) emitRunEvent(ctx context.Context, run domain.Run, activity string, body map[string]any) {
@@ -459,6 +459,36 @@ func runEventBody(run domain.Run) map[string]any {
 		"error_message": run.ErrorMessage, "current_step": run.CurrentStep,
 		"cost_cents": run.CostCents, "started_at": run.StartedAt, "ended_at": run.EndedAt,
 	}
+}
+
+// normalizedRun is runEventBody plus the contracts §4 `run` vocabulary — the user-visible
+// field names trigger conditions and {{...}} interpolation address (run.agent, run.status,
+// run.duration_seconds, run.ticket_key; story S25 aligned this additively so the SSE fields
+// existing clients read stay untouched). Lookups are best-effort: a failure leaves the field
+// empty rather than losing the event.
+func (s *Scheduler) normalizedRun(ctx context.Context, run domain.Run) map[string]any {
+	body := runEventBody(run)
+	body["status"] = string(run.State)
+	body["agent"] = ""
+	if a, err := s.st.Agents().ByID(ctx, run.AgentID); err == nil {
+		body["agent"] = a.Name
+	}
+	body["ticket_key"] = ""
+	if run.TicketID != nil {
+		if tk, err := s.st.Tickets().ByID(ctx, *run.TicketID); err == nil {
+			body["ticket_key"] = tk.Key
+		}
+	}
+	var dur int64
+	if run.StartedAt != nil && run.EndedAt != nil {
+		if start, err := domain.ParseTime(*run.StartedAt); err == nil {
+			if end, err := domain.ParseTime(*run.EndedAt); err == nil && end.After(start) {
+				dur = int64(end.Sub(start).Seconds())
+			}
+		}
+	}
+	body["duration_seconds"] = dur
+	return body
 }
 
 // providersInOrder returns the registered context providers sorted by Priority, ties by ID.

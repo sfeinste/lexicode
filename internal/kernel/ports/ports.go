@@ -1,15 +1,70 @@
 package ports
 
-import "context"
+import (
+	"context"
+
+	"github.com/spruce/lexicode/internal/domain"
+)
 
 // EventSource turns something that happens in the world into a normalized domain event: the
 // GitHub poller, the cron source, and later webhooks or a filesystem watcher (architecture §7).
 //
-// Method set: contracts §2.1, transcribed in story S25.
+// Method set: contracts §2.1, transcribed verbatim in story S25.
 type EventSource interface {
 	// ID is the stable identifier a trigger stores, e.g. "github.poll". It must be unique across
 	// registered event sources.
 	ID() string
+	// Catalog describes what the trigger editor may offer for this source: event kinds,
+	// activity types, filter fields and payload fields. The editor is generated from it — a
+	// new event source contributes new WHEN options and new IF fields with no editor changes.
+	Catalog() EventCatalog
+	// Start begins producing events through emit. It must return promptly: long-running work
+	// happens on the source's own goroutines under ctx.
+	Start(ctx context.Context, emit Emit) error
+	// Stop drains the source's background work.
+	Stop(ctx context.Context) error
+}
+
+// Emit delivers one normalized event onto the kernel bus (contracts §2.1). The implementation
+// behind it is idempotent on Event.DedupeKey, which is what makes polling safe to replay.
+type Emit func(context.Context, domain.Event) error
+
+// EventCatalog is everything the trigger editor may offer for one source (contracts §2.1).
+type EventCatalog struct {
+	Events []EventDescriptor `json:"events"`
+}
+
+// EventDescriptor describes one event kind: its activity types, the filters the matcher
+// supports for it, the payload fields conditions and {{...}} interpolation may address, and
+// the SubjectKey template the loop-protection guard keys on.
+type EventDescriptor struct {
+	Kind          string         `json:"kind"`  // "pull_request"
+	Label         string         `json:"label"` // "Pull request"
+	ActivityTypes []ActivityType `json:"activity_types"`
+	Filters       []FilterField  `json:"filters"`
+	Fields        []PayloadField `json:"fields"`
+	SubjectKey    string         `json:"subject_key"` // template: "pr:{{pr.number}}"
+}
+
+// ActivityType is one WHEN option: {Value:"synchronize", Label:"pushed to", Help:"…"}.
+type ActivityType struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Help  string `json:"help,omitempty"`
+}
+
+// FilterField is one matcher filter: {Key:"branches", Kind:"glob-list", Label:"Branches"}.
+type FilterField struct {
+	Key   string `json:"key"`
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+}
+
+// PayloadField is one addressable payload path with the operator family it accepts:
+// {Path:"pr.author", Type:"text"} — drives the IF row dropdowns.
+type PayloadField struct {
+	Path string `json:"path"`
+	Type string `json:"type"` // "text" | "number" | "bool" | "enum" | "set"
 }
 
 // ForgeProvider lives in forge.go (contracts §2.2, transcribed in story S14).

@@ -172,6 +172,10 @@ const (
 	ActorAgent   ActorKind = "agent"
 	ActorTrigger ActorKind = "trigger"
 	ActorSystem  ActorKind = "system"
+	// ActorExternal is a forge identity that is not a Lexicode agent (contracts §4:
+	// actor.kind "human|agent|external"). It is valid on events only — ticket_stream and
+	// audit_log CHECK against the four kinds above, which is why IsValid excludes it.
+	ActorExternal ActorKind = "external"
 )
 
 // IsValid reports whether the value is one the schema accepts.

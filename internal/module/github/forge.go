@@ -64,7 +64,10 @@ func (f *Forge) ID() string { return moduleName }
 func (f *Forge) client(c ports.Creds) (*gh.Client, error) {
 	f.redactor.Add(c.Token)
 	opts := []gh.ClientOptionsFunc{
-		gh.WithTransport(f.transport),
+		// condTransport sits above the rate-limit transport: it applies a context-carried
+		// If-None-Match to the poller's conditional listings (etag.go) and is inert for
+		// every call that does not arm one.
+		gh.WithTransport(&condTransport{base: f.transport}),
 		gh.WithAuthToken(c.Token),
 		gh.WithDisableRateLimitCheck(),
 	}
@@ -266,6 +269,7 @@ func (f *Forge) ListReviewComments(ctx context.Context, c ports.Creds, r domain.
 				AuthorLogin:   cm.GetUser().GetLogin(),
 				Body:          cm.GetBody(),
 				Path:          cm.GetPath(),
+				Line:          cm.GetLine(),
 				URL:           cm.GetHTMLURL(),
 				CreatedAt:     cm.GetCreatedAt().Time,
 				UpdatedAt:     cm.GetUpdatedAt().Time,
@@ -337,6 +341,7 @@ func (f *Forge) ListCheckSuites(ctx context.Context, c ports.Creds, r domain.Rep
 				Conclusion: cs.GetConclusion(),
 				App:        cs.GetApp().GetName(),
 				URL:        cs.GetURL(),
+				UpdatedAt:  cs.GetUpdatedAt().Time,
 			})
 		}
 		if resp.NextPage == 0 {
@@ -648,20 +653,28 @@ func (f *Forge) recordWrite(ctx context.Context, r domain.RepoRef, a domain.Acto
 
 // mapPullRequest converts a go-github PR at the port boundary.
 func mapPullRequest(pr *gh.PullRequest) domain.PullRequest {
+	labels := make([]string, 0, len(pr.Labels))
+	for _, l := range pr.Labels {
+		labels = append(labels, l.GetName())
+	}
 	return domain.PullRequest{
-		Number:      pr.GetNumber(),
-		Title:       pr.GetTitle(),
-		Body:        pr.GetBody(),
-		State:       pr.GetState(),
-		Draft:       pr.GetDraft(),
-		Merged:      pr.GetMerged() || pr.MergedAt != nil,
-		AuthorLogin: pr.GetUser().GetLogin(),
-		HeadRef:     pr.GetHead().GetRef(),
-		HeadSHA:     pr.GetHead().GetSHA(),
-		BaseRef:     pr.GetBase().GetRef(),
-		URL:         pr.GetHTMLURL(),
-		CreatedAt:   pr.GetCreatedAt().Time,
-		UpdatedAt:   pr.GetUpdatedAt().Time,
+		Number:       pr.GetNumber(),
+		Title:        pr.GetTitle(),
+		Body:         pr.GetBody(),
+		State:        pr.GetState(),
+		Draft:        pr.GetDraft(),
+		Merged:       pr.GetMerged() || pr.MergedAt != nil,
+		AuthorLogin:  pr.GetUser().GetLogin(),
+		HeadRef:      pr.GetHead().GetRef(),
+		HeadSHA:      pr.GetHead().GetSHA(),
+		BaseRef:      pr.GetBase().GetRef(),
+		Labels:       labels,
+		URL:          pr.GetHTMLURL(),
+		CreatedAt:    pr.GetCreatedAt().Time,
+		UpdatedAt:    pr.GetUpdatedAt().Time,
+		Additions:    pr.GetAdditions(),
+		Deletions:    pr.GetDeletions(),
+		ChangedFiles: pr.GetChangedFiles(),
 	}
 }
 
@@ -690,4 +703,37 @@ func trailingNumber(url string) int {
 		return 0
 	}
 	return n
+}
+
+// ------------------------------------------------------------------- poller extras -----
+
+// GetPullRequest reads one pull request in full. Unlike the list endpoint, the detail carries
+// additions/deletions/changed_files, which the normalized pr payload (contracts §4) exposes.
+// Poller-only capability on the concrete adapter, like ListDir — the frozen ForgeProvider port
+// does not carry it.
+func (f *Forge) GetPullRequest(ctx context.Context, c ports.Creds, r domain.RepoRef, number int) (domain.PullRequest, error) {
+	cl, err := f.client(c)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	pr, _, err := cl.PullRequests.Get(ctx, r.Owner, r.Name, number)
+	if err != nil {
+		return domain.PullRequest{}, wrapErr(fmt.Sprintf("read PR #%d", number), r, err)
+	}
+	return mapPullRequest(pr), nil
+}
+
+// CommitEmails returns the author and committer email of one commit — the D-9 attribution
+// signal for pushes (an agent's commits carry its git_author_email). Poller-only capability on
+// the concrete adapter.
+func (f *Forge) CommitEmails(ctx context.Context, c ports.Creds, r domain.RepoRef, sha string) (author, committer string, err error) {
+	cl, err := f.client(c)
+	if err != nil {
+		return "", "", err
+	}
+	commit, _, err := cl.Repositories.GetCommit(ctx, r.Owner, r.Name, sha, &gh.ListOptions{PerPage: 1})
+	if err != nil {
+		return "", "", wrapErr("read commit "+sha, r, err)
+	}
+	return commit.GetCommit().GetAuthor().GetEmail(), commit.GetCommit().GetCommitter().GetEmail(), nil
 }

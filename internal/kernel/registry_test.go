@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/spruce/lexicode/internal/kernel"
-	"github.com/spruce/lexicode/internal/kernel/ports"
 )
 
 func discardLogger() *slog.Logger {
@@ -144,7 +143,7 @@ func TestLookupsReturnWhatWasRegistered(t *testing.T) {
 	}
 }
 
-func idOf[T ports.EventSource](v T, err error) (string, error) {
+func idOf[T interface{ ID() string }](v T, err error) (string, error) {
 	if err != nil {
 		return "", err
 	}

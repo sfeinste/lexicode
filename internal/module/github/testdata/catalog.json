@@ -1,0 +1,634 @@
+{
+  "events": [
+    {
+      "kind": "pull_request",
+      "label": "Pull request",
+      "activity_types": [
+        {
+          "value": "opened",
+          "label": "opened"
+        },
+        {
+          "value": "synchronize",
+          "label": "pushed to",
+          "help": "New commits on the head branch — distinguishing this from opened is where the runaway loop lives."
+        },
+        {
+          "value": "ready_for_review",
+          "label": "marked ready for review"
+        },
+        {
+          "value": "closed",
+          "label": "closed",
+          "help": "pr.merged distinguishes a merge from a close."
+        }
+      ],
+      "filters": [
+        {
+          "key": "branches",
+          "kind": "glob-list",
+          "label": "Branches"
+        },
+        {
+          "key": "paths",
+          "kind": "glob-list",
+          "label": "Paths"
+        },
+        {
+          "key": "labels",
+          "kind": "label-list",
+          "label": "Labels"
+        }
+      ],
+      "fields": [
+        {
+          "path": "pr.number",
+          "type": "number"
+        },
+        {
+          "path": "pr.title",
+          "type": "text"
+        },
+        {
+          "path": "pr.author",
+          "type": "text"
+        },
+        {
+          "path": "pr.author_kind",
+          "type": "enum"
+        },
+        {
+          "path": "pr.branch",
+          "type": "text"
+        },
+        {
+          "path": "pr.base",
+          "type": "text"
+        },
+        {
+          "path": "pr.draft",
+          "type": "bool"
+        },
+        {
+          "path": "pr.merged",
+          "type": "bool"
+        },
+        {
+          "path": "pr.state",
+          "type": "enum"
+        },
+        {
+          "path": "pr.additions",
+          "type": "number"
+        },
+        {
+          "path": "pr.deletions",
+          "type": "number"
+        },
+        {
+          "path": "pr.files_changed",
+          "type": "number"
+        },
+        {
+          "path": "pr.labels",
+          "type": "set"
+        },
+        {
+          "path": "pr.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "repo.owner",
+          "type": "text"
+        },
+        {
+          "path": "repo.name",
+          "type": "text"
+        },
+        {
+          "path": "repo.default_branch",
+          "type": "text"
+        },
+        {
+          "path": "actor.kind",
+          "type": "enum"
+        },
+        {
+          "path": "actor.login",
+          "type": "text"
+        },
+        {
+          "path": "actor.agent",
+          "type": "text"
+        }
+      ],
+      "subject_key": "pr:{{pr.number}}"
+    },
+    {
+      "kind": "pull_request_review",
+      "label": "Pull request review",
+      "activity_types": [
+        {
+          "value": "submitted",
+          "label": "submitted",
+          "help": "review.state carries approved, changes_requested or commented."
+        }
+      ],
+      "filters": [
+        {
+          "key": "branches",
+          "kind": "glob-list",
+          "label": "Branches"
+        },
+        {
+          "key": "labels",
+          "kind": "label-list",
+          "label": "Labels"
+        }
+      ],
+      "fields": [
+        {
+          "path": "review.id",
+          "type": "text"
+        },
+        {
+          "path": "review.author",
+          "type": "text"
+        },
+        {
+          "path": "review.state",
+          "type": "enum"
+        },
+        {
+          "path": "review.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.number",
+          "type": "number"
+        },
+        {
+          "path": "pr.title",
+          "type": "text"
+        },
+        {
+          "path": "pr.author",
+          "type": "text"
+        },
+        {
+          "path": "pr.author_kind",
+          "type": "enum"
+        },
+        {
+          "path": "pr.branch",
+          "type": "text"
+        },
+        {
+          "path": "pr.base",
+          "type": "text"
+        },
+        {
+          "path": "pr.draft",
+          "type": "bool"
+        },
+        {
+          "path": "pr.merged",
+          "type": "bool"
+        },
+        {
+          "path": "pr.state",
+          "type": "enum"
+        },
+        {
+          "path": "pr.additions",
+          "type": "number"
+        },
+        {
+          "path": "pr.deletions",
+          "type": "number"
+        },
+        {
+          "path": "pr.files_changed",
+          "type": "number"
+        },
+        {
+          "path": "pr.labels",
+          "type": "set"
+        },
+        {
+          "path": "pr.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "repo.owner",
+          "type": "text"
+        },
+        {
+          "path": "repo.name",
+          "type": "text"
+        },
+        {
+          "path": "repo.default_branch",
+          "type": "text"
+        },
+        {
+          "path": "actor.kind",
+          "type": "enum"
+        },
+        {
+          "path": "actor.login",
+          "type": "text"
+        },
+        {
+          "path": "actor.agent",
+          "type": "text"
+        }
+      ],
+      "subject_key": "pr:{{pr.number}}"
+    },
+    {
+      "kind": "pull_request_review_comment",
+      "label": "Review comment",
+      "activity_types": [
+        {
+          "value": "created",
+          "label": "created"
+        }
+      ],
+      "filters": [
+        {
+          "key": "branches",
+          "kind": "glob-list",
+          "label": "Branches"
+        },
+        {
+          "key": "labels",
+          "kind": "label-list",
+          "label": "Labels"
+        }
+      ],
+      "fields": [
+        {
+          "path": "comment.id",
+          "type": "text"
+        },
+        {
+          "path": "comment.author",
+          "type": "text"
+        },
+        {
+          "path": "comment.body",
+          "type": "text"
+        },
+        {
+          "path": "comment.path",
+          "type": "text"
+        },
+        {
+          "path": "comment.line",
+          "type": "number"
+        },
+        {
+          "path": "pr.number",
+          "type": "number"
+        },
+        {
+          "path": "pr.title",
+          "type": "text"
+        },
+        {
+          "path": "pr.author",
+          "type": "text"
+        },
+        {
+          "path": "pr.author_kind",
+          "type": "enum"
+        },
+        {
+          "path": "pr.branch",
+          "type": "text"
+        },
+        {
+          "path": "pr.base",
+          "type": "text"
+        },
+        {
+          "path": "pr.draft",
+          "type": "bool"
+        },
+        {
+          "path": "pr.merged",
+          "type": "bool"
+        },
+        {
+          "path": "pr.state",
+          "type": "enum"
+        },
+        {
+          "path": "pr.additions",
+          "type": "number"
+        },
+        {
+          "path": "pr.deletions",
+          "type": "number"
+        },
+        {
+          "path": "pr.files_changed",
+          "type": "number"
+        },
+        {
+          "path": "pr.labels",
+          "type": "set"
+        },
+        {
+          "path": "pr.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "repo.owner",
+          "type": "text"
+        },
+        {
+          "path": "repo.name",
+          "type": "text"
+        },
+        {
+          "path": "repo.default_branch",
+          "type": "text"
+        },
+        {
+          "path": "actor.kind",
+          "type": "enum"
+        },
+        {
+          "path": "actor.login",
+          "type": "text"
+        },
+        {
+          "path": "actor.agent",
+          "type": "text"
+        }
+      ],
+      "subject_key": "pr:{{pr.number}}"
+    },
+    {
+      "kind": "issue_comment",
+      "label": "Issue or PR comment",
+      "activity_types": [
+        {
+          "value": "created",
+          "label": "created"
+        }
+      ],
+      "filters": [
+        {
+          "key": "branches",
+          "kind": "glob-list",
+          "label": "Branches"
+        },
+        {
+          "key": "labels",
+          "kind": "label-list",
+          "label": "Labels"
+        }
+      ],
+      "fields": [
+        {
+          "path": "comment.id",
+          "type": "text"
+        },
+        {
+          "path": "comment.author",
+          "type": "text"
+        },
+        {
+          "path": "comment.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.number",
+          "type": "number"
+        },
+        {
+          "path": "pr.title",
+          "type": "text"
+        },
+        {
+          "path": "pr.author",
+          "type": "text"
+        },
+        {
+          "path": "pr.author_kind",
+          "type": "enum"
+        },
+        {
+          "path": "pr.branch",
+          "type": "text"
+        },
+        {
+          "path": "pr.base",
+          "type": "text"
+        },
+        {
+          "path": "pr.draft",
+          "type": "bool"
+        },
+        {
+          "path": "pr.merged",
+          "type": "bool"
+        },
+        {
+          "path": "pr.state",
+          "type": "enum"
+        },
+        {
+          "path": "pr.additions",
+          "type": "number"
+        },
+        {
+          "path": "pr.deletions",
+          "type": "number"
+        },
+        {
+          "path": "pr.files_changed",
+          "type": "number"
+        },
+        {
+          "path": "pr.labels",
+          "type": "set"
+        },
+        {
+          "path": "pr.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "repo.owner",
+          "type": "text"
+        },
+        {
+          "path": "repo.name",
+          "type": "text"
+        },
+        {
+          "path": "repo.default_branch",
+          "type": "text"
+        },
+        {
+          "path": "actor.kind",
+          "type": "enum"
+        },
+        {
+          "path": "actor.login",
+          "type": "text"
+        },
+        {
+          "path": "actor.agent",
+          "type": "text"
+        }
+      ],
+      "subject_key": "pr:{{pr.number}}"
+    },
+    {
+      "kind": "check_suite",
+      "label": "Check suite",
+      "activity_types": [
+        {
+          "value": "completed",
+          "label": "completed",
+          "help": "check.conclusion carries success or failure."
+        }
+      ],
+      "filters": [
+        {
+          "key": "branches",
+          "kind": "glob-list",
+          "label": "Branches"
+        },
+        {
+          "key": "labels",
+          "kind": "label-list",
+          "label": "Labels"
+        }
+      ],
+      "fields": [
+        {
+          "path": "check.suite_id",
+          "type": "text"
+        },
+        {
+          "path": "check.name",
+          "type": "text"
+        },
+        {
+          "path": "check.conclusion",
+          "type": "enum"
+        },
+        {
+          "path": "check.url",
+          "type": "text"
+        },
+        {
+          "path": "pr.number",
+          "type": "number"
+        },
+        {
+          "path": "pr.title",
+          "type": "text"
+        },
+        {
+          "path": "pr.author",
+          "type": "text"
+        },
+        {
+          "path": "pr.author_kind",
+          "type": "enum"
+        },
+        {
+          "path": "pr.branch",
+          "type": "text"
+        },
+        {
+          "path": "pr.base",
+          "type": "text"
+        },
+        {
+          "path": "pr.draft",
+          "type": "bool"
+        },
+        {
+          "path": "pr.merged",
+          "type": "bool"
+        },
+        {
+          "path": "pr.state",
+          "type": "enum"
+        },
+        {
+          "path": "pr.additions",
+          "type": "number"
+        },
+        {
+          "path": "pr.deletions",
+          "type": "number"
+        },
+        {
+          "path": "pr.files_changed",
+          "type": "number"
+        },
+        {
+          "path": "pr.labels",
+          "type": "set"
+        },
+        {
+          "path": "pr.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "repo.owner",
+          "type": "text"
+        },
+        {
+          "path": "repo.name",
+          "type": "text"
+        },
+        {
+          "path": "repo.default_branch",
+          "type": "text"
+        },
+        {
+          "path": "actor.kind",
+          "type": "enum"
+        },
+        {
+          "path": "actor.login",
+          "type": "text"
+        },
+        {
+          "path": "actor.agent",
+          "type": "text"
+        }
+      ],
+      "subject_key": "pr:{{pr.number}}"
+    }
+  ]
+}

@@ -20,6 +20,7 @@ import (
 // which is fine: these tests exercise registration and lookup, never the port behaviour. As
 // later stories transcribe the other ports, embed them here the same way.
 type stubPort struct {
+	ports.EventSource
 	ports.ForgeProvider
 	ports.Sandbox
 	ports.CredentialSource

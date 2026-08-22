@@ -39,6 +39,27 @@ func (r *ReposRepo) Create(ctx context.Context, rp *domain.Repo) error {
 	return mapErr(err)
 }
 
+// List returns every connected repo row, ordered by project id — the poller starts one
+// worker per row at boot (story S25).
+func (r *ReposRepo) List(ctx context.Context) ([]domain.Repo, error) {
+	rows, err := r.h.r.QueryContext(ctx,
+		`SELECT `+repoCols+` FROM repos ORDER BY project_id`)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Repo
+	for rows.Next() {
+		rp, err := scanRepo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rp)
+	}
+	return out, rows.Err()
+}
+
 // ByProject returns the project's repo row, or ErrNotFound when no repo is connected.
 func (r *ReposRepo) ByProject(ctx context.Context, projectID string) (domain.Repo, error) {
 	return scanRepo(r.h.r.QueryRowContext(ctx,

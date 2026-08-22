@@ -70,6 +70,20 @@ func (r *RunsRepo) BranchInUse(ctx context.Context, projectID, branch string) (b
 	return n > 0, mapErr(err)
 }
 
+// LatestForAgentOnBranch returns the agent's most recent run on this branch, preferring a
+// run that is still alive (non-terminal) over an ended one — the D-9 attribution fallback
+// (architecture §6.3): when a marker gives no run id, an external event caused by the agent is
+// pinned to "the agent's most recent run touching that subject". ErrNotFound when the agent
+// never ran on the branch.
+func (r *RunsRepo) LatestForAgentOnBranch(ctx context.Context, projectID, agentID, branch string) (domain.Run, error) {
+	return scanRun(r.h.r.QueryRowContext(ctx, `
+		SELECT `+runCols+` FROM runs
+		WHERE project_id = ? AND agent_id = ? AND branch = ?
+		ORDER BY CASE WHEN state IN ('completed','failed','timed_out','canceled','loop_stopped')
+			THEN 1 ELSE 0 END, queued_at DESC, seq DESC
+		LIMIT 1`, projectID, agentID, branch))
+}
+
 // ForProject returns a project's runs, newest first.
 func (r *RunsRepo) ForProject(ctx context.Context, projectID string) ([]domain.Run, error) {
 	rows, err := r.h.r.QueryContext(ctx,
