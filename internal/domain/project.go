@@ -13,6 +13,7 @@ type Project struct {
 	DailyBudgetCents       *int64
 	ContextThresholdTokens *int64
 	VerificationDays       *int64
+	PRSizeWarningLines     *int64
 	TicketSeq              int64
 	ArchivedAt             *string
 	CreatedAt              string

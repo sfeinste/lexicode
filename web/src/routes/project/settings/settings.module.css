@@ -495,3 +495,38 @@
   font-size: var(--fs-micro);
   max-width: 480px;
 }
+
+/* ------------------------------------------------------------------ S37 danger zone ----- */
+
+.sectionTitle {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+
+.dangerBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--fail) 35%, transparent);
+  border-radius: 8px;
+}
+
+.dangerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dangerRow input {
+  flex: 1;
+  min-width: 0;
+}
+
+.dangerText {
+  color: var(--fail);
+  font-size: var(--fs-body);
+  margin: 0;
+}

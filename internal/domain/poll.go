@@ -25,4 +25,9 @@ type PollPRState struct {
 	Draft        bool
 	UpdatedAt    string
 	ReviewCursor string
+	// Additions/Deletions are the PR's line counts from the poller's detail read (S37's
+	// diff-size warning joins run outputs against them). Nil = the detail read has not
+	// happened for this PR yet.
+	Additions *int64
+	Deletions *int64
 }

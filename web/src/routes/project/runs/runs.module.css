@@ -1178,3 +1178,26 @@ button.optionCard:hover:not(:disabled) {
   font-size: var(--fs-body);
   margin: 8px 0 0;
 }
+
+/* S37 diff-size stat + warning chip on pull_request outputs. */
+.diffStat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+}
+
+.diffStat[data-large] {
+  color: var(--needs-you);
+}
+
+.diffWarn {
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--needs-you) 45%, transparent);
+  background: color-mix(in srgb, var(--needs-you) 12%, transparent);
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+}

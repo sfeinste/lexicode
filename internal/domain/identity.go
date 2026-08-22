@@ -57,5 +57,6 @@ type WorkspaceSettings struct {
 	DefaultVerificationDays       int64
 	MaxConcurrentContainers       int64
 	PollIntervalSeconds           int64
+	PRSizeWarningLines            int64
 	UpdatedAt                     string
 }

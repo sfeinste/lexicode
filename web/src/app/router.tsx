@@ -37,6 +37,7 @@ import { TriggerEditorPage } from "../routes/project/triggers/TriggerEditorPage"
 import { TriggersPage } from "../routes/project/triggers/TriggersPage";
 import { WikiIndexPage } from "../routes/project/wiki/WikiIndexPage";
 import { WikiPagePage } from "../routes/project/wiki/WikiPagePage";
+import { AuditLogPage } from "../routes/workspace-settings/AuditLogPage";
 import { WorkspaceSettingsPage } from "../routes/workspace-settings/WorkspaceSettingsPage";
 import { AppShell } from "./shell/AppShell";
 import { ProjectLayout } from "./shell/ProjectLayout";
@@ -90,6 +91,13 @@ const workspaceSettingsRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: "/settings",
   component: WorkspaceSettingsPage,
+});
+
+// The audit log (S37): a workspace settings page, owner-only like the rest of /settings.
+const auditLogRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: "/settings/audit",
+  component: AuditLogPage,
 });
 
 // ---- the project: one URL prefix, tabs beneath (IA rule 3) -------------------------------
@@ -318,6 +326,7 @@ const routeTree = rootRoute.addChildren([
     homeRoute,
     inboxRoute,
     workspaceSettingsRoute,
+    auditLogRoute,
     projectRoute.addChildren([
       overviewRoute,
       bootstrapRoute,

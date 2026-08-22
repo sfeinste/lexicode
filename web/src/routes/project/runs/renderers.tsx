@@ -165,7 +165,16 @@ function StepMeta({ a }: { a: RunActivity }) {
   return (
     <>
       {split !== null && <span>{formatDuration(split.totalMs)}</span>}
-      {a.cost_cents > 0 && <CostChip usd={a.cost_cents / 100} />}
+      {a.cost_cents > 0 && (
+        <CostChip
+          usd={a.cost_cents / 100}
+          split={{
+            inputTokens: a.tokens_in,
+            outputTokens: a.tokens_out,
+            cacheReadTokens: a.tokens_cache_read,
+          }}
+        />
+      )}
       {a.attempt > 1 && <span className={styles.retryBadge}>attempt {a.attempt}</span>}
     </>
   );

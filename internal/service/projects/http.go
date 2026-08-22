@@ -29,6 +29,12 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("GET /api/v1/projects/{key}", member(s.handleGet))
 	mux.Handle("PATCH /api/v1/projects/{key}", member(s.handlePatch))
 	mux.Handle("GET /api/v1/projects/{key}/overview", member(s.handleOverview))
+	mux.Handle("GET /api/v1/projects/{key}/budget", member(s.handleBudget))
+	mux.Handle("GET /api/v1/projects/{key}/counts", member(s.handleCounts))
+	// Deletion is workspace-owner only (S37 danger zone): destructive and workspace-wide in
+	// consequence, so the strictest gate this codebase has.
+	mux.Handle("DELETE /api/v1/projects/{key}",
+		a.RequireAuth(auth.RequireOwner(http.HandlerFunc(s.handleDelete))))
 	mux.Handle("GET /api/v1/workspace/settings",
 		a.RequireAuth(auth.RequireOwner(http.HandlerFunc(s.handleWorkspaceGet))))
 	mux.Handle("PUT /api/v1/workspace/settings",
@@ -58,6 +64,7 @@ type settingsBody struct {
 	DailyBudgetCents       inheritedInt `json:"daily_budget_cents"`
 	ContextThresholdTokens inheritedInt `json:"context_threshold_tokens"`
 	VerificationDays       inheritedInt `json:"verification_days"`
+	PRSizeWarningLines     inheritedInt `json:"pr_size_warning_lines"`
 }
 
 // projectBody is how a project renders everywhere.
@@ -84,6 +91,7 @@ func toProjectBody(p domain.Project, ws domain.WorkspaceSettings) projectBody {
 			DailyBudgetCents:       resolveInt(p.DailyBudgetCents, ws.DefaultDailyBudgetCents),
 			ContextThresholdTokens: resolveInt(p.ContextThresholdTokens, ws.DefaultContextThresholdTokens),
 			VerificationDays:       resolveInt(p.VerificationDays, ws.DefaultVerificationDays),
+			PRSizeWarningLines:     resolveInt(p.PRSizeWarningLines, ws.PRSizeWarningLines),
 		},
 	}
 }
@@ -116,6 +124,7 @@ type workspaceBody struct {
 	DefaultVerificationDays       int64  `json:"default_verification_days"`
 	MaxConcurrentContainers       int64  `json:"max_concurrent_containers"`
 	PollIntervalSeconds           int64  `json:"poll_interval_seconds"`
+	PRSizeWarningLines            int64  `json:"pr_size_warning_lines"`
 	UpdatedAt                     string `json:"updated_at"`
 }
 
@@ -128,6 +137,7 @@ func toWorkspaceBody(ws domain.WorkspaceSettings) workspaceBody {
 		DefaultVerificationDays:       ws.DefaultVerificationDays,
 		MaxConcurrentContainers:       ws.MaxConcurrentContainers,
 		PollIntervalSeconds:           ws.PollIntervalSeconds,
+		PRSizeWarningLines:            ws.PRSizeWarningLines,
 		UpdatedAt:                     ws.UpdatedAt,
 	}
 }
@@ -242,6 +252,7 @@ type patchBody struct {
 	DailyBudgetCents       OptInt  `json:"daily_budget_cents"`
 	ContextThresholdTokens OptInt  `json:"context_threshold_tokens"`
 	VerificationDays       OptInt  `json:"verification_days"`
+	PRSizeWarningLines     OptInt  `json:"pr_size_warning_lines"`
 }
 
 func (s *Service) handlePatch(w http.ResponseWriter, r *http.Request) {
@@ -333,6 +344,7 @@ type workspacePutBody struct {
 	DefaultVerificationDays       *int64  `json:"default_verification_days"`
 	MaxConcurrentContainers       *int64  `json:"max_concurrent_containers"`
 	PollIntervalSeconds           *int64  `json:"poll_interval_seconds"`
+	PRSizeWarningLines            *int64  `json:"pr_size_warning_lines"`
 }
 
 func (s *Service) handleWorkspacePut(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +358,69 @@ func (s *Service) handleWorkspacePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toWorkspaceBody(ws))
+}
+
+// budgetBody is GET /projects/{key}/budget — the header chip and exhaustion banner's data.
+type budgetBody struct {
+	SpendTodayCents int64  `json:"spend_today_cents"`
+	CeilingCents    int64  `json:"ceiling_cents"`
+	Inherited       bool   `json:"inherited"`
+	Exhausted       bool   `json:"exhausted"`
+	Day             string `json:"day"`
+	ResetsAt        string `json:"resets_at"`
+}
+
+func (s *Service) handleBudget(w http.ResponseWriter, r *http.Request) {
+	st, err := s.Budget(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, budgetBody(st))
+}
+
+// countsBody is GET /projects/{key}/counts and the counts half of the delete response: what a
+// deletion removes, named before the user types anything.
+type countsBody struct {
+	Tickets   int64 `json:"tickets"`
+	Runs      int64 `json:"runs"`
+	WikiPages int64 `json:"wiki_pages"`
+}
+
+func (s *Service) handleCounts(w http.ResponseWriter, r *http.Request) {
+	c, err := s.Counts(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK,
+		countsBody{Tickets: c.Tickets, Runs: c.Runs, WikiPages: c.WikiPages})
+}
+
+type deleteBody struct {
+	Confirm string `json:"confirm"`
+}
+
+func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
+	body, ok := httpx.DecodeJSON[deleteBody](w, r)
+	if !ok {
+		return
+	}
+	c, err := s.DeleteProject(r.Context(), r.PathValue("key"), body.Confirm)
+	if errors.Is(err, ErrProjectBusy) {
+		httpx.WriteProblem(w, http.StatusConflict, "project_active_runs",
+			"Project has active runs",
+			"Stop or wait out the project's running and queued runs, then delete.")
+		return
+	}
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"deleted": true,
+		"counts":  countsBody{Tickets: c.Tickets, Runs: c.Runs, WikiPages: c.WikiPages},
+	})
 }
 
 // writeError maps service errors to problems: field errors → 400 validation_failed, missing

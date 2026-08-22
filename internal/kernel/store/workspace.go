@@ -23,12 +23,12 @@ func (r *WorkspaceRepo) Get(ctx context.Context) (domain.WorkspaceSettings, erro
 		SELECT default_branch, default_branch_template, default_network_policy,
 			default_daily_budget_cents, default_context_threshold_tokens,
 			default_verification_days, max_concurrent_containers, poll_interval_seconds,
-			updated_at
+			pr_size_warning_lines, updated_at
 		FROM workspace_settings WHERE id = 1`).
 		Scan(&ws.DefaultBranch, &ws.DefaultBranchTemplate, &ws.DefaultNetworkPolicy,
 			&ws.DefaultDailyBudgetCents, &ws.DefaultContextThresholdTokens,
 			&ws.DefaultVerificationDays, &ws.MaxConcurrentContainers, &ws.PollIntervalSeconds,
-			&ws.UpdatedAt)
+			&ws.PRSizeWarningLines, &ws.UpdatedAt)
 	if err != nil {
 		return domain.WorkspaceSettings{}, mapErr(err)
 	}
@@ -41,11 +41,12 @@ func (r *WorkspaceRepo) Update(ctx context.Context, ws *domain.WorkspaceSettings
 		UPDATE workspace_settings SET default_branch = ?, default_branch_template = ?,
 			default_network_policy = ?, default_daily_budget_cents = ?,
 			default_context_threshold_tokens = ?, default_verification_days = ?,
-			max_concurrent_containers = ?, poll_interval_seconds = ?, updated_at = ?
+			max_concurrent_containers = ?, poll_interval_seconds = ?,
+			pr_size_warning_lines = ?, updated_at = ?
 		WHERE id = 1`,
 		ws.DefaultBranch, ws.DefaultBranchTemplate, ws.DefaultNetworkPolicy,
 		ws.DefaultDailyBudgetCents, ws.DefaultContextThresholdTokens, ws.DefaultVerificationDays,
-		ws.MaxConcurrentContainers, ws.PollIntervalSeconds, ws.UpdatedAt)
+		ws.MaxConcurrentContainers, ws.PollIntervalSeconds, ws.PRSizeWarningLines, ws.UpdatedAt)
 	if err != nil {
 		return mapErr(err)
 	}

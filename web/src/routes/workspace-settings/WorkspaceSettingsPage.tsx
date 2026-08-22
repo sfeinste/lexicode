@@ -6,13 +6,16 @@
  *
  * Autosave per §5.11: every control saves itself, inline "Saved" indicator, no Save button.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 
 import { SaveStatus } from "../../components/SaveStatus/SaveStatus";
 import { SecretsPanel } from "../../components/SecretsPanel/SecretsPanel";
 import {
   authApi,
   secretsApi,
+  usersApi,
   type UpdateWorkspaceSettingsRequest,
   type WorkspaceSettings,
 } from "../../lib/api/client";
@@ -61,6 +64,63 @@ export function WorkspaceSettingsPage() {
   return <SettingsForm settings={settings.data} />;
 }
 
+/**
+ * Members (S37 slice): the directory plus the owner's "revoke sessions" action — the lost
+ * laptop / departing teammate lever. Revocation is immediate and audited.
+ */
+function MembersSection() {
+  const qc = useQueryClient();
+  const members = useQuery({
+    queryKey: ["users", "list"],
+    queryFn: ({ signal }) => usersApi.list(signal),
+  });
+  const [done, setDone] = useState<string | null>(null);
+  const revoke = useMutation({
+    mutationFn: (id: string) => usersApi.revokeSessions(id),
+    onSuccess: (res, id) => {
+      setDone(`Revoked ${res.revoked} session${res.revoked === 1 ? "" : "s"}.`);
+      void qc.invalidateQueries({ queryKey: ["users"] });
+      void id;
+    },
+  });
+
+  return (
+    <section aria-label="Members" className={styles.secretsSection}>
+      <h2 className={styles.sectionTitle}>Members</h2>
+      <p className={styles.lede}>
+        Revoking sessions signs a member out everywhere immediately; they can sign back in
+        with their password. The revocation is audited.
+      </p>
+      {members.data?.users.map((u) => (
+        <div key={u.id} className={styles.memberRow}>
+          <span className={styles.memberAvatar} style={{ background: u.avatar_color }}>
+            {u.display_name.slice(0, 1)}
+          </span>
+          <span className={styles.memberName}>{u.display_name}</span>
+          <button
+            type="button"
+            className={styles.revokeButton}
+            disabled={revoke.isPending}
+            onClick={() => revoke.mutate(u.id)}
+          >
+            Revoke sessions
+          </button>
+        </div>
+      ))}
+      {done !== null && (
+        <p className={styles.quiet} role="status">
+          {done}
+        </p>
+      )}
+      {revoke.isError && (
+        <p className={styles.quiet} role="alert">
+          Revocation failed: {revoke.error.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function SettingsForm({ settings }: { settings: WorkspaceSettings }) {
   const update = useUpdateWorkspaceSettings();
   const autosave = useAutosave<UpdateWorkspaceSettingsRequest>((patch) =>
@@ -80,6 +140,9 @@ function SettingsForm({ settings }: { settings: WorkspaceSettings }) {
         <h1 className={styles.title}>Workspace settings</h1>
         <SaveStatus status={autosave.status} error={autosave.error} />
       </header>
+      <nav className={styles.settingsLinks} aria-label="Workspace settings pages">
+        <Link to="/settings/audit">Audit log →</Link>
+      </nav>
       <p className={styles.lede}>
         Defaults every project inherits. A project that has not overridden a value follows
         changes made here immediately.
@@ -171,7 +234,22 @@ function SettingsForm({ settings }: { settings: WorkspaceSettings }) {
             onChange={num("poll_interval_seconds")}
           />
         </label>
+        <label className={styles.field}>
+          PR size warning (changed lines)
+          <input
+            type="number"
+            min={0}
+            defaultValue={settings.pr_size_warning_lines}
+            onChange={num("pr_size_warning_lines")}
+          />
+          <span className={styles.hint}>
+            Agent PRs above this many changed lines get a large-diff warning chip. 0 disables.
+            Projects may override.
+          </span>
+        </label>
       </div>
+
+      <MembersSection />
 
       {/*
         Claude credentials (S19, D-5): the pasted `claude setup-token` output, with health.

@@ -210,7 +210,8 @@ func activityBody(a domain.Activity) map[string]any {
 		"duration_ms": a.DurationMS, "queued_ms": a.QueuedMS,
 		"model_ms": a.ModelMS, "tool_ms": a.ToolMS,
 		"cost_cents": a.CostCents, "tokens_in": a.TokensIn, "tokens_out": a.TokensOut,
-		"created_at": a.CreatedAt,
+		"tokens_cache_read": a.TokensCacheRead,
+		"created_at":        a.CreatedAt,
 	}
 }
 

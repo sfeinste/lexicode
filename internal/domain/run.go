@@ -145,5 +145,9 @@ type Activity struct {
 	CostCents  int64
 	TokensIn   int64
 	TokensOut  int64
-	CreatedAt  string
+	// TokensCacheRead is the step's cache-read count (stamped on the first activity of each
+	// API message, like TokensIn/TokensOut). Reasoning tokens are not a separate field: the
+	// runtime reports them inside TokensOut.
+	TokensCacheRead int64
+	CreatedAt       string
 }

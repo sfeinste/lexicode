@@ -243,6 +243,70 @@ func (s *Service) Status(ctx context.Context, projectKey string) (domain.Repo, e
 	return s.st.Repos().ByProject(ctx, p.ID)
 }
 
+// RotateToken replaces the stored repository token with a new one (S37 danger zone), keeping
+// everything else about the connection. Verify-then-replace, in that order: the new token is
+// proven against the connected repo before the secret is touched, so a bad token is a 400 and
+// the old token keeps working — the repo is never left with a broken credential.
+func (s *Service) RotateToken(ctx context.Context, projectKey, token string) (domain.Repo, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return domain.Repo{}, fieldErr("token", "A personal access token is required.")
+	}
+	p, err := s.st.Projects().ByKey(ctx, projectKey)
+	if err != nil {
+		return domain.Repo{}, err
+	}
+	rp, err := s.st.Repos().ByProject(ctx, p.ID)
+	if err != nil {
+		return domain.Repo{}, err
+	}
+	forge, err := s.forge(rp.Provider)
+	if err != nil {
+		return domain.Repo{}, err
+	}
+	ref := domain.RepoRef{Owner: rp.Owner, Name: rp.Name}
+	info, err := forge.Verify(ctx, ports.Creds{Token: token}, ref)
+	if err != nil {
+		if errors.Is(err, ports.ErrMissingScope) {
+			return domain.Repo{}, fieldErr("token", err.Error())
+		}
+		return domain.Repo{}, fieldErr("token",
+			fmt.Sprintf("The new token could not access %s: %v — the old token was kept.", ref, err))
+	}
+
+	var creator string
+	if u, ok := auth.UserFrom(ctx); ok {
+		creator = u.ID
+	}
+	// secrets.Set upserts by (scope, project, name), so this replaces the GITHUB_TOKEN value
+	// in place; the repos row's token_secret_id stays valid either way.
+	secInfo, _, err := s.sec.Set(ctx, secrets.SetInput{
+		Scope: domain.SecretScopeProject, ProjectID: p.ID,
+		Name: tokenSecretName, Value: token, CreatedBy: creator,
+	})
+	if err != nil {
+		return domain.Repo{}, err
+	}
+	now := s.now()
+	secretID := secInfo.ID
+	sha, msg := info.HeadSHA, info.HeadMessage
+	rp.TokenSecretID = &secretID
+	rp.HeadSHA, rp.HeadMessage = &sha, &msg
+	rp.LastSyncedAt = &now
+	rp.UpdatedAt = now
+	if err := s.st.Repos().Update(ctx, &rp); err != nil {
+		return domain.Repo{}, err
+	}
+	if err := s.audit.Write(ctx, "repo.token.rotate",
+		audit.Target{Kind: "repo", ID: p.ID, ProjectID: p.ID,
+			Note: "repository token rotated after verification"},
+		nil, redactRepo(rp)); err != nil {
+		return domain.Repo{}, err
+	}
+	s.emit(ctx, "repo.token.rotated", p, map[string]any{"owner": rp.Owner, "name": rp.Name})
+	return rp, nil
+}
+
 // Disconnect deletes the repos row and the stored token. Everything the bootstrap imported —
 // tickets, wiki pages, triggers, agents — stays: they belong to the project, not to the
 // connection.

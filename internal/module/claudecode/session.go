@@ -99,6 +99,7 @@ type action struct {
 	modelMS  *int64
 	tokIn    int64
 	tokOut   int64
+	tokCache int64
 }
 
 // finished remembers the last completed call per tool for the retry heuristic: a new call
@@ -255,7 +256,7 @@ func (s *session) handleAssistantLocked(line *streamLine, now time.Time) {
 	// Usage attribution: each assistant event repeats its API message's usage, and one API
 	// message can arrive as several events (one per content block) — count each message id
 	// once, and stamp the tokens on the first activity it produces.
-	var tokIn, tokOut int64
+	var tokIn, tokOut, tokCacheRead int64
 	if line.Message.ID != s.lastUsageID && len(line.Message.Usage) > 0 {
 		var u apiUsage
 		if err := json.Unmarshal(line.Message.Usage, &u); err == nil {
@@ -268,7 +269,7 @@ func (s *session) handleAssistantLocked(line *streamLine, now time.Time) {
 			if delta != (domain.UsageDelta{}) {
 				s.sink.Usage(delta)
 				s.usageTotal = s.usageTotal.Add(delta)
-				tokIn, tokOut = u.InputTokens, u.OutputTokens
+				tokIn, tokOut, tokCacheRead = u.InputTokens, u.OutputTokens, u.CacheReadTokens
 			}
 		}
 		s.lastUsageID = line.Message.ID
@@ -281,7 +282,7 @@ func (s *session) handleAssistantLocked(line *streamLine, now time.Time) {
 	stamp := func(a *domain.Activity) {
 		if first {
 			a.ModelMS = &modelMS
-			a.TokensIn, a.TokensOut = tokIn, tokOut
+			a.TokensIn, a.TokensOut, a.TokensCacheRead = tokIn, tokOut, tokCacheRead
 			first = false
 		}
 	}
@@ -335,7 +336,7 @@ func (s *session) beginActionLocked(block contentBlock, stamp func(*domain.Activ
 		Attempt:  act.attempt,
 	}
 	stamp(&a)
-	act.modelMS, act.tokIn, act.tokOut = a.ModelMS, a.TokensIn, a.TokensOut
+	act.modelMS, act.tokIn, act.tokOut, act.tokCache = a.ModelMS, a.TokensIn, a.TokensOut, a.TokensCacheRead
 
 	act.seq = s.emitLocked(a, now)
 	if block.ID != "" {
@@ -370,20 +371,21 @@ func (s *session) handleUserLocked(line *streamLine, now time.Time) {
 		// Re-emit under the same Seq: the sink upserts, merging the result onto the
 		// originating action (contracts §3.2).
 		s.emitAtLocked(domain.Activity{
-			Seq:        act.seq,
-			Type:       domain.ActivityAction,
-			Level:      1,
-			ToolName:   act.tool,
-			GroupKey:   act.tool,
-			Title:      act.title,
-			Payload:    mustJSON(act.payload),
-			OK:         &okVal,
-			Attempt:    act.attempt,
-			DurationMS: &toolMS,
-			ToolMS:     &toolMS,
-			ModelMS:    act.modelMS,
-			TokensIn:   act.tokIn,
-			TokensOut:  act.tokOut,
+			Seq:             act.seq,
+			Type:            domain.ActivityAction,
+			Level:           1,
+			ToolName:        act.tool,
+			GroupKey:        act.tool,
+			Title:           act.title,
+			Payload:         mustJSON(act.payload),
+			OK:              &okVal,
+			Attempt:         act.attempt,
+			DurationMS:      &toolMS,
+			ToolMS:          &toolMS,
+			ModelMS:         act.modelMS,
+			TokensIn:        act.tokIn,
+			TokensOut:       act.tokOut,
+			TokensCacheRead: act.tokCache,
 		}, now)
 		s.lastDone[act.tool] = finished{inputKey: act.inputKey, attempt: act.attempt, failed: block.IsError}
 	}

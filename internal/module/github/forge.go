@@ -22,6 +22,7 @@ import (
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel"
 	"github.com/spruce/lexicode/internal/kernel/audit"
+	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 )
 
@@ -642,6 +643,12 @@ func (f *Forge) recordWrite(ctx context.Context, r domain.RepoRef, a domain.Acto
 		}
 		after := map[string]string{
 			"url": url, "summary": summary, "agent_id": a.AgentID, "run_id": a.RunID,
+		}
+		// Attribution (D-9, S37 acceptance): the entry names the AGENT as the actor, never
+		// the human whose token the write rode on. The audit writer reads the actor from the
+		// context, so the agent is stamped here — the one place every forge write passes.
+		if a.AgentID != "" {
+			ctx = auth.WithActor(ctx, auth.Actor{Kind: domain.ActorAgent, ID: a.AgentID})
 		}
 		if err := f.auditRec(ctx, action, target, nil, after); err != nil {
 			f.logger.Error("github: forge write succeeded but the audit row was not written",

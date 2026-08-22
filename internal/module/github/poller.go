@@ -418,11 +418,13 @@ func (p *Poller) pollPulls(ctx context.Context, t *tickState, cur domain.PollCur
 		prev, seen := prState[int64(pr.Number)]
 		acts := deriveActivities(prev, seen, pr)
 
+		detailed := false
 		if len(acts) > 0 {
 			// The detail read fills additions/deletions/files_changed, which the list
 			// endpoint does not carry (contracts §4 exposes them as pr.* fields).
 			if full, derr := p.forge.GetPullRequest(ctx, t.creds, t.repo.Ref(), pr.Number); derr == nil {
 				pr = full
+				detailed = true
 			} else {
 				p.logger.Warn("github.poll: PR detail read failed; using list data",
 					slog.Int("pr", pr.Number), slog.String("error", derr.Error()))
@@ -441,6 +443,15 @@ func (p *Poller) pollPulls(ctx context.Context, t *tickState, cur domain.PollCur
 			HeadSHA: pr.HeadSHA, State: pr.State, Draft: pr.Draft,
 			UpdatedAt:    domain.FormatTime(pr.UpdatedAt),
 			ReviewCursor: prev.ReviewCursor, // zero value ("") for unseen: a new PR's reviews are all new
+			// Size counters (S37 diff-size warning) only from the detail read — the list
+			// payload reports zeros, which would overwrite real numbers. An unchanged PR
+			// keeps whatever the last detail read learned.
+			Additions: prev.Additions,
+			Deletions: prev.Deletions,
+		}
+		if detailed {
+			adds, dels := int64(pr.Additions), int64(pr.Deletions)
+			st.Additions, st.Deletions = &adds, &dels
 		}
 		if err := p.store.PollPRState().Upsert(ctx, &st); err != nil {
 			return err

@@ -18,17 +18,18 @@ func (s *Store) Activities() *ActivitiesRepo { return &ActivitiesRepo{h: s.handl
 func (t *Tx) Activities() *ActivitiesRepo { return &ActivitiesRepo{h: t.handle()} }
 
 const activityCols = `run_id, seq, type, level, tool_name, group_key, title, payload, ok, attempt,
-	duration_ms, queued_ms, model_ms, tool_ms, cost_cents, tokens_in, tokens_out, created_at`
+	duration_ms, queued_ms, model_ms, tool_ms, cost_cents, tokens_in, tokens_out,
+	tokens_cache_read, created_at`
 
 // Append inserts one activity. A repeated (run_id, seq) surfaces as ErrUnique.
 func (r *ActivitiesRepo) Append(ctx context.Context, a *domain.Activity) error {
 	_, err := r.h.w.ExecContext(ctx, `
 		INSERT INTO activities (`+activityCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.RunID, a.Seq, string(a.Type), a.Level, a.ToolName, a.GroupKey, a.Title,
 		rawText(a.Payload, "{}"), nullBool(a.OK), a.Attempt,
 		nullInt(a.DurationMS), nullInt(a.QueuedMS), nullInt(a.ModelMS), nullInt(a.ToolMS),
-		a.CostCents, a.TokensIn, a.TokensOut, a.CreatedAt)
+		a.CostCents, a.TokensIn, a.TokensOut, a.TokensCacheRead, a.CreatedAt)
 	return mapErr(err)
 }
 
@@ -41,12 +42,12 @@ func (r *ActivitiesRepo) AppendNext(ctx context.Context, a *domain.Activity) err
 	row := r.h.w.QueryRowContext(ctx, `
 		INSERT INTO activities (`+activityCols+`)
 		VALUES (?, (SELECT COALESCE(MAX(seq), -1) + 1 FROM activities WHERE run_id = ?),
-			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING seq`,
 		a.RunID, a.RunID, string(a.Type), a.Level, a.ToolName, a.GroupKey, a.Title,
 		rawText(a.Payload, "{}"), nullBool(a.OK), a.Attempt,
 		nullInt(a.DurationMS), nullInt(a.QueuedMS), nullInt(a.ModelMS), nullInt(a.ToolMS),
-		a.CostCents, a.TokensIn, a.TokensOut, a.CreatedAt)
+		a.CostCents, a.TokensIn, a.TokensOut, a.TokensCacheRead, a.CreatedAt)
 	if err := row.Scan(&a.Seq); err != nil {
 		return mapErr(err)
 	}
@@ -61,12 +62,12 @@ func (r *ActivitiesRepo) Update(ctx context.Context, a *domain.Activity) error {
 	res, err := r.h.w.ExecContext(ctx, `
 		UPDATE activities SET type = ?, level = ?, tool_name = ?, group_key = ?, title = ?,
 			payload = ?, ok = ?, attempt = ?, duration_ms = ?, queued_ms = ?, model_ms = ?,
-			tool_ms = ?, cost_cents = ?, tokens_in = ?, tokens_out = ?
+			tool_ms = ?, cost_cents = ?, tokens_in = ?, tokens_out = ?, tokens_cache_read = ?
 		WHERE run_id = ? AND seq = ?`,
 		string(a.Type), a.Level, a.ToolName, a.GroupKey, a.Title,
 		rawText(a.Payload, "{}"), nullBool(a.OK), a.Attempt,
 		nullInt(a.DurationMS), nullInt(a.QueuedMS), nullInt(a.ModelMS), nullInt(a.ToolMS),
-		a.CostCents, a.TokensIn, a.TokensOut, a.RunID, a.Seq)
+		a.CostCents, a.TokensIn, a.TokensOut, a.TokensCacheRead, a.RunID, a.Seq)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -102,7 +103,7 @@ func (r *ActivitiesRepo) ByRunSeq(ctx context.Context, runID string, seq int64) 
 	)
 	err := row.Scan(&a.RunID, &a.Seq, &typ, &a.Level, &a.ToolName, &a.GroupKey, &a.Title,
 		&payload, &ok, &a.Attempt, &duration, &queued, &model, &toolDur,
-		&a.CostCents, &a.TokensIn, &a.TokensOut, &a.CreatedAt)
+		&a.CostCents, &a.TokensIn, &a.TokensOut, &a.TokensCacheRead, &a.CreatedAt)
 	if err != nil {
 		return domain.Activity{}, mapErr(err)
 	}
@@ -134,7 +135,7 @@ func (r *ActivitiesRepo) ForRun(ctx context.Context, runID string) ([]domain.Act
 		)
 		err := rows.Scan(&a.RunID, &a.Seq, &typ, &a.Level, &a.ToolName, &a.GroupKey, &a.Title,
 			&payload, &ok, &a.Attempt, &duration, &queued, &model, &toolDur,
-			&a.CostCents, &a.TokensIn, &a.TokensOut, &a.CreatedAt)
+			&a.CostCents, &a.TokensIn, &a.TokensOut, &a.TokensCacheRead, &a.CreatedAt)
 		if err != nil {
 			return nil, mapErr(err)
 		}

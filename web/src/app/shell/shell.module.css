@@ -312,6 +312,35 @@
   color: var(--text-3);
 }
 
+.spendChip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+}
+
+.spendChip[data-exhausted] {
+  color: var(--halt);
+}
+
+.spendCeiling {
+  color: var(--text-3);
+}
+
+/* The S37 budget-exhaustion banner: --halt is the loop/budget family (UI spec §4). */
+.budgetBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: var(--fs-body);
+  color: var(--halt);
+  background: color-mix(in srgb, var(--halt) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--halt) 35%, transparent);
+}
+
 .tabs {
   display: flex;
   align-items: stretch;

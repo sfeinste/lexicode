@@ -29,6 +29,7 @@ import type {
 } from "../../../lib/api/client";
 import { useAgentsQuery } from "../../../lib/api/agentQueries";
 import { useContextBudgetQuery } from "../../../lib/api/contextQueries";
+import { useProjectQuery } from "../../../lib/api/projectQueries";
 import {
   useRunActivitiesQuery,
   useRunDetailQuery,
@@ -36,6 +37,7 @@ import {
 } from "../../../lib/api/runQueries";
 import { useRunChainQuery } from "../../../lib/api/triggerQueries";
 import { formatDuration, formatRelativeTime, formatTokenCount } from "../../../lib/format/format";
+import { formatDiffStat, isLargeDiff } from "../../../lib/format/prSize";
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
 import { useStreamTopics } from "../../../lib/sse/useStreamTopics";
 import { ActivityDetail } from "./renderers";
@@ -444,7 +446,14 @@ function TimelineRowView({
       {a.attempt > 1 && <span className={styles.retryBadge}>×{a.attempt}</span>}
       {a.cost_cents > 0 && (
         <span className={styles.rowCost}>
-          <CostChip usd={a.cost_cents / 100} />
+          <CostChip
+            usd={a.cost_cents / 100}
+            split={{
+              inputTokens: a.tokens_in,
+              outputTokens: a.tokens_out,
+              cacheReadTokens: a.tokens_cache_read,
+            }}
+          />
         </span>
       )}
       <TimingGutter a={a} />
@@ -467,6 +476,9 @@ function ContextPane({
   outputs: RunOutput[];
 }) {
   const budget = useContextBudgetQuery(projectKey);
+  // The effective diff-size warning threshold (S37): project override or workspace default.
+  const project = useProjectQuery(projectKey);
+  const prSizeThreshold = project.data?.settings.pr_size_warning_lines.value ?? 0;
   const pr = outputs.find((o) => o.kind === "pull_request");
   const branch = outputs.find((o) => o.kind === "branch") ?? outputs.find((o) => o.kind === "partial_work");
   return (
@@ -528,6 +540,26 @@ function ContextPane({
                   <code className={styles.outputRef}>{o.ref}</code>
                 )}
                 {o.summary !== "" && <span className={styles.outputSummary}>{o.summary}</span>}
+                {o.kind === "pull_request" &&
+                  o.additions !== undefined &&
+                  o.deletions !== undefined && (
+                    <span
+                      className={styles.diffStat}
+                      data-large={
+                        isLargeDiff(o.additions, o.deletions, prSizeThreshold) || undefined
+                      }
+                    >
+                      {formatDiffStat(o.additions, o.deletions)}
+                      {isLargeDiff(o.additions, o.deletions, prSizeThreshold) && (
+                        <span
+                          className={styles.diffWarn}
+                          title={`Above the ${prSizeThreshold}-line warning threshold (project settings)`}
+                        >
+                          ⚠ large diff
+                        </span>
+                      )}
+                    </span>
+                  )}
               </li>
             ))}
           </ul>

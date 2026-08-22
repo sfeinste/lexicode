@@ -28,6 +28,7 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("POST /api/v1/projects/{key}/repo", member(s.handleConnect))
 	mux.Handle("GET /api/v1/projects/{key}/repo", member(s.handleStatus))
 	mux.Handle("DELETE /api/v1/projects/{key}/repo", member(s.handleDisconnect))
+	mux.Handle("POST /api/v1/projects/{key}/repo/token", member(s.handleRotateToken))
 	mux.Handle("PATCH /api/v1/projects/{key}/repo/network", member(s.handleUpdateNetwork))
 	mux.Handle("POST /api/v1/projects/{key}/bootstrap/preview", member(s.handlePreview))
 	mux.Handle("POST /api/v1/projects/{key}/bootstrap/apply", member(s.handleApply))
@@ -98,6 +99,28 @@ func (s *Service) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, rb)
+}
+
+type rotateTokenBody struct {
+	Token string `json:"token"`
+}
+
+func (s *Service) handleRotateToken(w http.ResponseWriter, r *http.Request) {
+	body, ok := httpx.DecodeJSON[rotateTokenBody](w, r)
+	if !ok {
+		return
+	}
+	rp, err := s.RotateToken(r.Context(), r.PathValue("key"), body.Token)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	rb, err := s.repoBody(r.Context(), rp)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, rb)
 }
 
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {

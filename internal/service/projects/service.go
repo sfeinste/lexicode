@@ -141,6 +141,144 @@ func (s *Service) Workspace(ctx context.Context) (domain.WorkspaceSettings, erro
 	return s.st.Workspace().Get(ctx)
 }
 
+// ---------------------------------------------------------------- budget -----
+
+// BudgetStatus is the project's live standing against its daily ceiling — what the header
+// spend chip and the exhaustion banner render (S37). Day scoping matches the scheduler's
+// admission check exactly: budget_ledger rows are keyed by UTC calendar day, so the ceiling
+// resets at midnight UTC — ResetsAt names that instant.
+type BudgetStatus struct {
+	SpendTodayCents int64
+	CeilingCents    int64
+	Inherited       bool // the ceiling is the workspace default, not a project override
+	Exhausted       bool // spend ≥ ceiling and the ceiling is enforcing (> 0)
+	Day             string
+	ResetsAt        string
+}
+
+// Budget reads the project's spend-vs-ceiling standing from budget_ledger — the same table
+// admission control consults (§10.2 check 4), so the banner and the scheduler can never
+// disagree. (The Home table's SpendTodayCents sums runs.cost_cents instead; the two agree in
+// steady state but this one is the enforcement view.)
+func (s *Service) Budget(ctx context.Context, key string) (BudgetStatus, error) {
+	p, err := s.st.Projects().ByKey(ctx, key)
+	if err != nil {
+		return BudgetStatus{}, err
+	}
+	ws, err := s.st.Workspace().Get(ctx)
+	if err != nil {
+		return BudgetStatus{}, err
+	}
+
+	t, err := time.Parse(time.RFC3339, s.now())
+	if err != nil {
+		t = time.Now()
+	}
+	y, m, d := t.UTC().Date()
+	day := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+
+	st := BudgetStatus{
+		CeilingCents: ws.DefaultDailyBudgetCents,
+		Inherited:    true,
+		Day:          day.Format("2006-01-02"),
+		ResetsAt:     domain.FormatTime(day.AddDate(0, 0, 1)),
+	}
+	if p.DailyBudgetCents != nil {
+		st.CeilingCents = *p.DailyBudgetCents
+		st.Inherited = false
+	}
+	spent, err := s.st.Budget().ProjectDay(ctx, st.Day, p.ID)
+	if err != nil {
+		return BudgetStatus{}, err
+	}
+	st.SpendTodayCents = spent
+	st.Exhausted = st.CeilingCents > 0 && spent >= st.CeilingCents
+	return st, nil
+}
+
+// ---------------------------------------------------------------- delete -----
+
+// ErrProjectBusy is returned by DeleteProject while the project still has non-terminal runs.
+// The HTTP layer maps it to 409: stop or finish the runs, then delete.
+var ErrProjectBusy = errors.New("projects: the project has runs that have not finished")
+
+// DeleteCounts mirrors store.ProjectDeleteCounts for callers of this package.
+type DeleteCounts = store.ProjectDeleteCounts
+
+// Counts returns what a deletion of this project would remove — the numbers the danger-zone
+// confirm dialog names before anything is typed.
+func (s *Service) Counts(ctx context.Context, key string) (DeleteCounts, error) {
+	p, err := s.st.Projects().ByKey(ctx, key)
+	if err != nil {
+		return DeleteCounts{}, err
+	}
+	return s.st.Projects().CountProjectRows(ctx, p.ID)
+}
+
+// DeleteProject hard-deletes a project after the S37 typed confirmation: confirm must equal
+// the project key exactly — enforced here, not in the UI, so no client can skip it. Every
+// dependent row goes in one transaction (store.DeleteProjectCascade); the project's audit
+// history survives detached to workspace scope, and the deletion itself is audited at
+// workspace level — an entry that, by construction, outlives the project.
+func (s *Service) DeleteProject(ctx context.Context, key, confirm string) (DeleteCounts, error) {
+	p, err := s.st.Projects().ByKey(ctx, key)
+	if err != nil {
+		return DeleteCounts{}, err
+	}
+	if confirm != p.Key {
+		return DeleteCounts{}, &ValidationError{Fields: []httpx.FieldError{{
+			Field:   "confirm",
+			Message: fmt.Sprintf("Type the project key %s to confirm deletion.", p.Key),
+		}}}
+	}
+	active, err := s.st.Runs().NonTerminalCountForProject(ctx, p.ID)
+	if err != nil {
+		return DeleteCounts{}, err
+	}
+	if active > 0 {
+		return DeleteCounts{}, ErrProjectBusy
+	}
+
+	var counts DeleteCounts
+	if err := s.st.Tx(ctx, func(tx *store.Tx) error {
+		counts, err = tx.DeleteProjectCascade(ctx, p.ID)
+		return err
+	}); err != nil {
+		return DeleteCounts{}, err
+	}
+
+	// Workspace-level (no ProjectID): the entry must not reference the row it records the
+	// death of.
+	if err := s.audit.Write(ctx, "project.delete",
+		audit.Target{Kind: "project", ID: p.ID,
+			Note: fmt.Sprintf("deleted project %s (%s)", p.Key, p.Name)},
+		p, map[string]int64{
+			"tickets": counts.Tickets, "runs": counts.Runs, "wiki_pages": counts.WikiPages,
+		}); err != nil {
+		return DeleteCounts{}, err
+	}
+	s.emitDeleted(ctx, p)
+	return counts, nil
+}
+
+// emitDeleted publishes project.deleted without a project scope — an event row scoped to the
+// deleted project would violate the events.project_id foreign key.
+func (s *Service) emitDeleted(ctx context.Context, p domain.Project) {
+	if s.bus == nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"project": map[string]string{"id": p.ID, "key": p.Key, "name": p.Name},
+	})
+	e := domain.Event{Kind: "project.deleted", SubjectKind: "project",
+		Payload: payload, OccurredAt: s.now()}
+	stampActor(ctx, &e)
+	if err := s.bus.Emit(ctx, e); err != nil {
+		s.logger.Error("projects: emit failed",
+			slog.String("kind", "project.deleted"), slog.String("error", err.Error()))
+	}
+}
+
 // ---------------------------------------------------------------- create -----
 
 // CreateInput is what a new project needs. Color defaults when empty.
@@ -235,6 +373,7 @@ type UpdatePatch struct {
 	DailyBudgetCents       OptInt
 	ContextThresholdTokens OptInt
 	VerificationDays       OptInt
+	PRSizeWarningLines     OptInt
 }
 
 // UpdateProject applies a patch. Archive transitions get their own audit action and event so
@@ -285,6 +424,7 @@ func (s *Service) UpdateProject(ctx context.Context, key string, patch UpdatePat
 		{"daily_budget_cents", patch.DailyBudgetCents},
 		{"context_threshold_tokens", patch.ContextThresholdTokens},
 		{"verification_days", patch.VerificationDays},
+		{"pr_size_warning_lines", patch.PRSizeWarningLines},
 	} {
 		if f.opt.Set && !f.opt.Null && f.opt.Value < 0 {
 			errs = append(errs, httpx.FieldError{Field: f.name, Message: "Must be zero or more."})
@@ -297,6 +437,7 @@ func (s *Service) UpdateProject(ctx context.Context, key string, patch UpdatePat
 	p.DailyBudgetCents = patch.DailyBudgetCents.apply(p.DailyBudgetCents)
 	p.ContextThresholdTokens = patch.ContextThresholdTokens.apply(p.ContextThresholdTokens)
 	p.VerificationDays = patch.VerificationDays.apply(p.VerificationDays)
+	p.PRSizeWarningLines = patch.PRSizeWarningLines.apply(p.PRSizeWarningLines)
 
 	action, event := "project.update", "project.updated"
 	if patch.Archived != nil {
@@ -334,6 +475,7 @@ type WorkspacePatch struct {
 	DefaultVerificationDays       *int64
 	MaxConcurrentContainers       *int64
 	PollIntervalSeconds           *int64
+	PRSizeWarningLines            *int64
 }
 
 // UpdateWorkspace rewrites the single workspace_settings row. Projects with null settings
@@ -388,6 +530,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, patch WorkspacePatch) (do
 		*dst = *v
 	}
 	setNonNeg("default_daily_budget_cents", &ws.DefaultDailyBudgetCents, patch.DefaultDailyBudgetCents)
+	setNonNeg("pr_size_warning_lines", &ws.PRSizeWarningLines, patch.PRSizeWarningLines)
 	setNonNeg("default_context_threshold_tokens", &ws.DefaultContextThresholdTokens, patch.DefaultContextThresholdTokens)
 	setPos("default_verification_days", &ws.DefaultVerificationDays, patch.DefaultVerificationDays)
 	setPos("max_concurrent_containers", &ws.MaxConcurrentContainers, patch.MaxConcurrentContainers)

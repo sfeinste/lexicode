@@ -20,6 +20,7 @@ import type { InheritedInt, Project, UpdateProjectRequest } from "../../../lib/a
 import { useProjectQuery, useUpdateProject } from "../../../lib/api/projectQueries";
 import { useAutosave } from "../../../lib/autosave";
 import { BoardSection } from "./BoardSection";
+import { DangerZoneSection } from "./DangerZoneSection";
 import { RepositorySection } from "./RepositorySection";
 import { SecretsSection } from "./SecretsSection";
 import styles from "./settings.module.css";
@@ -35,7 +36,7 @@ const SECTIONS: Array<{ id: string; label: string; enabled: boolean }> = [
   { id: "triggers", label: "Triggers", enabled: false },
   { id: "members", label: "Members & access", enabled: false },
   { id: "notifications", label: "Notifications", enabled: false },
-  { id: "danger", label: "Danger zone", enabled: false },
+  { id: "danger", label: "Danger zone", enabled: true },
 ];
 
 export function ProjectSettingsPage() {
@@ -84,6 +85,8 @@ export function ProjectSettingsPage() {
           <SecretsSection projectKey={key} />
         ) : section === "repository" ? (
           <RepositorySection projectKey={key} />
+        ) : section === "danger" ? (
+          <DangerZoneSection project={project.data} />
         ) : (
           <GeneralSection project={project.data} />
         )}
@@ -170,33 +173,16 @@ function GeneralSection({ project }: { project: Project }) {
           onChange={(v) => autosave.queue({ verification_days: v })}
           flush={autosave.flush}
         />
+        <InheritedNumberField
+          label="PR size warning (changed lines; 0 disables)"
+          field={s.pr_size_warning_lines}
+          format={(v) => String(v)}
+          onChange={(v) => autosave.queue({ pr_size_warning_lines: v })}
+          flush={autosave.flush}
+        />
 
-        <div className={styles.archiveRow}>
-          {project.archived_at ? (
-            <button
-              className={styles.secondaryButton}
-              onClick={() => {
-                autosave.queue({ archived: false });
-                autosave.flush();
-              }}
-            >
-              Unarchive project
-            </button>
-          ) : (
-            <button
-              className={styles.dangerButton}
-              onClick={() => {
-                autosave.queue({ archived: true });
-                autosave.flush();
-              }}
-            >
-              Archive project
-            </button>
-          )}
-          <span className={styles.quiet}>
-            Archived projects disappear from Home and the rail; nothing is deleted.
-          </span>
-        </div>
+        {/* Archive moved to the Danger zone section (S37) with the other destructive-ish
+            controls; the mutation is unchanged. */}
       </div>
     </section>
   );

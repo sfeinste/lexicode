@@ -17,17 +17,17 @@ func (s *Store) Projects() *ProjectsRepo { return &ProjectsRepo{h: s.handle()} }
 func (t *Tx) Projects() *ProjectsRepo { return &ProjectsRepo{h: t.handle()} }
 
 const projectCols = `id, key, name, description, color, owner_id, agent_guidance,
-	daily_budget_cents, context_threshold_tokens, verification_days, ticket_seq,
-	archived_at, created_at, updated_at`
+	daily_budget_cents, context_threshold_tokens, verification_days, pr_size_warning_lines,
+	ticket_seq, archived_at, created_at, updated_at`
 
 // Create inserts a project. A duplicate key surfaces as ErrUnique.
 func (r *ProjectsRepo) Create(ctx context.Context, p *domain.Project) error {
 	_, err := r.h.w.ExecContext(ctx, `
 		INSERT INTO projects (`+projectCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Key, p.Name, p.Description, p.Color, p.OwnerID, p.AgentGuidance,
 		nullInt(p.DailyBudgetCents), nullInt(p.ContextThresholdTokens),
-		nullInt(p.VerificationDays), p.TicketSeq,
+		nullInt(p.VerificationDays), nullInt(p.PRSizeWarningLines), p.TicketSeq,
 		nullStr(p.ArchivedAt), p.CreatedAt, p.UpdatedAt)
 	return mapErr(err)
 }
@@ -70,11 +70,12 @@ func (r *ProjectsRepo) Update(ctx context.Context, p *domain.Project) error {
 	res, err := r.h.w.ExecContext(ctx, `
 		UPDATE projects SET name = ?, description = ?, color = ?, owner_id = ?,
 			agent_guidance = ?, daily_budget_cents = ?, context_threshold_tokens = ?,
-			verification_days = ?, archived_at = ?, updated_at = ?
+			verification_days = ?, pr_size_warning_lines = ?, archived_at = ?, updated_at = ?
 		WHERE id = ?`,
 		p.Name, p.Description, p.Color, p.OwnerID, p.AgentGuidance,
 		nullInt(p.DailyBudgetCents), nullInt(p.ContextThresholdTokens),
-		nullInt(p.VerificationDays), nullStr(p.ArchivedAt), p.UpdatedAt, p.ID)
+		nullInt(p.VerificationDays), nullInt(p.PRSizeWarningLines),
+		nullStr(p.ArchivedAt), p.UpdatedAt, p.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -124,12 +125,12 @@ func (r *ProjectsRepo) MemberIDs(ctx context.Context, projectID string) ([]strin
 
 func scanProject(row rowScanner) (domain.Project, error) {
 	var (
-		p                        domain.Project
-		budget, threshold, verif sql.NullInt64
-		archived                 sql.NullString
+		p                                domain.Project
+		budget, threshold, verif, prSize sql.NullInt64
+		archived                         sql.NullString
 	)
 	err := row.Scan(&p.ID, &p.Key, &p.Name, &p.Description, &p.Color, &p.OwnerID,
-		&p.AgentGuidance, &budget, &threshold, &verif, &p.TicketSeq,
+		&p.AgentGuidance, &budget, &threshold, &verif, &prSize, &p.TicketSeq,
 		&archived, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return domain.Project{}, mapErr(err)
@@ -137,6 +138,7 @@ func scanProject(row rowScanner) (domain.Project, error) {
 	p.DailyBudgetCents = intPtr(budget)
 	p.ContextThresholdTokens = intPtr(threshold)
 	p.VerificationDays = intPtr(verif)
+	p.PRSizeWarningLines = intPtr(prSize)
 	p.ArchivedAt = strPtr(archived)
 	return p, nil
 }

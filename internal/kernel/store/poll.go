@@ -70,7 +70,8 @@ func (t *Tx) PollPRState() *PollPRStateRepo { return &PollPRStateRepo{h: t.handl
 // ForProject returns every recorded PR state of the project, keyed by PR number.
 func (r *PollPRStateRepo) ForProject(ctx context.Context, projectID string) (map[int64]domain.PollPRState, error) {
 	rows, err := r.h.r.QueryContext(ctx, `
-		SELECT project_id, number, head_sha, state, draft, updated_at, review_cursor
+		SELECT project_id, number, head_sha, state, draft, updated_at, review_cursor,
+			additions, deletions
 		FROM poll_pr_state WHERE project_id = ?`, projectID)
 	if err != nil {
 		return nil, mapErr(err)
@@ -80,14 +81,17 @@ func (r *PollPRStateRepo) ForProject(ctx context.Context, projectID string) (map
 	out := make(map[int64]domain.PollPRState)
 	for rows.Next() {
 		var (
-			st    domain.PollPRState
-			draft int64
+			st         domain.PollPRState
+			draft      int64
+			adds, dels sql.NullInt64
 		)
 		if err := rows.Scan(&st.ProjectID, &st.Number, &st.HeadSHA, &st.State, &draft,
-			&st.UpdatedAt, &st.ReviewCursor); err != nil {
+			&st.UpdatedAt, &st.ReviewCursor, &adds, &dels); err != nil {
 			return nil, mapErr(err)
 		}
 		st.Draft = draft != 0
+		st.Additions = intPtr(adds)
+		st.Deletions = intPtr(dels)
 		out[st.Number] = st
 	}
 	return out, rows.Err()
@@ -96,13 +100,15 @@ func (r *PollPRStateRepo) ForProject(ctx context.Context, projectID string) (map
 // Upsert writes one PR's state, inserting or replacing on the (project, number) key.
 func (r *PollPRStateRepo) Upsert(ctx context.Context, st *domain.PollPRState) error {
 	_, err := r.h.w.ExecContext(ctx, `
-		INSERT INTO poll_pr_state (project_id, number, head_sha, state, draft, updated_at, review_cursor)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO poll_pr_state (project_id, number, head_sha, state, draft, updated_at,
+			review_cursor, additions, deletions)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (project_id, number) DO UPDATE SET
 			head_sha = excluded.head_sha, state = excluded.state, draft = excluded.draft,
-			updated_at = excluded.updated_at, review_cursor = excluded.review_cursor`,
+			updated_at = excluded.updated_at, review_cursor = excluded.review_cursor,
+			additions = excluded.additions, deletions = excluded.deletions`,
 		st.ProjectID, st.Number, st.HeadSHA, st.State, boolInt(st.Draft),
-		st.UpdatedAt, st.ReviewCursor)
+		st.UpdatedAt, st.ReviewCursor, nullInt(st.Additions), nullInt(st.Deletions))
 	return mapErr(err)
 }
 

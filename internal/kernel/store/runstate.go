@@ -184,6 +184,18 @@ func (r *RunsRepo) ActiveCount(ctx context.Context) (int64, error) {
 	return n, mapErr(err)
 }
 
+// NonTerminalCountForProject counts a project's runs that have not ended — queued included,
+// unlike the activeRunStates set, because a queued run would resurrect against deleted rows.
+// The S37 project deletion refuses while this is non-zero.
+func (r *RunsRepo) NonTerminalCountForProject(ctx context.Context, projectID string) (int64, error) {
+	var n int64
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM runs WHERE project_id = ?
+		AND state IN ('queued','provisioning','running','needs_input','awaiting_approval')`,
+		projectID).Scan(&n)
+	return n, mapErr(err)
+}
+
 // ActiveForTicket returns a ticket's non-terminal runs, oldest first — the archive-time
 // cancellation set (D-15).
 func (r *RunsRepo) ActiveForTicket(ctx context.Context, ticketID string) ([]domain.Run, error) {

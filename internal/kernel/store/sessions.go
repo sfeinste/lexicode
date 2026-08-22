@@ -60,6 +60,16 @@ func (r *SessionsRepo) Delete(ctx context.Context, id string) error {
 	return mapErr(err)
 }
 
+// DeleteForUser revokes every session of one user, returning how many were live — the S37
+// "revoke sessions" owner action. Zero is not an error: revoking a signed-out user is a no-op.
+func (r *SessionsRepo) DeleteForUser(ctx context.Context, userID string) (int64, error) {
+	res, err := r.h.w.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return res.RowsAffected()
+}
+
 // DeleteExpired removes every session that expired at or before now, returning how many.
 func (r *SessionsRepo) DeleteExpired(ctx context.Context, now string) (int64, error) {
 	res, err := r.h.w.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, now)

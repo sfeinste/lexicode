@@ -255,6 +255,18 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.st.Sessions().Delete(ctx, HashToken(token))
 }
 
+// RevokeSessions deletes every session of one user — the S37 owner action for a lost laptop
+// or a departing teammate. Returns how many sessions were live. The user must exist
+// (ErrNotFound otherwise); revoking a signed-out user succeeds with 0. The kernel's route
+// wrapper writes the audit entry — this package cannot import the audit writer (it would
+// cycle: audit reads actors from this package).
+func (s *Service) RevokeSessions(ctx context.Context, userID string) (int64, error) {
+	if _, err := s.st.Users().ByID(ctx, userID); err != nil {
+		return 0, err
+	}
+	return s.st.Sessions().DeleteForUser(ctx, userID)
+}
+
 // CreateInvite mints a one-time member invite and returns the URL path carrying the raw token.
 // Only the token's hash is stored.
 func (s *Service) CreateInvite(ctx context.Context, createdBy string) (string, domain.Invite, error) {

@@ -6,9 +6,11 @@
  */
 import { Link, Outlet, useParams } from "@tanstack/react-router";
 
+import { CostChip } from "../../components/CostChip/CostChip";
 import { TabBadge } from "../../components/TabBadge/TabBadge";
-import { useProjectQuery } from "../../lib/api/projectQueries";
+import { useProjectBudgetQuery, useProjectQuery } from "../../lib/api/projectQueries";
 import { useTriageQuery } from "../../lib/api/triageQueries";
+import { formatUSD } from "../../lib/format/format";
 import styles from "./shell.module.css";
 
 const TABS: Array<{ label: string; to: string; exact?: boolean; count?: number }> = [
@@ -28,6 +30,9 @@ export function ProjectLayout() {
   // (UI spec §2.1); TabBadge suppresses the zero.
   const triage = useTriageQuery(key);
   const triagePending = triage.data?.pending_count;
+  // The S37 spend chip: today against the ceiling, on every project screen. CostChip is the
+  // only dollar renderer (D-5); the ceiling is a configured limit, so it renders plainly.
+  const budget = useProjectBudgetQuery(key);
 
   return (
     <div className={styles.project}>
@@ -35,6 +40,19 @@ export function ProjectLayout() {
         <span className={styles.projectKey}>{key}</span>
         <span className={styles.projectName}>{project.data?.name ?? ""}</span>
         <span className={styles.projectMeta}>
+          {budget.data !== undefined && (
+            <span
+              className={styles.spendChip}
+              data-exhausted={budget.data.exhausted || undefined}
+              aria-label="Spend today against the daily ceiling"
+            >
+              <CostChip usd={budget.data.spend_today_cents / 100} />
+              <span className={styles.spendCeiling}>
+                {" / "}
+                {formatUSD(budget.data.ceiling_cents / 100)}
+              </span>
+            </span>
+          )}
           <Link
             to="/p/$key/settings"
             params={{ key }}
@@ -69,6 +87,16 @@ export function ProjectLayout() {
           ⚙
         </Link>
       </nav>
+      {budget.data?.exhausted === true && (
+        <div className={styles.budgetBanner} role="status">
+          <span aria-hidden="true">⊘</span> Daily budget reached — new runs will not start
+          until midnight UTC. {project.data?.name ?? key} has spent{" "}
+          {formatUSD(budget.data.spend_today_cents / 100)} of its{" "}
+          {formatUSD(budget.data.ceiling_cents / 100)} daily ceiling
+          {budget.data.inherited ? " (workspace default)" : ""}; it resets at{" "}
+          {new Date(budget.data.resets_at).toLocaleString()}.
+        </div>
+      )}
       <div className={styles.tabContent}>
         <Outlet />
       </div>

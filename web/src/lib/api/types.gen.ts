@@ -123,6 +123,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{id}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke every session of one user (S37 danger surface; owner only). The user is signed out everywhere immediately; the revocation is audited at workspace level with the acting owner as the actor. */
+        delete: operations["revokeUserSessions"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/modules": {
         parameters: {
             query?: never;
@@ -169,11 +186,46 @@ export interface paths {
         get: operations["getProject"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Hard-delete a project and everything in it (S37 danger zone). Owner only. The body's `confirm` must equal the project key exactly — the server enforces the typed confirmation, not the UI. Refused with 409 `project_active_runs` while the project has queued or running runs. The project's audit history survives detached to workspace scope, and the deletion itself is audited at workspace level. */
+        delete: operations["deleteProject"];
         options?: never;
         head?: never;
         /** Patch a project. Absent fields are unchanged. The inheritable settings (daily_budget_cents, context_threshold_tokens, verification_days) are tri-state: a number overrides the workspace default, an explicit null reverts to inherit. `archived` true/false archives and unarchives. */
         patch: operations["updateProject"];
+        trace?: never;
+    };
+    "/projects/{key}/budget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The project's live standing against its daily spend ceiling (S37): what the header chip and the budget-exhaustion banner render. Reads budget_ledger — the same table admission control checks — and names when the ceiling resets (midnight UTC, matching the scheduler's per-UTC-day ledger scoping). */
+        get: operations["projectBudget"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a deletion of this project would remove (S37): the counts the danger-zone confirm dialog names, archived rows included. */
+        get: operations["projectCounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/projects/{key}/overview": {
@@ -243,6 +295,23 @@ export interface paths {
         post: operations["connectRepo"];
         /** Disconnect the repository and delete the stored token. Everything a bootstrap imported — tickets, wiki pages, triggers, agents — stays with the project. */
         delete: operations["disconnectRepo"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/repo/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate the stored repository token (S37 danger zone). Verify-then-replace: the new token is proven against the connected repo first, so a bad token is a 400 and the old token keeps working — the connection is never left with a broken credential. */
+        post: operations["rotateRepoToken"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1514,6 +1583,7 @@ export interface components {
             daily_budget_cents: components["schemas"]["InheritedInt"];
             context_threshold_tokens: components["schemas"]["InheritedInt"];
             verification_days: components["schemas"]["InheritedInt"];
+            pr_size_warning_lines: components["schemas"]["InheritedInt"];
         };
         Project: {
             id: string;
@@ -1565,6 +1635,7 @@ export interface components {
             daily_budget_cents?: number | null;
             context_threshold_tokens?: number | null;
             verification_days?: number | null;
+            pr_size_warning_lines?: number | null;
         };
         ProjectOverview: {
             project: components["schemas"]["Project"];
@@ -1982,6 +2053,32 @@ export interface components {
             auto_start_delegate?: boolean;
             after_id?: string | null;
         };
+        /** @description The project's live standing against its daily ceiling (S37). `resets_at` is the next midnight UTC — budget_ledger rows are scoped to UTC calendar days, matching the scheduler's admission check. `exhausted` means spend ≥ ceiling with an enforcing (> 0) ceiling: new runs terminate as `budget exceeded` until the reset. */
+        ProjectBudget: {
+            spend_today_cents: number;
+            ceiling_cents: number;
+            /** @description The ceiling is the workspace default, not a project override. */
+            inherited: boolean;
+            exhausted: boolean;
+            /** @description The UTC ledger day, YYYY-MM-DD. */
+            day: string;
+            /** Format: date-time */
+            resets_at: string;
+        };
+        /** @description What deleting the project would remove, archived rows included (S37). */
+        ProjectCounts: {
+            tickets: number;
+            runs: number;
+            wiki_pages: number;
+        };
+        DeleteProjectRequest: {
+            /** @description Must equal the project key exactly; the server enforces it. */
+            confirm: string;
+        };
+        DeleteProjectResponse: {
+            deleted: boolean;
+            counts: components["schemas"]["ProjectCounts"];
+        };
         WorkspaceSettings: {
             default_branch: string;
             default_branch_template: string;
@@ -1992,6 +2089,8 @@ export interface components {
             default_verification_days: number;
             max_concurrent_containers: number;
             poll_interval_seconds: number;
+            /** @description Diff-size warning threshold in changed lines (additions + deletions) for agent PRs (S37; brief §7). 0 disables the warning. Projects may override. */
+            pr_size_warning_lines: number;
             /** Format: date-time */
             updated_at: string;
         };
@@ -2006,6 +2105,7 @@ export interface components {
             default_verification_days?: number;
             max_concurrent_containers?: number;
             poll_interval_seconds?: number;
+            pr_size_warning_lines?: number;
         };
         /** @description A secret's metadata (D-16). Deliberately value-free: there is no field for the stored value anywhere in this API, and no route that returns one. The UI renders "set · <relative updated_at>". */
         Secret: {
@@ -2314,6 +2414,9 @@ export interface components {
             url: string;
             summary: string;
             created_at: string;
+            /** @description Live PR line counts joined from the poller's per-PR state, present only on kind=pull_request rows the poller's detail read has seen (S37 diff-size warning). */
+            additions?: number;
+            deletions?: number;
         };
         /** @description One labelled piece of the context stack the run was given — exactly what the run detail's Context panel renders (architecture §11). `reason` is rendered verbatim. */
         RunContextItem: {
@@ -2366,6 +2469,8 @@ export interface components {
             cost_cents: number;
             tokens_in: number;
             tokens_out: number;
+            /** @description Cache-read tokens of the step's API message (the per-step cost hover's cache slice). Reasoning tokens are not reported separately by the runtime — they are inside tokens_out. */
+            tokens_cache_read: number;
             created_at: string;
         };
         RunListResponse: {
@@ -2889,6 +2994,33 @@ export interface operations {
             401: components["responses"]["Problem"];
         };
     };
+    revokeUserSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description How many live sessions were revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        revoked: number;
+                    };
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
     systemModules: {
         parameters: {
             query?: never;
@@ -2985,6 +3117,37 @@ export interface operations {
             404: components["responses"]["Problem"];
         };
     };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description The project is gone; counts name what went with it. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteProjectResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
     updateProject: {
         parameters: {
             query?: never;
@@ -3010,6 +3173,56 @@ export interface operations {
                 };
             };
             400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    projectBudget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Spend vs ceiling for the current UTC day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectBudget"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    projectCounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Row counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCounts"];
+                };
+            };
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
@@ -3233,6 +3446,38 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    rotateRepoToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The connection, now on the new token. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repo"];
+                };
+            };
+            400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

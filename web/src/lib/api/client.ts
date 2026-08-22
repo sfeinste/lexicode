@@ -14,6 +14,10 @@ export type User = components["schemas"]["User"];
 export type Invite = components["schemas"]["Invite"];
 export type ModuleStatus = components["schemas"]["ModuleStatus"];
 export type AuditListResponse = components["schemas"]["AuditListResponse"];
+export type AuditEntry = components["schemas"]["AuditEntry"];
+export type ProjectBudget = components["schemas"]["ProjectBudget"];
+export type ProjectCounts = components["schemas"]["ProjectCounts"];
+export type DeleteProjectResponse = components["schemas"]["DeleteProjectResponse"];
 export type Project = components["schemas"]["Project"];
 export type ProjectListItem = components["schemas"]["ProjectListItem"];
 export type ProjectListResponse = components["schemas"]["ProjectListResponse"];
@@ -264,6 +268,17 @@ export const projectsApi = {
     api<Project>("PATCH", `/projects/${encodeURIComponent(key)}`, { body }),
   overview: (key: string, signal?: AbortSignal) =>
     api<ProjectOverview>("GET", `/projects/${encodeURIComponent(key)}/overview`, { signal }),
+  /** Spend vs ceiling for the current UTC day (S37): the header chip and budget banner. */
+  budget: (key: string, signal?: AbortSignal) =>
+    api<ProjectBudget>("GET", `/projects/${encodeURIComponent(key)}/budget`, { signal }),
+  /** What a deletion would remove — the counts the danger-zone dialog names. */
+  counts: (key: string, signal?: AbortSignal) =>
+    api<ProjectCounts>("GET", `/projects/${encodeURIComponent(key)}/counts`, { signal }),
+  /** Hard delete (owner only). `confirm` must equal the project key; the server enforces it. */
+  remove: (key: string, confirm: string) =>
+    api<DeleteProjectResponse>("DELETE", `/projects/${encodeURIComponent(key)}`, {
+      body: { confirm },
+    }),
 };
 
 /**
@@ -417,6 +432,9 @@ export const labelsApi = {
 export const usersApi = {
   /** The member directory (S12): public display identity only, non-archived users. */
   list: (signal?: AbortSignal) => api<MemberListResponse>("GET", "/users", { signal }),
+  /** Revoke every session of one user (S37; owner only). */
+  revokeSessions: (id: string) =>
+    api<{ revoked: number }>("DELETE", `/users/${encodeURIComponent(id)}/sessions`),
 };
 
 export const workspaceApi = {
@@ -444,6 +462,11 @@ export const repoApi = {
     api<void>("DELETE", `/projects/${encodeURIComponent(projectKey)}/repo`),
   updateNetwork: (projectKey: string, body: UpdateRepoNetworkRequest) =>
     api<Repo>("PATCH", `/projects/${encodeURIComponent(projectKey)}/repo/network`, { body }),
+  /** Rotate the stored token (S37): verified against the repo before the old one is replaced. */
+  rotateToken: (projectKey: string, token: string) =>
+    api<Repo>("POST", `/projects/${encodeURIComponent(projectKey)}/repo/token`, {
+      body: { token },
+    }),
 };
 
 /**

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/spruce/lexicode/internal/domain"
@@ -174,6 +175,11 @@ type runOutputBody struct {
 	URL       string `json:"url"`
 	Summary   string `json:"summary"`
 	CreatedAt string `json:"created_at"`
+	// Additions/Deletions are live PR line counts joined from poll_pr_state for
+	// kind=pull_request rows (S37 diff-size warning). Null until the poller's detail read
+	// has seen the PR.
+	Additions *int64 `json:"additions,omitempty"`
+	Deletions *int64 `json:"deletions,omitempty"`
 }
 
 type contextItemBody struct {
@@ -188,23 +194,24 @@ type contextItemBody struct {
 }
 
 type activityBody struct {
-	Seq        int64           `json:"seq"`
-	Type       string          `json:"type"`
-	Level      int64           `json:"level"`
-	ToolName   string          `json:"tool_name"`
-	GroupKey   string          `json:"group_key"`
-	Title      string          `json:"title"`
-	Payload    json.RawMessage `json:"payload"`
-	OK         *bool           `json:"ok"`
-	Attempt    int64           `json:"attempt"`
-	DurationMS *int64          `json:"duration_ms"`
-	QueuedMS   *int64          `json:"queued_ms"`
-	ModelMS    *int64          `json:"model_ms"`
-	ToolMS     *int64          `json:"tool_ms"`
-	CostCents  int64           `json:"cost_cents"`
-	TokensIn   int64           `json:"tokens_in"`
-	TokensOut  int64           `json:"tokens_out"`
-	CreatedAt  string          `json:"created_at"`
+	Seq             int64           `json:"seq"`
+	Type            string          `json:"type"`
+	Level           int64           `json:"level"`
+	ToolName        string          `json:"tool_name"`
+	GroupKey        string          `json:"group_key"`
+	Title           string          `json:"title"`
+	Payload         json.RawMessage `json:"payload"`
+	OK              *bool           `json:"ok"`
+	Attempt         int64           `json:"attempt"`
+	DurationMS      *int64          `json:"duration_ms"`
+	QueuedMS        *int64          `json:"queued_ms"`
+	ModelMS         *int64          `json:"model_ms"`
+	ToolMS          *int64          `json:"tool_ms"`
+	CostCents       int64           `json:"cost_cents"`
+	TokensIn        int64           `json:"tokens_in"`
+	TokensCacheRead int64           `json:"tokens_cache_read"`
+	TokensOut       int64           `json:"tokens_out"`
+	CreatedAt       string          `json:"created_at"`
 }
 
 // ---------------------------------------------------------------- handlers -----
@@ -287,12 +294,34 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
+	// PR sizes for the diff-size warning: join pull_request outputs (ref = the PR number)
+	// against the poller's live per-PR state.
+	var prState map[int64]domain.PollPRState
+	for _, o := range outputs {
+		if o.Kind != domain.OutputPullRequest {
+			continue
+		}
+		if prState == nil {
+			if prState, err = s.st.PollPRState().ForProject(r.Context(), run.ProjectID); err != nil {
+				s.writeError(w, err)
+				return
+			}
+		}
+	}
 	outBodies := make([]runOutputBody, 0, len(outputs))
 	for _, o := range outputs {
-		outBodies = append(outBodies, runOutputBody{
+		ob := runOutputBody{
 			ID: o.ID, Kind: string(o.Kind), Ref: o.Ref, URL: o.URL,
 			Summary: o.Summary, CreatedAt: o.CreatedAt,
-		})
+		}
+		if o.Kind == domain.OutputPullRequest {
+			if n, perr := strconv.ParseInt(o.Ref, 10, 64); perr == nil {
+				if st, ok := prState[n]; ok {
+					ob.Additions, ob.Deletions = st.Additions, st.Deletions
+				}
+			}
+		}
+		outBodies = append(outBodies, ob)
 	}
 	itemBodies := make([]contextItemBody, 0, len(items))
 	for _, it := range items {
@@ -336,7 +365,8 @@ func (s *Service) handleActivities(w http.ResponseWriter, r *http.Request) {
 			Attempt: a.Attempt, DurationMS: a.DurationMS,
 			QueuedMS: a.QueuedMS, ModelMS: a.ModelMS, ToolMS: a.ToolMS,
 			CostCents: a.CostCents, TokensIn: a.TokensIn, TokensOut: a.TokensOut,
-			CreatedAt: a.CreatedAt,
+			TokensCacheRead: a.TokensCacheRead,
+			CreatedAt:       a.CreatedAt,
 		})
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"activities": out})

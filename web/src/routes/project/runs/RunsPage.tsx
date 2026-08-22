@@ -286,11 +286,19 @@ export function RunsPage() {
                     className={styles.runLink}
                   >
                     <StatusDot
-                      status={r.state}
+                      // Budget-exceeded terminations render in the halt family (§4.1: budget
+                      // exceeded is --halt, not --fail), distinct from ordinary failures.
+                      status={
+                        r.state === "failed" && r.state_reason === "budget exceeded"
+                          ? "budget_exceeded"
+                          : r.state
+                      }
                       label={
                         r.state === "queued" && r.hold_reason !== ""
                           ? `Queued — ${r.hold_reason}`
-                          : undefined
+                          : r.state === "failed" && r.state_reason === "budget exceeded"
+                            ? "Budget exceeded"
+                            : undefined
                       }
                     />
                   </Link>

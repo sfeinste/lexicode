@@ -16,6 +16,8 @@ export const projectKeys = {
   list: (archived: boolean) => ["projects", "list", { archived }] as const,
   detail: (key: string) => ["projects", "detail", key] as const,
   overview: (key: string) => ["projects", "overview", key] as const,
+  budget: (key: string) => ["projects", "budget", key] as const,
+  counts: (key: string) => ["projects", "counts", key] as const,
 };
 
 export function useProjectsQuery(opts?: { archived?: boolean }) {
@@ -37,6 +39,36 @@ export function useProjectOverviewQuery(key: string) {
   return useQuery({
     queryKey: projectKeys.overview(key),
     queryFn: ({ signal }) => projectsApi.overview(key, signal),
+  });
+}
+
+/**
+ * The S37 budget standing: header chip + exhaustion banner. Refetched on an interval so the
+ * banner appears without a navigation once the scheduler starts failing runs.
+ */
+export function useProjectBudgetQuery(key: string) {
+  return useQuery({
+    queryKey: projectKeys.budget(key),
+    queryFn: ({ signal }) => projectsApi.budget(key, signal),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useProjectCountsQuery(key: string, enabled = true) {
+  return useQuery({
+    queryKey: projectKeys.counts(key),
+    queryFn: ({ signal }) => projectsApi.counts(key, signal),
+    enabled,
+  });
+}
+
+export function useDeleteProject(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (confirm: string) => projectsApi.remove(key, confirm),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: projectKeys.all });
+    },
   });
 }
 

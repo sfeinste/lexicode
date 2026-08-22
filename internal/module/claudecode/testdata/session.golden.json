@@ -33,6 +33,7 @@
     "CostCents": 0,
     "TokensIn": 0,
     "TokensOut": 0,
+    "TokensCacheRead": 0,
     "CreatedAt": "2026-01-02T15:04:05.200Z"
   },
   {
@@ -55,6 +56,7 @@
     "CostCents": 0,
     "TokensIn": 12,
     "TokensOut": 45,
+    "TokensCacheRead": 1000,
     "CreatedAt": "2026-01-02T15:04:05.300Z"
   },
   {
@@ -78,6 +80,7 @@
     "CostCents": 0,
     "TokensIn": 0,
     "TokensOut": 0,
+    "TokensCacheRead": 0,
     "CreatedAt": "2026-01-02T15:04:05.500Z"
   },
   {
@@ -111,6 +114,7 @@
     "CostCents": 0,
     "TokensIn": 10,
     "TokensOut": 30,
+    "TokensCacheRead": 2000,
     "CreatedAt": "2026-01-02T15:04:05.700Z"
   },
   {
@@ -141,6 +145,7 @@
     "CostCents": 0,
     "TokensIn": 8,
     "TokensOut": 25,
+    "TokensCacheRead": 2000,
     "CreatedAt": "2026-01-02T15:04:05.900Z"
   },
   {
@@ -174,6 +179,7 @@
     "CostCents": 0,
     "TokensIn": 6,
     "TokensOut": 20,
+    "TokensCacheRead": 2100,
     "CreatedAt": "2026-01-02T15:04:06.100Z"
   },
   {
@@ -200,6 +206,7 @@
     "CostCents": 0,
     "TokensIn": 5,
     "TokensOut": 15,
+    "TokensCacheRead": 2100,
     "CreatedAt": "2026-01-02T15:04:06.300Z"
   },
   {
@@ -222,6 +229,7 @@
     "CostCents": 0,
     "TokensIn": 0,
     "TokensOut": 0,
+    "TokensCacheRead": 0,
     "CreatedAt": "2026-01-02T15:04:06.400Z"
   },
   {
@@ -245,6 +253,7 @@
     "CostCents": 0,
     "TokensIn": 7,
     "TokensOut": 18,
+    "TokensCacheRead": 2200,
     "CreatedAt": "2026-01-02T15:04:06.600Z"
   },
   {
@@ -272,6 +281,7 @@
     "CostCents": 0,
     "TokensIn": 4,
     "TokensOut": 12,
+    "TokensCacheRead": 2200,
     "CreatedAt": "2026-01-02T15:04:06.800Z"
   },
   {
@@ -294,6 +304,7 @@
     "CostCents": 21,
     "TokensIn": 0,
     "TokensOut": 0,
+    "TokensCacheRead": 0,
     "CreatedAt": "2026-01-02T15:04:06.900Z"
   }
 ]

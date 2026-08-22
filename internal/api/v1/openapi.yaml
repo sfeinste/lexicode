@@ -120,6 +120,28 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MemberListResponse" }
         "401": { $ref: "#/components/responses/Problem" }
+  /users/{id}/sessions:
+    delete:
+      operationId: revokeUserSessions
+      summary: >
+        Revoke every session of one user (S37 danger surface; owner only). The user is signed
+        out everywhere immediately; the revocation is audited at workspace level with the
+        acting owner as the actor.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: How many live sessions were revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: { type: integer }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /system/modules:
     get:
       operationId: systemModules
@@ -204,6 +226,68 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
         "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteProject
+      summary: >
+        Hard-delete a project and everything in it (S37 danger zone). Owner only. The body's
+        `confirm` must equal the project key exactly — the server enforces the typed
+        confirmation, not the UI. Refused with 409 `project_active_runs` while the project has
+        queued or running runs. The project's audit history survives detached to workspace
+        scope, and the deletion itself is audited at workspace level.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeleteProjectRequest" }
+      responses:
+        "200":
+          description: The project is gone; counts name what went with it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeleteProjectResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/budget:
+    get:
+      operationId: projectBudget
+      summary: >
+        The project's live standing against its daily spend ceiling (S37): what the header
+        chip and the budget-exhaustion banner render. Reads budget_ledger — the same table
+        admission control checks — and names when the ceiling resets (midnight UTC, matching
+        the scheduler's per-UTC-day ledger scoping).
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Spend vs ceiling for the current UTC day.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectBudget" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/counts:
+    get:
+      operationId: projectCounts
+      summary: >
+        What a deletion of this project would remove (S37): the counts the danger-zone
+        confirm dialog names, archived rows included.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Row counts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectCounts" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
@@ -353,6 +437,34 @@ paths:
         - { name: key, in: path, required: true, schema: { type: string } }
       responses:
         "204": { description: Disconnected. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/repo/token:
+    post:
+      operationId: rotateRepoToken
+      summary: >
+        Rotate the stored repository token (S37 danger zone). Verify-then-replace: the new
+        token is proven against the connected repo first, so a bad token is a 400 and the old
+        token keeps working — the connection is never left with a broken credential.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: The connection, now on the new token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+        "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
@@ -2350,11 +2462,14 @@ components:
         workspace_value: { type: integer }
     ProjectSettings:
       type: object
-      required: [daily_budget_cents, context_threshold_tokens, verification_days]
+      required:
+        [daily_budget_cents, context_threshold_tokens, verification_days,
+         pr_size_warning_lines]
       properties:
         daily_budget_cents: { $ref: "#/components/schemas/InheritedInt" }
         context_threshold_tokens: { $ref: "#/components/schemas/InheritedInt" }
         verification_days: { $ref: "#/components/schemas/InheritedInt" }
+        pr_size_warning_lines: { $ref: "#/components/schemas/InheritedInt" }
     Project:
       type: object
       required:
@@ -2419,6 +2534,7 @@ components:
         daily_budget_cents: { type: [integer, "null"] }
         context_threshold_tokens: { type: [integer, "null"] }
         verification_days: { type: [integer, "null"] }
+        pr_size_warning_lines: { type: [integer, "null"] }
     ProjectOverview:
       type: object
       required:
@@ -2991,13 +3107,51 @@ components:
         wip_limit: { type: [integer, "null"] }
         auto_start_delegate: { type: boolean }
         after_id: { type: [string, "null"] }
+    ProjectBudget:
+      type: object
+      description: >
+        The project's live standing against its daily ceiling (S37). `resets_at` is the next
+        midnight UTC — budget_ledger rows are scoped to UTC calendar days, matching the
+        scheduler's admission check. `exhausted` means spend ≥ ceiling with an enforcing
+        (> 0) ceiling: new runs terminate as `budget exceeded` until the reset.
+      required: [spend_today_cents, ceiling_cents, inherited, exhausted, day, resets_at]
+      properties:
+        spend_today_cents: { type: integer }
+        ceiling_cents: { type: integer }
+        inherited:
+          type: boolean
+          description: The ceiling is the workspace default, not a project override.
+        exhausted: { type: boolean }
+        day: { type: string, description: "The UTC ledger day, YYYY-MM-DD." }
+        resets_at: { type: string, format: date-time }
+    ProjectCounts:
+      type: object
+      description: What deleting the project would remove, archived rows included (S37).
+      required: [tickets, runs, wiki_pages]
+      properties:
+        tickets: { type: integer }
+        runs: { type: integer }
+        wiki_pages: { type: integer }
+    DeleteProjectRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm:
+          type: string
+          description: Must equal the project key exactly; the server enforces it.
+    DeleteProjectResponse:
+      type: object
+      required: [deleted, counts]
+      properties:
+        deleted: { type: boolean }
+        counts: { $ref: "#/components/schemas/ProjectCounts" }
     WorkspaceSettings:
       type: object
       required:
         [default_branch, default_branch_template, default_network_policy,
          default_daily_budget_cents, default_context_threshold_tokens,
          default_verification_days, max_concurrent_containers, poll_interval_seconds,
-         updated_at]
+         pr_size_warning_lines, updated_at]
       properties:
         default_branch: { type: string }
         default_branch_template: { type: string }
@@ -3007,6 +3161,11 @@ components:
         default_verification_days: { type: integer }
         max_concurrent_containers: { type: integer }
         poll_interval_seconds: { type: integer }
+        pr_size_warning_lines:
+          type: integer
+          description: >
+            Diff-size warning threshold in changed lines (additions + deletions) for agent
+            PRs (S37; brief §7). 0 disables the warning. Projects may override.
         updated_at: { type: string, format: date-time }
     UpdateWorkspaceSettingsRequest:
       type: object
@@ -3020,6 +3179,7 @@ components:
         default_verification_days: { type: integer }
         max_concurrent_containers: { type: integer }
         poll_interval_seconds: { type: integer }
+        pr_size_warning_lines: { type: integer }
     Secret:
       type: object
       description: >
@@ -3479,6 +3639,12 @@ components:
         url: { type: string }
         summary: { type: string }
         created_at: { type: string }
+        additions:
+          type: integer
+          description: >
+            Live PR line counts joined from the poller's per-PR state, present only on
+            kind=pull_request rows the poller's detail read has seen (S37 diff-size warning).
+        deletions: { type: integer }
     RunContextItem:
       type: object
       description: >
@@ -3533,7 +3699,8 @@ components:
       description: One step of a run's transcript, keyed (run_id, seq).
       required:
         [seq, type, level, tool_name, group_key, title, payload, ok, attempt, duration_ms,
-         queued_ms, model_ms, tool_ms, cost_cents, tokens_in, tokens_out, created_at]
+         queued_ms, model_ms, tool_ms, cost_cents, tokens_in, tokens_out,
+         tokens_cache_read, created_at]
       properties:
         seq: { type: integer }
         type:
@@ -3555,6 +3722,12 @@ components:
         cost_cents: { type: integer }
         tokens_in: { type: integer }
         tokens_out: { type: integer }
+        tokens_cache_read:
+          type: integer
+          description: >
+            Cache-read tokens of the step's API message (the per-step cost hover's cache
+            slice). Reasoning tokens are not reported separately by the runtime — they are
+            inside tokens_out.
         created_at: { type: string }
     RunListResponse:
       type: object

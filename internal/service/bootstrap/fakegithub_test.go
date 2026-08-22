@@ -21,6 +21,9 @@ type fakeGitHub struct {
 	branch string
 	files  map[string]string // path → content
 	issues []fakeIssue
+	// rejectToken, when set, makes the repo read answer 401 for requests carrying this
+	// token — the S37 rotate-token test's "bad new token" case.
+	rejectToken string
 }
 
 type fakeIssue struct {
@@ -38,6 +41,11 @@ func newFakeGitHub(t *testing.T, files map[string]string, issues []fakeIssue) *f
 	base := fmt.Sprintf("/repos/%s/%s", g.owner, g.repo)
 
 	mux.HandleFunc("GET "+base, func(w http.ResponseWriter, r *http.Request) {
+		if g.rejectToken != "" && strings.Contains(r.Header.Get("Authorization"), g.rejectToken) {
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSON(w, map[string]any{"message": "Bad credentials"})
+			return
+		}
 		w.Header().Set("X-OAuth-Scopes", "repo") // classic PAT with the full repo scope
 		writeJSON(w, map[string]any{
 			"name": g.repo, "owner": map[string]any{"login": g.owner},

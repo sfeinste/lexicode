@@ -38,6 +38,7 @@ function act(over: Partial<RunActivity>): RunActivity {
     cost_cents: 0,
     tokens_in: 0,
     tokens_out: 0,
+    tokens_cache_read: 0,
     created_at: "2026-08-22T10:00:00Z",
     ...over,
   };
