@@ -704,6 +704,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{key}/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The project's triggers, oldest first, each with its rule-health aggregate: per-outcome counts over the last 50 firings, never collapsed to success/failure. */
+        get: operations["listTriggers"];
+        put?: never;
+        /** Create a trigger. The event kind and activity types must exist in the stored source's catalog; the condition tree must use contracts §4.1 operators over syntactically valid payload paths; registered action IDs get their params validated, unregistered IDs are stored and fire as `errored` until their module ships. Defaults: enabled, source github.poll, `{"all":[]}` conditions, no actions, the §6.1 loop config. */
+        post: operations["createTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triggers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One trigger with its rule-health aggregate. */
+        get: operations["getTrigger"];
+        put?: never;
+        post?: never;
+        /** Delete the trigger and its firing history. A trigger that runs or tickets still reference answers 409 `trigger_in_use` — disable it instead; history is kept. */
+        delete: operations["deleteTrigger"];
+        options?: never;
+        head?: never;
+        /** Patch a trigger. Absent fields are unchanged; the merged row is re-validated whole. `enabled: false` makes the engine skip it entirely — no evaluation, no firing rows. `cron: ""` clears the cron expression. */
+        patch: operations["updateTrigger"];
+        trace?: never;
+    };
+    "/triggers/{id}/firings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The trigger's firing history, newest first — every terminal outcome of the pipeline, including `no_action`, each with its reason in words and any interpolation warnings. */
+        get: operations["listTriggerFirings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{key}/runs": {
         parameters: {
             query?: never;
@@ -1955,11 +2009,88 @@ export interface components {
          * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;
             payload: unknown;
+        };
+        /** @description One trigger row. The JSON-valued columns pass through as stored: `conditions` is the `{all}|{any}|{field,op,value}` tree over contracts §4.1 operators, `actions` the ordered `[{action_id, params}]` list, `loop_config` the data-model §6.1 shape. `health` is present on reads that aggregate it (list/get). */
+        Trigger: {
+            id: string;
+            project_id: string;
+            name: string;
+            enabled: boolean;
+            source_id: string;
+            event: string;
+            activity_types: string[];
+            filters: components["schemas"]["TriggerFilters"];
+            conditions: unknown;
+            actions: components["schemas"]["TriggerActionRef"][];
+            loop_config: components["schemas"]["LoopConfig"];
+            cron: string | null;
+            created_by: string | null;
+            created_at: string;
+            updated_at: string;
+            health?: components["schemas"]["TriggerHealth"];
+        };
+        /** @description Stage-1 matcher filters; an absent or empty list is no constraint. */
+        TriggerFilters: {
+            branches?: string[];
+            paths?: string[];
+            labels?: string[];
+        };
+        /** @description One THEN step, executed in list order. */
+        TriggerActionRef: {
+            action_id: string;
+            params?: unknown;
+        };
+        /** @description Data model §6.1. `daily_budget_cents: null` inherits the project ceiling. Enforced by the S27 guard; stored and validated from S26. */
+        LoopConfig: {
+            actor_suppression?: boolean;
+            debounce_seconds?: number;
+            cancel_in_progress?: boolean;
+            depth_limit?: number;
+            daily_budget_cents?: number | null;
+        };
+        /** @description Per-outcome counts over the last 50 firings — the `14 ok · 3 no action · 1 loop` breakdown, never collapsed to success/failure. */
+        TriggerHealth: {
+            counts: {
+                [key: string]: number;
+            };
+            last_fired_at: string | null;
+        };
+        /** @description Create/patch body. Every field optional; absent = unchanged (create fills defaults and requires name and event). `cron: ""` clears the expression. */
+        TriggerInput: {
+            name?: string;
+            enabled?: boolean;
+            source_id?: string;
+            event?: string;
+            activity_types?: string[];
+            filters?: components["schemas"]["TriggerFilters"];
+            conditions?: unknown;
+            actions?: components["schemas"]["TriggerActionRef"][];
+            loop_config?: components["schemas"]["LoopConfig"];
+            cron?: string;
+        };
+        TriggerListResponse: {
+            triggers: components["schemas"]["Trigger"][];
+        };
+        /** @description One terminal pipeline outcome for one (trigger, event) pair — the eight outcome classes, each with its reason in words. `warnings` carries interpolation warnings ("unknown path {{x}} rendered as empty"). */
+        TriggerFiring: {
+            id: string;
+            trigger_id: string;
+            event_id: string;
+            /** @enum {string} */
+            outcome: "succeeded" | "no_action" | "awaiting_approval" | "errored" | "debounced" | "superseded" | "loop_stopped" | "budget_exceeded";
+            reason: string;
+            run_id: string | null;
+            absorbed_by_run_id: string | null;
+            warnings: string[];
+            created_at: string;
+        };
+        TriggerFiringListResponse: {
+            firings: components["schemas"]["TriggerFiring"][];
         };
     };
     responses: {
@@ -3622,6 +3753,169 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    listTriggers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The triggers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    createTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerInput"];
+            };
+        };
+        responses: {
+            /** @description The created trigger. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Trigger"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The trigger. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Trigger"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    deleteTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    updateTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerInput"];
+            };
+        };
+        responses: {
+            /** @description The updated trigger. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Trigger"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    listTriggerFirings: {
+        parameters: {
+            query?: {
+                /** @description At most this many rows (default 50). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The firings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerFiringListResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

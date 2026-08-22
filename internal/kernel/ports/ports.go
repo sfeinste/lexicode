@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/spruce/lexicode/internal/domain"
 )
@@ -76,11 +77,71 @@ type PayloadField struct {
 // TriggerAction is one THEN verb of the trigger engine: run_agent, create_ticket, move_ticket,
 // post_comment, notify (architecture §8).
 //
-// Method set: contracts §2.5, transcribed in story S28.
+// Method set: contracts §2.5, transcribed in story S26; the five V1 implementations arrive in
+// story S28. `run_agent` must call kernel.Scheduler().Enqueue(...) and must never touch a
+// Sandbox or Runtime directly (D-14).
 type TriggerAction interface {
 	// ID is the stable identifier a trigger stores, e.g. "run_agent". It must be unique across
 	// registered actions.
 	ID() string
+	// Label is the human name the THEN dropdown shows, e.g. "Run an agent".
+	Label() string
+	// Schema drives the THEN form; fields are typed and validated.
+	Schema() ParamSchema
+	// Describe renders the configured action in words — "run agent Reviewer" — for rule cards
+	// and backtest. An error means the params are invalid for this action; the trigger CRUD
+	// surfaces it as a save-time validation failure.
+	Describe(params json.RawMessage) (string, error)
+	// Execute performs the action. The returned ActionResult's Outcome becomes (part of) the
+	// firing's outcome; an error is the `errored` outcome with the error's words as reason.
+	Execute(ctx context.Context, ac ActionContext, params json.RawMessage) (ActionResult, error)
+}
+
+// ActionContext is what an executing action gets to work with (contracts §2.5).
+type ActionContext struct {
+	Event   domain.Event
+	Trigger domain.Trigger
+	Project domain.Project
+
+	// Interp resolves a `{{...}}` template against the event's normalized payload —
+	// interpolation only, never control flow (brief §6.6). It returns the rendered string plus
+	// any warnings ("unknown path …"); the engine collects those onto the firing row.
+	Interp func(string) (string, []string)
+
+	// Kernel is the *kernel.Kernel. Contracts §2.5 types this field `*kernel.Kernel`, but the
+	// kernel package imports ports (architecture §2.1's dependency rule), so the concrete type
+	// cannot be named here without an import cycle. Actions assert it back:
+	// `k := ac.Kernel.(*kernel.Kernel)` — asserting to the kernel is not a violation of the
+	// "no type assertions to concrete module types" rule, which is about modules.
+	Kernel any
+}
+
+// ActionResult is one action's outcome (contracts §2.5).
+type ActionResult struct {
+	// Outcome is succeeded, awaiting_approval, errored or no_action — the stage-4 subset of
+	// the eight firing outcome classes.
+	Outcome domain.FiringOutcome
+	// RunID is the run the action enqueued, when it enqueued one.
+	RunID string
+	// Note is a human sentence for the firing's reason column ("enqueued run for Reviewer").
+	Note string
+}
+
+// ParamSchema describes a TriggerAction's parameters. Contracts §2.5 names this type without
+// pinning its shape; this is the minimal typed form the THEN editor renders from. S28's
+// actions fill it in.
+type ParamSchema struct {
+	Fields []ParamField `json:"fields"`
+}
+
+// ParamField is one typed action parameter.
+type ParamField struct {
+	Key      string   `json:"key"`
+	Label    string   `json:"label"`
+	Type     string   `json:"type"` // "text" | "number" | "bool" | "enum" | "agent" | "template"
+	Required bool     `json:"required"`
+	Enum     []string `json:"enum,omitempty"`
+	Help     string   `json:"help,omitempty"`
 }
 
 // ContextProvider contributes context to an agent run — project facts, wiki pages, repository

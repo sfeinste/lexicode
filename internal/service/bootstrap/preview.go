@@ -522,10 +522,10 @@ func triggerRow(cand TriggerCandidate, projectID, createdBy, now string) domain.
 	var conditions, actions string
 	switch cand.ID {
 	case "agent-pr-review":
-		conditions = `{"all":[{"field":"pr.author_is_agent","op":"bool:is","value":true}]}`
+		conditions = `{"all":[{"field":"pr.author_kind","op":"enum.is","value":"agent"}]}`
 		actions = `[{"action_id":"run_agent","params":{"agent_name":"Reviewer","prompt":""}}]`
 	case "ci-failed-fix":
-		conditions = `{"all":[{"field":"check_suite.conclusion","op":"text:equals","value":"failure"}]}`
+		conditions = `{"all":[{"field":"check.conclusion","op":"enum.is","value":"failure"}]}`
 		actions = `[{"action_id":"run_agent","params":{"agent_name":"Dev","prompt":""}}]`
 	}
 	var by *string

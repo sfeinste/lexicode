@@ -1169,6 +1169,121 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/triggers:
+    get:
+      operationId: listTriggers
+      summary: >
+        The project's triggers, oldest first, each with its rule-health aggregate: per-outcome
+        counts over the last 50 firings, never collapsed to success/failure.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The triggers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TriggerListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createTrigger
+      summary: >
+        Create a trigger. The event kind and activity types must exist in the stored source's
+        catalog; the condition tree must use contracts §4.1 operators over syntactically valid
+        payload paths; registered action IDs get their params validated, unregistered IDs are
+        stored and fire as `errored` until their module ships. Defaults: enabled, source
+        github.poll, `{"all":[]}` conditions, no actions, the §6.1 loop config.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TriggerInput" }
+      responses:
+        "201":
+          description: The created trigger.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Trigger" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /triggers/{id}:
+    get:
+      operationId: getTrigger
+      summary: One trigger with its rule-health aggregate.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The trigger.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Trigger" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    patch:
+      operationId: updateTrigger
+      summary: >
+        Patch a trigger. Absent fields are unchanged; the merged row is re-validated whole.
+        `enabled: false` makes the engine skip it entirely — no evaluation, no firing rows.
+        `cron: ""` clears the cron expression.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TriggerInput" }
+      responses:
+        "200":
+          description: The updated trigger.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Trigger" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteTrigger
+      summary: >
+        Delete the trigger and its firing history. A trigger that runs or tickets still
+        reference answers 409 `trigger_in_use` — disable it instead; history is kept.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /triggers/{id}/firings:
+    get:
+      operationId: listTriggerFirings
+      summary: >
+        The trigger's firing history, newest first — every terminal outcome of the pipeline,
+        including `no_action`, each with its reason in words and any interpolation warnings.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500 }
+          description: At most this many rows (default 50).
+      responses:
+        "200":
+          description: The firings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TriggerFiringListResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /projects/{key}/runs:
     get:
       operationId: listRuns
@@ -2913,6 +3028,9 @@ components:
         - board.updated
         - triage.created
         - trigger.fired
+        - trigger.created
+        - trigger.updated
+        - trigger.deleted
         - notification.updated
         - wiki.proposed
         - provision.step
@@ -2924,3 +3042,133 @@ components:
       properties:
         topic: { type: string }
         payload: {}
+    Trigger:
+      type: object
+      description: >
+        One trigger row. The JSON-valued columns pass through as stored: `conditions` is the
+        `{all}|{any}|{field,op,value}` tree over contracts §4.1 operators, `actions` the
+        ordered `[{action_id, params}]` list, `loop_config` the data-model §6.1 shape. `health`
+        is present on reads that aggregate it (list/get).
+      required:
+        [id, project_id, name, enabled, source_id, event, activity_types, filters,
+         conditions, actions, loop_config, cron, created_by, created_at, updated_at]
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        enabled: { type: boolean }
+        source_id: { type: string }
+        event: { type: string }
+        activity_types:
+          type: array
+          items: { type: string }
+        filters: { $ref: "#/components/schemas/TriggerFilters" }
+        conditions: {}
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/TriggerActionRef" }
+        loop_config: { $ref: "#/components/schemas/LoopConfig" }
+        cron: { type: [string, "null"] }
+        created_by: { type: [string, "null"] }
+        created_at: { type: string }
+        updated_at: { type: string }
+        health: { $ref: "#/components/schemas/TriggerHealth" }
+    TriggerFilters:
+      type: object
+      description: Stage-1 matcher filters; an absent or empty list is no constraint.
+      properties:
+        branches:
+          type: array
+          items: { type: string }
+        paths:
+          type: array
+          items: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+    TriggerActionRef:
+      type: object
+      description: One THEN step, executed in list order.
+      required: [action_id]
+      properties:
+        action_id: { type: string }
+        params: {}
+    LoopConfig:
+      type: object
+      description: >
+        Data model §6.1. `daily_budget_cents: null` inherits the project ceiling. Enforced by
+        the S27 guard; stored and validated from S26.
+      properties:
+        actor_suppression: { type: boolean }
+        debounce_seconds: { type: integer }
+        cancel_in_progress: { type: boolean }
+        depth_limit: { type: integer }
+        daily_budget_cents: { type: [integer, "null"] }
+    TriggerHealth:
+      type: object
+      description: >
+        Per-outcome counts over the last 50 firings — the `14 ok · 3 no action · 1 loop`
+        breakdown, never collapsed to success/failure.
+      required: [counts, last_fired_at]
+      properties:
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+        last_fired_at: { type: [string, "null"] }
+    TriggerInput:
+      type: object
+      description: >
+        Create/patch body. Every field optional; absent = unchanged (create fills defaults and
+        requires name and event). `cron: ""` clears the expression.
+      properties:
+        name: { type: string }
+        enabled: { type: boolean }
+        source_id: { type: string }
+        event: { type: string }
+        activity_types:
+          type: array
+          items: { type: string }
+        filters: { $ref: "#/components/schemas/TriggerFilters" }
+        conditions: {}
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/TriggerActionRef" }
+        loop_config: { $ref: "#/components/schemas/LoopConfig" }
+        cron: { type: string }
+    TriggerListResponse:
+      type: object
+      required: [triggers]
+      properties:
+        triggers:
+          type: array
+          items: { $ref: "#/components/schemas/Trigger" }
+    TriggerFiring:
+      type: object
+      description: >
+        One terminal pipeline outcome for one (trigger, event) pair — the eight outcome
+        classes, each with its reason in words. `warnings` carries interpolation warnings
+        ("unknown path {{x}} rendered as empty").
+      required: [id, trigger_id, event_id, outcome, reason, run_id, absorbed_by_run_id,
+                 warnings, created_at]
+      properties:
+        id: { type: string }
+        trigger_id: { type: string }
+        event_id: { type: string }
+        outcome:
+          type: string
+          enum: [succeeded, no_action, awaiting_approval, errored,
+                 debounced, superseded, loop_stopped, budget_exceeded]
+        reason: { type: string }
+        run_id: { type: [string, "null"] }
+        absorbed_by_run_id: { type: [string, "null"] }
+        warnings:
+          type: array
+          items: { type: string }
+        created_at: { type: string }
+    TriggerFiringListResponse:
+      type: object
+      required: [firings]
+      properties:
+        firings:
+          type: array
+          items: { $ref: "#/components/schemas/TriggerFiring" }

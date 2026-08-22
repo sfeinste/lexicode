@@ -42,6 +42,7 @@ import (
 	runsvc "github.com/spruce/lexicode/internal/service/runs"
 	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
 	"github.com/spruce/lexicode/internal/service/tickets"
+	triggersvc "github.com/spruce/lexicode/internal/service/triggers"
 	webui "github.com/spruce/lexicode/web"
 )
 
@@ -186,6 +187,25 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// endpoints the inbox badge reads. The ticker starts alongside the bus, below.
 	notifySvc := notifysvc.New(notifysvc.Options{Store: st, Bus: b, Logger: logger})
 	notifySvc.Routes(mux, authSvc)
+	// The trigger CRUD surface (S26). Validation resolves event catalogs and registered
+	// actions through the kernel registries lazily, at request time — the modules register
+	// during k.Init below.
+	triggersSvc := triggersvc.New(triggersvc.Options{
+		Store: st, Audit: auditW, Bus: b, Logger: logger,
+		Sources: k.EventSources, Action: k.Action,
+	})
+	triggersSvc.Routes(mux, authSvc)
+	// The trigger engine (S26, architecture §8): match → conditions → guard → actions.
+	// Stage 3 is guard.Pass until S27 lands the loop-protection layers; stage 4 resolves
+	// actions from the registry, which is empty until S28 — a stored action fires as
+	// `errored` naming the missing ID, with no side effects.
+	triggerEngine := triggersvc.NewEngine(triggersvc.EngineOptions{
+		Store: st, Bus: b, Logger: logger,
+		Action: k.Action, Kernel: k,
+	})
+	if err := triggerEngine.Subscribe(b); err != nil {
+		return err
+	}
 
 	// Modules (architecture §3.1); each is one line here. actions, context and notify
 	// arrive with the stories that build them. testkit is never wired here — it ships as a
@@ -300,6 +320,13 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		defer cancel()
 		if err := b.Stop(busCtx); err != nil {
 			logger.Warn("event bus did not stop cleanly", slog.String("error", err.Error()))
+		}
+		// The engine stops after the bus: no deliveries are in flight once the bus has
+		// drained, so the workers only have their own queues left to abandon.
+		engCtx, cancelEng := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelEng()
+		if err := triggerEngine.Stop(engCtx); err != nil {
+			logger.Warn("trigger engine did not stop cleanly", slog.String("error", err.Error()))
 		}
 		logger.Info("stopped")
 	}()
