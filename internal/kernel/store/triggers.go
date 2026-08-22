@@ -85,6 +85,30 @@ func (r *TriggersRepo) Enabled(ctx context.Context, projectID string) ([]domain.
 	return out, rows.Err()
 }
 
+// EnabledBySource returns every enabled trigger stored for one event source, across all
+// projects, oldest first — the cron source's per-minute scan reads its schedule triggers
+// through this (S32).
+func (r *TriggersRepo) EnabledBySource(ctx context.Context, sourceID string) ([]domain.Trigger, error) {
+	rows, err := r.h.r.QueryContext(ctx,
+		`SELECT `+triggerCols+` FROM triggers
+		 WHERE source_id = ? AND enabled = 1 ORDER BY created_at, id`,
+		sourceID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Trigger
+	for rows.Next() {
+		tr, err := scanTrigger(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tr)
+	}
+	return out, rows.Err()
+}
+
 // Update rewrites every mutable column of the trigger row. ErrNotFound when the ID matches
 // nothing.
 func (r *TriggersRepo) Update(ctx context.Context, tr *domain.Trigger) error {

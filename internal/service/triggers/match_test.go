@@ -19,6 +19,19 @@ func prEvent(kind, activity string) domain.Event {
 	return domain.Event{Kind: kind, ActivityType: activity}
 }
 
+// scheduleTrigger / scheduleEvent model the S32 cron source's per-trigger addressing: the
+// event's subject is the trigger it fires for.
+func scheduleTrigger(id string) domain.Trigger {
+	tr := matchTrigger("schedule", `["cron"]`, `{}`)
+	tr.ID = id
+	return tr
+}
+
+func scheduleEvent(triggerID string) domain.Event {
+	return domain.Event{Kind: "schedule", ActivityType: "cron",
+		SubjectKind: "trigger", SubjectID: &triggerID}
+}
+
 func TestMatchStage(t *testing.T) {
 	payload := samplePayload()
 	cases := []struct {
@@ -54,6 +67,15 @@ func TestMatchStage(t *testing.T) {
 		{"path filter without path data is a non-match, never a silent pass",
 			matchTrigger("pull_request", `[]`, `{"paths":["src/*"]}`),
 			prEvent("pull_request", "synchronize"), false},
+		{"an event addressed to this trigger matches (the S32 cron design)",
+			scheduleTrigger("tr-a"),
+			scheduleEvent("tr-a"), true},
+		{"an event addressed to another trigger never matches, expression or not",
+			scheduleTrigger("tr-a"),
+			scheduleEvent("tr-b"), false},
+		{"an addressed event without a subject id matches nothing",
+			scheduleTrigger("tr-a"),
+			domain.Event{Kind: "schedule", ActivityType: "cron", SubjectKind: "trigger"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

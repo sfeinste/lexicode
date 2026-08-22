@@ -104,6 +104,14 @@ func (s *Service) validateWhen(tr *domain.Trigger, add func(field, msg string)) 
 		return nil
 	}
 
+	// A source that vets its own trigger fields (ports.TriggerVetter — the cron source's
+	// expression check, S32) reports save-time problems as field errors here.
+	if v, ok := src.(ports.TriggerVetter); ok {
+		for _, p := range v.VetTrigger(*tr) {
+			add(p.Field, p.Message)
+		}
+	}
+
 	var acts []string
 	if err := json.Unmarshal(tr.ActivityTypes, &acts); err != nil {
 		add("activity_types", "A JSON array of activity types.")

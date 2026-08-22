@@ -3610,7 +3610,13 @@ components:
       required: [key, kind, label]
       properties:
         key: { type: string }
-        kind: { type: string, enum: [glob-list, label-list] }
+        kind:
+          type: string
+          enum: [glob-list, label-list, cron]
+          description: >
+            "-list" kinds render as comma-separated list inputs; any other kind is a
+            single-value input ("cron" is the S32 cron source's expression, routed by the
+            editor to the trigger's dedicated `cron` column).
         label: { type: string }
     CatalogField:
       type: object

@@ -102,6 +102,21 @@ function csv(values: string[] | undefined): string {
   return (values ?? []).join(", ");
 }
 
+/**
+ * Whether a catalog filter kind is a comma-separated list. Anything else renders as a
+ * single-value input — the cron source's expression field ("cron") is the first, and any
+ * future source's scalar filter inherits the behaviour with no editor change.
+ */
+function isListKind(kind: string): boolean {
+  return kind.endsWith("-list");
+}
+
+const FILTER_PLACEHOLDERS: Record<string, string> = {
+  "glob-list": "main, release/*",
+  "label-list": "bug, urgent",
+  cron: "0 9 * * 1-5",
+};
+
 function uncsv(text: string): string[] {
   return text
     .split(",")
@@ -251,10 +266,21 @@ function WhenSection({
                 <span className={styles.fieldLabel}>{f.label}</span>
                 <input
                   type="text"
-                  value={csv(draft.filters[f.key])}
-                  placeholder={f.kind === "glob-list" ? "main, release/*" : "bug, urgent"}
+                  value={
+                    isListKind(f.kind) ? csv(draft.filters[f.key]) : (draft.filters[f.key]?.[0] ?? "")
+                  }
+                  placeholder={FILTER_PLACEHOLDERS[f.kind] ?? ""}
                   onChange={(e) =>
-                    set({ filters: { ...draft.filters, [f.key]: uncsv(e.target.value) } })
+                    set({
+                      filters: {
+                        ...draft.filters,
+                        [f.key]: isListKind(f.kind)
+                          ? uncsv(e.target.value)
+                          : e.target.value === ""
+                            ? []
+                            : [e.target.value],
+                      },
+                    })
                   }
                   aria-label={`${f.label} filter`}
                 />

@@ -2372,8 +2372,11 @@ export interface components {
         };
         CatalogFilter: {
             key: string;
-            /** @enum {string} */
-            kind: "glob-list" | "label-list";
+            /**
+             * @description "-list" kinds render as comma-separated list inputs; any other kind is a single-value input ("cron" is the S32 cron source's expression, routed by the editor to the trigger's dedicated `cron` column).
+             * @enum {string}
+             */
+            kind: "glob-list" | "label-list" | "cron";
             label: string;
         };
         CatalogField: {

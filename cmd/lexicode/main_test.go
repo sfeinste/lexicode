@@ -249,24 +249,28 @@ func TestSystemModulesIsServed(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("body %s is not the modules shape: %v", body, err)
 	}
-	if len(got.Modules) != 7 || got.Modules[0].Name != "github" ||
-		got.Modules[1].Name != "docker" || got.Modules[2].Name != "claude-code" ||
-		got.Modules[3].Name != "credentials" || got.Modules[4].Name != "context" ||
-		got.Modules[5].Name != "notify" || got.Modules[6].Name != "actions" {
-		t.Fatalf("modules = %s, want github, docker, claude-code, credentials, context, notify, actions in registration order", body)
+	if len(got.Modules) != 8 || got.Modules[0].Name != "github" ||
+		got.Modules[1].Name != "cron" || got.Modules[2].Name != "docker" ||
+		got.Modules[3].Name != "claude-code" || got.Modules[4].Name != "credentials" ||
+		got.Modules[5].Name != "context" || got.Modules[6].Name != "notify" ||
+		got.Modules[7].Name != "actions" {
+		t.Fatalf("modules = %s, want github, cron, docker, claude-code, credentials, context, notify, actions in registration order", body)
 	}
 	if got.Modules[0].State != "ready" {
 		t.Errorf("github state = %q, want ready", got.Modules[0].State)
 	}
-	if got.Modules[2].State != "ready" {
-		t.Errorf("claude-code state = %q, want ready", got.Modules[2].State)
+	if got.Modules[1].State != "ready" {
+		t.Errorf("cron state = %q, want ready", got.Modules[1].State)
 	}
 	if got.Modules[3].State != "ready" {
-		t.Errorf("credentials state = %q, want ready", got.Modules[3].State)
+		t.Errorf("claude-code state = %q, want ready", got.Modules[3].State)
+	}
+	if got.Modules[4].State != "ready" {
+		t.Errorf("credentials state = %q, want ready", got.Modules[4].State)
 	}
 	// docker's state depends on the machine: ready where a daemon is reachable, degraded
 	// where it is not (the whole point of the degraded state — boot must not require Docker).
-	if s := got.Modules[1].State; s != "ready" && s != "degraded" {
+	if s := got.Modules[2].State; s != "ready" && s != "degraded" {
 		t.Errorf("docker state = %q, want ready or degraded", s)
 	}
 }

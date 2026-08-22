@@ -72,6 +72,22 @@ type PayloadField struct {
 	Enum []string `json:"enum,omitempty"`
 }
 
+// TriggerVetter is an optional extension an EventSource may implement: save-time vetting of
+// source-specific trigger fields. The trigger CRUD asserts for it on the trigger's stored
+// source after the catalog checks pass and turns each problem into a field error on the save
+// response — which is how the cron source refuses an invalid expression with the bad segment
+// named, without the triggers service importing the module (S32; a new port, additive per
+// plan rule 2, discovered like http.Flusher).
+type TriggerVetter interface {
+	VetTrigger(tr domain.Trigger) []TriggerProblem
+}
+
+// TriggerProblem is one save-time validation problem a TriggerVetter reports.
+type TriggerProblem struct {
+	Field   string // the trigger field the problem is on, e.g. "cron"
+	Message string // a human sentence naming the problem
+}
+
 // ForgeProvider lives in forge.go (contracts §2.2, transcribed in story S14).
 
 // Sandbox lives in sandbox.go (contracts §2.3, transcribed in story S17).

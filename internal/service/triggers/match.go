@@ -24,6 +24,14 @@ func matchStage(tr domain.Trigger, e domain.Event, payload map[string]any) bool 
 	if e.Kind != tr.Event {
 		return false
 	}
+	// An event addressed to one specific trigger — subject_kind "trigger" with a subject id,
+	// the cron source's per-trigger firings (S32) — is matched only by the trigger it names.
+	// Deliberately generic (any per-trigger source inherits it): without this, every schedule
+	// trigger of a project would fire on every other schedule trigger's minutes, because the
+	// expression lives on the trigger, not in the event's kind or activity type.
+	if e.SubjectKind == "trigger" && (e.SubjectID == nil || *e.SubjectID != tr.ID) {
+		return false
+	}
 	var kinds []string
 	if len(tr.ActivityTypes) > 0 {
 		if err := json.Unmarshal(tr.ActivityTypes, &kinds); err != nil {

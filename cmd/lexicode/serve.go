@@ -32,6 +32,7 @@ import (
 	claudecodemod "github.com/spruce/lexicode/internal/module/claudecode"
 	contextmod "github.com/spruce/lexicode/internal/module/context"
 	credentialsmod "github.com/spruce/lexicode/internal/module/credentials"
+	cronmod "github.com/spruce/lexicode/internal/module/cron"
 	dockermod "github.com/spruce/lexicode/internal/module/docker"
 	githubmod "github.com/spruce/lexicode/internal/module/github"
 	notifymod "github.com/spruce/lexicode/internal/module/notify"
@@ -226,6 +227,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// plain package that only tests import.
 	ghMod := githubmod.New(githubmod.Options{BaseURL: cfg.GitHubBaseURL})
 	if err := k.RegisterModule(ghMod); err != nil {
+		return err
+	}
+	// The cron event source (S32): `schedule` · `cron` events for the triggers that store an
+	// expression. Store, logger and the bus emit are wired from the kernel in its Init.
+	if err := k.RegisterModule(cronmod.New(cronmod.Options{})); err != nil {
 		return err
 	}
 	dockerMod := dockermod.New(dockermod.Options{Host: cfg.DockerHost, ProxyPort: cfg.ProxyPort})
