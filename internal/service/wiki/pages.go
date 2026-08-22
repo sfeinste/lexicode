@@ -126,6 +126,8 @@ type Detail struct {
 	Version   int64
 	Backlinks []BacklinkGroup
 	Unlinked  []UnlinkedMention
+	// Proposal is set for state='proposed' pages: the review view's extras (S35).
+	Proposal *ProposalInfo
 }
 
 // Get returns the page detail by id.
@@ -146,7 +148,13 @@ func (s *Service) Get(ctx context.Context, id string) (Detail, error) {
 	if err != nil {
 		return Detail{}, err
 	}
-	return Detail{Page: page, Version: version, Backlinks: backlinks, Unlinked: unlinked}, nil
+	d := Detail{Page: page, Version: version, Backlinks: backlinks, Unlinked: unlinked}
+	if page.State == domain.WikiProposed && page.ArchivedAt == nil {
+		if d.Proposal, err = s.proposalInfo(ctx, page); err != nil {
+			return Detail{}, err
+		}
+	}
+	return d, nil
 }
 
 // UpdatePatch is the PATCH body: every field optional, tri-state where null means "clear".

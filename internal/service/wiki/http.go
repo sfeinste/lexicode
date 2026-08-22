@@ -2,6 +2,7 @@ package wiki
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -11,14 +12,16 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
-// Routes registers the S33 endpoints (contracts §5 route inventory):
+// Routes registers the S33 + S35 endpoints (contracts §5 route inventory):
 //
 //	GET|POST /api/v1/projects/{key}/wiki        the tree list · create a page
 //	GET      /api/v1/projects/{key}/wiki/search ?q= — FTS5, primary navigation
 //	GET|PATCH|DELETE /api/v1/wiki/{id}          detail (with backlinks) · edit · archive
+//	POST     /api/v1/wiki/{id}/accept           accept an agent proposal (S35)
+//	POST     /api/v1/wiki/{id}/dismiss          dismiss an agent proposal (S35)
 //
-// The proposal verbs (POST /wiki/{id}/{accept|dismiss}), the context-budget read and the
-// repo import are later stories (S34/S35).
+// The context-budget read lives in contextres (S34); the repo import in bootstrap (S35 —
+// it needs the forge seams).
 func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	member := func(h http.HandlerFunc) http.Handler {
 		return a.RequireAuth(a.RequireProjectMember(h))
@@ -34,6 +37,8 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("GET /api/v1/wiki/{id}", viaPage(s.handleGet))
 	mux.Handle("PATCH /api/v1/wiki/{id}", viaPage(s.handlePatch))
 	mux.Handle("DELETE /api/v1/wiki/{id}", viaPage(s.handleArchive))
+	mux.Handle("POST /api/v1/wiki/{id}/accept", viaPage(s.handleAccept))
+	mux.Handle("POST /api/v1/wiki/{id}/dismiss", viaPage(s.handleDismiss))
 }
 
 // requireMember is RequireProjectMember for the /wiki/{id} routes, whose path carries no
@@ -81,26 +86,30 @@ func (s *Service) requireMember(a *auth.Service, next http.HandlerFunc) http.Han
 // prompt-sized by design (it is injected into agent context), so one payload feeds the
 // tree, the tag index and mention autocomplete.
 type wikiPageBody struct {
-	ID            string   `json:"id"`
-	ProjectID     string   `json:"project_id"`
-	Slug          string   `json:"slug"`
-	Title         string   `json:"title"`
-	ParentID      *string  `json:"parent_id"`
-	Position      float64  `json:"position"`
-	OwnerID       *string  `json:"owner_id"`
-	VerifiedUntil *string  `json:"verified_until"`
-	AgentScope    string   `json:"agent_scope"`
-	ScopePaths    []string `json:"scope_paths"`
-	Tags          []string `json:"tags"`
-	Body          string   `json:"body"`
-	TokenEstimate int64    `json:"token_estimate"`
-	State         string   `json:"state"`
-	ImportedFrom  *string  `json:"imported_from"`
-	DemotedAt     *string  `json:"demoted_at"`
-	DemotedFrom   *string  `json:"demoted_from"`
-	ArchivedAt    *string  `json:"archived_at"`
-	CreatedAt     string   `json:"created_at"`
-	UpdatedAt     string   `json:"updated_at"`
+	ID                  string   `json:"id"`
+	ProjectID           string   `json:"project_id"`
+	Slug                string   `json:"slug"`
+	Title               string   `json:"title"`
+	ParentID            *string  `json:"parent_id"`
+	Position            float64  `json:"position"`
+	OwnerID             *string  `json:"owner_id"`
+	VerifiedUntil       *string  `json:"verified_until"`
+	AgentScope          string   `json:"agent_scope"`
+	ScopePaths          []string `json:"scope_paths"`
+	Tags                []string `json:"tags"`
+	Body                string   `json:"body"`
+	TokenEstimate       int64    `json:"token_estimate"`
+	State               string   `json:"state"`
+	ProposedByRunID     *string  `json:"proposed_by_run_id"`
+	ProposedBaseVersion *int64   `json:"proposed_base_version"`
+	ProposalTargetID    *string  `json:"proposal_target_id"`
+	ProposedReason      *string  `json:"proposed_reason"`
+	ImportedFrom        *string  `json:"imported_from"`
+	DemotedAt           *string  `json:"demoted_at"`
+	DemotedFrom         *string  `json:"demoted_from"`
+	ArchivedAt          *string  `json:"archived_at"`
+	CreatedAt           string   `json:"created_at"`
+	UpdatedAt           string   `json:"updated_at"`
 }
 
 func toWikiPageBody(p domain.WikiPage) wikiPageBody {
@@ -118,6 +127,8 @@ func toWikiPageBody(p domain.WikiPage) wikiPageBody {
 		VerifiedUntil: p.VerifiedUntil, AgentScope: string(p.AgentScope),
 		ScopePaths: scopePaths, Tags: tags, Body: p.Body,
 		TokenEstimate: p.TokenEstimate, State: string(p.State),
+		ProposedByRunID: p.ProposedByRunID, ProposedBaseVersion: p.ProposedBaseVersion,
+		ProposalTargetID: p.ProposalTargetID, ProposedReason: p.ProposedReason,
 		ImportedFrom: p.ImportedFrom, DemotedAt: p.DemotedAt, DemotedFrom: p.DemotedFrom,
 		ArchivedAt: p.ArchivedAt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
@@ -143,11 +154,27 @@ type unlinkedBody struct {
 	Paragraph string `json:"paragraph"`
 }
 
+// proposalBody is the review view's extras for a proposed page (S35): the reason, the
+// proposing run, and — for edit-proposals — the target and the bodies the diff and the
+// three-way conflict warning render from.
+type proposalBody struct {
+	Reason         string  `json:"reason"`
+	RunID          *string `json:"run_id"`
+	TargetID       *string `json:"target_id"`
+	TargetSlug     string  `json:"target_slug,omitempty"`
+	TargetTitle    string  `json:"target_title,omitempty"`
+	TargetBody     string  `json:"target_body,omitempty"`
+	BaseVersion    int64   `json:"base_version,omitempty"`
+	CurrentVersion int64   `json:"current_version,omitempty"`
+	BaseBody       string  `json:"base_body,omitempty"`
+}
+
 type wikiDetailBody struct {
 	Page      wikiPageBody   `json:"page"`
 	Version   int64          `json:"version"`
 	Backlinks []backlinkBody `json:"backlinks"`
 	Unlinked  []unlinkedBody `json:"unlinked_mentions"`
+	Proposal  *proposalBody  `json:"proposal,omitempty"`
 }
 
 // searchHitBody carries snippets with match regions wrapped in \x01…\x02 (FTS5 snippet with
@@ -232,7 +259,37 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 	for _, u := range d.Unlinked {
 		body.Unlinked = append(body.Unlinked, unlinkedBody(u))
 	}
+	if d.Proposal != nil {
+		body.Proposal = &proposalBody{
+			Reason: d.Proposal.Reason, RunID: d.Proposal.RunID,
+			TargetID: d.Proposal.TargetID, TargetSlug: d.Proposal.TargetSlug,
+			TargetTitle: d.Proposal.TargetTitle, TargetBody: d.Proposal.TargetBody,
+			BaseVersion: d.Proposal.BaseVersion, CurrentVersion: d.Proposal.CurrentVersion,
+			BaseBody: d.Proposal.BaseBody,
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, body)
+}
+
+// handleAccept is POST /wiki/{id}/accept: the resulting live page comes back — the proposal
+// itself gone live for creates, the updated target for edits. A stale edit-proposal is the
+// 409 `wiki_proposal_conflict` problem naming both versions.
+func (s *Service) handleAccept(w http.ResponseWriter, r *http.Request) {
+	page, err := s.AcceptProposal(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"page": toWikiPageBody(page)})
+}
+
+// handleDismiss is POST /wiki/{id}/dismiss: archives the proposal, leaves the audit row.
+func (s *Service) handleDismiss(w http.ResponseWriter, r *http.Request) {
+	if err := s.DismissProposal(r.Context(), r.PathValue("id")); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type patchPageBody struct {
@@ -286,6 +343,22 @@ func (s *Service) writeError(w http.ResponseWriter, err error) {
 	if errors.As(err, &ae) {
 		httpx.WriteProblem(w, http.StatusConflict, "wiki_page_archived",
 			"Page is archived", ae.Title+" is archived and can no longer be changed.")
+		return
+	}
+	var np *NotAProposalError
+	if errors.As(err, &np) {
+		httpx.WriteProblem(w, http.StatusConflict, "wiki_not_a_proposal",
+			"Not a pending proposal",
+			np.Title+" is not a pending proposal — it may already have been accepted or dismissed.")
+		return
+	}
+	var ce *ConflictError
+	if errors.As(err, &ce) {
+		httpx.WriteProblem(w, http.StatusConflict, "wiki_proposal_conflict",
+			"The page has changed since this was proposed",
+			fmt.Sprintf("%s is now at version %d, but the proposal was written against version %d. "+
+				"Review the differences and use Edit to bring the proposal up to date.",
+				ce.TargetTitle, ce.CurrentVersion, ce.BaseVersion))
 		return
 	}
 	if errors.Is(err, store.ErrNotFound) {

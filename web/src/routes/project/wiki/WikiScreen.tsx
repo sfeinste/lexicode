@@ -24,6 +24,7 @@ import {
   useWikiSearchQuery,
 } from "../../../lib/api/wikiQueries";
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
+import { ImportDialog } from "./ImportDialog";
 import { renderSnippet } from "./snippet";
 import { buildTree, dropPosition } from "./tree";
 import styles from "./wiki.module.css";
@@ -120,6 +121,7 @@ export function WikiScreen({
   // ---- new page flow: title → created under the selected parent -----------------------
   const create = useCreateWikiPage(projectKey);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   // The selected page's root: a selected root page hosts the new page as a child; a
@@ -244,19 +246,31 @@ export function WikiScreen({
               {createError !== null && <div className={styles.error}>{createError}</div>}
             </>
           ) : (
-            <button
-              type="button"
-              className={styles.newPageBtn}
-              onClick={() => {
-                setCreating(true);
-                setCreateError(null);
-              }}
-            >
-              New page
-            </button>
+            <>
+              <button
+                type="button"
+                className={styles.newPageBtn}
+                onClick={() => {
+                  setCreating(true);
+                  setCreateError(null);
+                }}
+              >
+                New page
+              </button>
+              <button
+                type="button"
+                className={styles.newPageBtn}
+                onClick={() => setImporting(true)}
+              >
+                Import from repository
+              </button>
+            </>
           )}
         </div>
       </nav>
+      {importing && (
+        <ImportDialog projectKey={projectKey} onClose={() => setImporting(false)} />
+      )}
 
       {searching ? (
         <main className={styles.main} aria-label="Search results">

@@ -3,8 +3,8 @@
  * `verified until …` (red past due — VerifiedChip), scope badge with an edit affordance
  * (popover, five values), tags (chips link to the tag index; inline add/remove). Body:
  * MarkdownView; Edit swaps in THE Editor from S12, unchanged, with live mention sources
- * (users, agents, wiki pages, tickets). Agent proposals render read-only with a banner —
- * the accept/dismiss review is S35.
+ * (users, agents, wiki pages, tickets). Agent proposals render through ProposalView (S35):
+ * diff + reason + Accept / Edit / Dismiss.
  */
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -23,10 +23,24 @@ import {
 import { useEligibleAgents } from "../../../lib/api/agentQueries";
 import { useUpdateWikiPage, useWikiListQuery } from "../../../lib/api/wikiQueries";
 import { useMembers, useTicketList } from "../ticket/ticketData";
+import { ProposalView } from "./ProposalView";
 import { VerifiedChip } from "./VerifiedChip";
 import styles from "./wiki.module.css";
 
 export function WikiPageView({
+  projectKey,
+  detail,
+}: {
+  projectKey: string;
+  detail: WikiPageDetail;
+}) {
+  if (detail.page.state === "proposed") {
+    return <ProposalView projectKey={projectKey} detail={detail} />;
+  }
+  return <LivePageView projectKey={projectKey} detail={detail} />;
+}
+
+function LivePageView({
   projectKey,
   detail,
 }: {
@@ -117,16 +131,11 @@ export function WikiPageView({
   };
 
   const owner = members.find((m: Member) => m.id === page.owner_id);
+  // LivePageView never renders proposals (ProposalView does) — the gates stay as defense.
   const proposed = page.state === "proposed";
 
   return (
     <main className={styles.main} aria-label={`Wiki page ${page.title}`}>
-      {proposed && (
-        <div className={styles.proposedBanner}>
-          PROPOSED — an agent suggested this page; review (accept / edit / dismiss) arrives
-          with proposals. It is read-only until then and never auto-written.
-        </div>
-      )}
       <header className={styles.pageHeader}>
         <div className={styles.titleRow}>
           {editingTitle ? (

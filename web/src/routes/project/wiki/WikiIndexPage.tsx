@@ -1,13 +1,15 @@
 /*
  * /p/:key/wiki — the wiki index (S33): with `?tag=` the pages carrying that tag; without,
  * the tag index (flat tags with counts) plus the §8 empty state when the project has no
- * docs yet. Import-from-repo is the bootstrap flow (S15); its detected-file CTA joins this
- * empty state when the S34/S35 wiki-import endpoint lands.
+ * docs yet — whose CTA opens the S35 import-from-repository dialog (re-runnable S15
+ * detection; also on the tree column's toolbar).
  */
+import { useState } from "react";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
 import { useWikiListQuery } from "../../../lib/api/wikiQueries";
+import { ImportDialog } from "./ImportDialog";
 import { pagesWithTag, tagIndex } from "./tree";
 import { WikiScreen } from "./WikiScreen";
 import styles from "./wiki.module.css";
@@ -18,6 +20,7 @@ export function WikiIndexPage() {
   const list = useWikiListQuery(key);
   const pages = list.data?.pages ?? [];
   const tags = tagIndex(pages);
+  const [importing, setImporting] = useState(false);
 
   return (
     <WikiScreen projectKey={key} hasSide={false}>
@@ -45,11 +48,25 @@ export function WikiIndexPage() {
             </p>
           </>
         ) : pages.length === 0 && !list.isPending ? (
-          <EmptyState
-            headline="Your project has no docs yet"
-            body="Docs here steer your agents, not just your teammates."
-            primary={<span className={styles.hint}>Create one with “New page” in the tree.</span>}
-          />
+          <>
+            <EmptyState
+              headline="Your project has no docs yet"
+              body="Docs here steer your agents, not just your teammates."
+              primary={
+                <button
+                  type="button"
+                  className={styles.primaryBtn}
+                  onClick={() => setImporting(true)}
+                >
+                  Import from repository
+                </button>
+              }
+              secondary={
+                <span className={styles.hint}>…or create one with “New page” in the tree.</span>
+              }
+            />
+            {importing && <ImportDialog projectKey={key} onClose={() => setImporting(false)} />}
+          </>
         ) : (
           <>
             <span className={styles.sectionLabel}>Tags</span>

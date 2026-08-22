@@ -21,6 +21,7 @@ type WikiPage struct {
 	ProposedByRunID     *string
 	ProposedBaseVersion *int64
 	ProposalTargetID    *string
+	ProposedReason      *string
 	ImportedFrom        *string
 	DemotedAt           *string
 	DemotedFrom         *string

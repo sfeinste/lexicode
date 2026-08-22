@@ -369,6 +369,143 @@
   margin-bottom: 12px;
 }
 
+/* ---- proposal review (S35) -------------------------------------------------------- */
+
+.proposalReason {
+  margin-top: 4px;
+  color: var(--text);
+}
+
+.proposalRunLink {
+  color: var(--accent);
+  font-size: var(--fs-body);
+}
+
+.conflictBanner {
+  padding: 6px 10px;
+  border: 1px solid var(--fail);
+  border-radius: 6px;
+  color: var(--fail);
+  font-size: var(--fs-body);
+  margin-bottom: 12px;
+}
+
+.proposalActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* The S16 diff row styles, shared shape with the directive version view. */
+.diffView {
+  margin-top: 4px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1.5;
+  background: var(--surface-2);
+}
+
+.diffView pre {
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.diffAdd {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  display: block;
+}
+
+.diffDel {
+  background: color-mix(in srgb, var(--fail) 12%, transparent);
+  display: block;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--fail) 55%, transparent);
+}
+
+.diffCtx {
+  display: block;
+  color: var(--text-2);
+}
+
+/* ---- import dialog (S35) ----------------------------------------------------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 40;
+}
+
+.dialog {
+  width: min(520px, calc(100vw - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+}
+
+.dialogTitle {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.importList {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.importRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.importCheck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.importPath {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedFlag {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* ---- edit mode -------------------------------------------------------------------- */
 
 .editActions {

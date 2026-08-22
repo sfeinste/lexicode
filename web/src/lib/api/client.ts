@@ -72,6 +72,11 @@ export type CreateWikiPageRequest = components["schemas"]["CreateWikiPageRequest
 export type UpdateWikiPageRequest = components["schemas"]["UpdateWikiPageRequest"];
 export type WikiSearchResponse = components["schemas"]["WikiSearchResponse"];
 export type WikiSearchResult = components["schemas"]["WikiSearchResult"];
+export type WikiProposalInfo = components["schemas"]["WikiProposalInfo"];
+export type AcceptWikiProposalResponse = components["schemas"]["AcceptWikiProposalResponse"];
+export type DocChoice = components["schemas"]["DocChoice"];
+export type WikiImportPreview = components["schemas"]["WikiImportPreview"];
+export type WikiImportResult = components["schemas"]["WikiImportResult"];
 export type Agent = components["schemas"]["Agent"];
 export type AgentListResponse = components["schemas"]["AgentListResponse"];
 export type AgentPermissions = components["schemas"]["AgentPermissions"];
@@ -505,6 +510,25 @@ export const wikiApi = {
       `/projects/${encodeURIComponent(projectKey)}/wiki/search?q=${encodeURIComponent(q)}`,
       { signal },
     ),
+  // The S35 proposal verbs: accept returns the resulting live page (the proposal itself
+  // for creates, the updated target for edits); a stale edit-proposal is the 409
+  // wiki_proposal_conflict problem. Dismiss archives (audit row stays behind).
+  accept: (id: string) =>
+    api<AcceptWikiProposalResponse>("POST", `/wiki/${encodeURIComponent(id)}/accept`, {
+      body: {},
+    }),
+  dismiss: (id: string) =>
+    api<void>("POST", `/wiki/${encodeURIComponent(id)}/dismiss`, { body: {} }),
+  // The S35 repo import: {preview:true} detects and marks; {files} imports the checked
+  // subset (idempotent on imported_from — importing twice never duplicates).
+  importPreview: (projectKey: string) =>
+    api<WikiImportPreview>("POST", `/projects/${encodeURIComponent(projectKey)}/wiki/import`, {
+      body: { preview: true },
+    }),
+  import: (projectKey: string, files: DocChoice[]) =>
+    api<WikiImportResult>("POST", `/projects/${encodeURIComponent(projectKey)}/wiki/import`, {
+      body: { files },
+    }),
 };
 
 /**

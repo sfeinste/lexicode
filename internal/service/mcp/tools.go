@@ -208,6 +208,9 @@ func (s *Server) toolProposeWikiPage(ctx context.Context, run domain.Run, raw js
 		CreatedAt:       nowStr,
 		UpdatedAt:       nowStr,
 	}
+	if reason := strings.TrimSpace(args.Reason); reason != "" {
+		page.ProposedReason = &reason
+	}
 
 	baseSlug := slugify(args.Slug)
 	if baseSlug == "" {

@@ -843,6 +843,57 @@ export interface paths {
         patch: operations["updateWikiPage"];
         trace?: never;
     };
+    "/wiki/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept an agent proposal (S35). A create-proposal's own row goes live (its version-1 snapshot already exists). An edit-proposal runs the three-way check first: the target's latest version must still equal `proposed_base_version` — a target that moved on is the 409 `wiki_proposal_conflict` problem naming both versions, resolved by editing the proposal, never by clobbering. A clean accept applies the proposal body to the target as a new version attributed to the proposing run and archives the proposal row. A page that is not a pending proposal is 409 `wiki_not_a_proposal`. */
+        post: operations["acceptWikiProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wiki/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss an agent proposal (S35): the proposal row is archived — never deleted, so the dismissal leaves the row and an audit entry behind. A page that is not a pending proposal is 409 `wiki_not_a_proposal`. */
+        post: operations["dismissWikiProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/wiki/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import instruction docs from the connected repository as live wiki pages (S35; D-11 import-only). `{"preview": true}` returns the detected files with proposed scopes and already-imported flags and writes nothing; `{"files": [{path, scope}]}` imports exactly the checked subset. Re-runnable: idempotency is `wiki_pages.imported_from` — a path already imported is skipped even when re-sent, so importing twice never duplicates. The same detection and page creation as the S15 bootstrap checklist's docs section. 404 when no repository is connected. */
+        post: operations["wikiImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/permission-rules": {
         parameters: {
             query?: never;
@@ -1719,7 +1770,7 @@ export interface components {
         AgentScope: "always" | "auto" | "paths" | "manual" | "never";
         /** @enum {string} */
         WikiState: "live" | "proposed";
-        /** @description One wiki page with its full front matter (data model §5). `state` distinguishes live pages from agent proposals (rendered with a PROPOSED chip; accept/dismiss is S35). Positions are fractional — drag ordering writes midpoints. */
+        /** @description One wiki page with its full front matter (data model §5). `state` distinguishes live pages from agent proposals (rendered with a PROPOSED chip; accepted/edited/dismissed through the S35 proposal verbs). The `proposed_*` columns are the proposal's provenance: which run proposed it and why, and — for edit-proposals — the target page and the version the proposal was written against. Positions are fractional — drag ordering writes midpoints. */
         WikiPage: {
             id: string;
             project_id: string;
@@ -1735,6 +1786,10 @@ export interface components {
             body: string;
             token_estimate: number;
             state: components["schemas"]["WikiState"];
+            proposed_by_run_id: string | null;
+            proposed_base_version: number | null;
+            proposal_target_id: string | null;
+            proposed_reason: string | null;
             imported_from: string | null;
             demoted_at: string | null;
             demoted_from: string | null;
@@ -1779,12 +1834,49 @@ export interface components {
             title: string;
             paragraph: string;
         };
+        /** @description The review view's extras for a proposed page (S35): why and by which run, and — for edit-proposals — the target with the bodies the diff and the three-way conflict warning render from. The target fields are absent for create-proposals (and for an edit-proposal whose target has vanished — the view degrades to the full-body rendering). `base_version` ≠ `current_version` means the target moved on: accepting as-is would 409, and the view shows both diffs up front. */
+        WikiProposalInfo: {
+            /** @description Why the agent proposed — its own words. */
+            reason: string;
+            /** @description The proposing run. */
+            run_id: string | null;
+            target_id?: string | null;
+            target_slug?: string;
+            target_title?: string;
+            /** @description The target's CURRENT body — what the diff renders against. */
+            target_body?: string;
+            /** @description The version the proposal was written against. */
+            base_version?: number;
+            /** @description The target's latest version now. */
+            current_version?: number;
+            /** @description The base version's body — the conflict view's anchor. */
+            base_body?: string;
+        };
+        AcceptWikiProposalResponse: {
+            page: components["schemas"]["WikiPage"];
+        };
+        /** @description `{"preview": true}` detects and marks, writing nothing; otherwise `files` is the checked subset to import. */
+        WikiImportRequest: {
+            preview?: boolean;
+            files?: components["schemas"]["DocChoice"][];
+        };
+        WikiImportPreview: {
+            docs: components["schemas"]["DocCandidate"][];
+        };
+        WikiImportResult: {
+            /** @description Slugs of the pages created. */
+            pages_created: string[];
+            /** @description Already-imported paths skipped. */
+            docs_skipped: string[];
+        };
         WikiPageDetail: {
             page: components["schemas"]["WikiPage"];
             /** @description Latest version number; versions append on content change only. */
             version: number;
             backlinks: components["schemas"]["WikiBacklink"][];
             unlinked_mentions: components["schemas"]["WikiUnlinkedMention"][];
+            /** @description Present when the page is a pending proposal. */
+            proposal?: components["schemas"]["WikiProposalInfo"];
         };
         /** @description Snippets wrap each match region in U+0001…U+0002; the client splits on the markers and renders its own highlight. */
         WikiSearchResult: {
@@ -2361,8 +2453,10 @@ export interface components {
             /** @description The copy-paste block, e.g. `git fetch origin && git checkout dev/PAY-14`. Empty when the run never got a branch. */
             checkout: string;
         };
-        /** @description One row of the needs-you surfaces (architecture §12). `flavor` is the §4.3 vocabulary and every renderer prints it in words (interaction rule 1). */
+        /** @description One row of the needs-you surfaces (architecture §12). `flavor` is the §4.3 vocabulary and every renderer prints it in words (interaction rule 1). `kind` discriminates the subject (S35): "run" rows are blocked runs (`id` is a run id, the row links to the run); "wiki_proposal" rows are pending agent proposals awaiting review, flavor `review` (`id` is the proposed page's id, `page_slug`/`page_title` name it, and the row links to the wiki page). S36's full inbox adds the remaining review subjects on this same shape. */
         NeedsYouRun: {
+            /** @enum {string} */
+            kind: "run" | "wiki_proposal";
             id: string;
             project_key: string;
             ticket_id: string | null;
@@ -2372,9 +2466,13 @@ export interface components {
             agent: string;
             /** @enum {string} */
             flavor: "question" | "approval" | "review" | "failure";
-            /** @description The underlying run state. */
+            /** @description The underlying run state */
             status: string;
             started_at: string;
+            /** @description Wiki-proposal rows only. */
+            page_slug?: string;
+            /** @description Wiki-proposal rows only. */
+            page_title?: string;
         };
         NeedsYouListResponse: {
             runs: components["schemas"]["NeedsYouRun"][];
@@ -4573,6 +4671,86 @@ export interface operations {
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
             409: components["responses"]["Problem"];
+        };
+    };
+    acceptWikiProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The resulting live page — the proposal itself for creates, the updated target for edits. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptWikiProposalResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    dismissWikiProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dismissed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    wikiImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WikiImportRequest"];
+            };
+        };
+        responses: {
+            /** @description The preview (`docs`) for `{"preview": true}`, the import result (`pages_created`/`docs_skipped`) otherwise. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WikiImportPreview"] | components["schemas"]["WikiImportResult"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
         };
     };
     listPermissionRules: {

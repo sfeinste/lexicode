@@ -11,16 +11,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { runsApi, type NeedsYouRun } from "../../lib/api/client";
 import { attentionKeys, useInboxQuery } from "../../lib/api/attentionQueries";
-import { NEEDS_YOU_FLAVORS } from "../project/board/TicketCard";
 import { formatRelativeTime } from "../../lib/format/format";
+import { needsYouView } from "./needsYouView";
 import styles from "./inbox.module.css";
-
-const FLAVOR_ACTIONS: Record<string, string> = {
-  question: "Answer",
-  approval: "Approve",
-  review: "View diff",
-  failure: "View run",
-};
 
 export function InboxPage() {
   const inbox = useInboxQuery();
@@ -70,15 +63,13 @@ function InboxRow({ row }: { row: NeedsYouRun }) {
       void qc.invalidateQueries({ queryKey: attentionKeys.inbox });
     },
   });
-  const flavor = NEEDS_YOU_FLAVORS[row.flavor as keyof typeof NEEDS_YOU_FLAVORS] ?? row.flavor;
+  const view = needsYouView(row);
   return (
     <li className={styles.row}>
-      <span className={styles.flavor}>▲ {flavor}</span>
-      <span className={styles.ticket}>
-        {row.ticket_key !== null ? `${row.ticket_key} · ${row.ticket_title ?? ""}` : row.agent}
-      </span>
+      <span className={styles.flavor}>▲ {view.flavorLabel}</span>
+      <span className={styles.ticket}>{view.subject}</span>
       <span className={styles.age}>{formatRelativeTime(row.started_at)}</span>
-      {row.flavor === "failure" && (
+      {!view.isProposal && row.flavor === "failure" && (
         <button
           type="button"
           className={styles.dismiss}
@@ -88,12 +79,8 @@ function InboxRow({ row }: { row: NeedsYouRun }) {
           Dismiss
         </button>
       )}
-      <Link
-        to="/p/$key/runs/$id"
-        params={{ key: row.project_key, id: row.id }}
-        className={styles.action}
-      >
-        {FLAVOR_ACTIONS[row.flavor] ?? "Open"}
+      <Link to={view.link.to} params={view.link.params} className={styles.action}>
+        {view.action}
       </Link>
     </li>
   );

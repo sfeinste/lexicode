@@ -143,6 +143,9 @@ func TestProposeWikiPageStaysProposed(t *testing.T) {
 		page.ProposedByRunID == nil || *page.ProposedByRunID != f.run.ID {
 		t.Fatalf("page = %+v, want a proposed page attributed to the run", page)
 	}
+	if page.ProposedReason == nil || *page.ProposedReason != "You corrected me twice about migrations" {
+		t.Fatalf("proposed_reason = %v, want the tool's reason persisted (S35 provenance)", page.ProposedReason)
+	}
 
 	// Zero live pages: the proposal is never auto-written.
 	for _, p := range pages {

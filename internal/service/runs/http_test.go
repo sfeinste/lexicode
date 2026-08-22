@@ -473,3 +473,64 @@ func TestNeedsYouViewAndAcknowledge(t *testing.T) {
 		t.Fatalf("needs_you after acknowledge = %d: %v", status, body)
 	}
 }
+
+// S35: pending wiki proposals join the needs-you surfaces as review-flavored rows —
+// discriminated by kind, naming the page and the proposing agent — on both the project
+// view and /inbox. Sorted after questions/approvals/failures (flavor rank).
+func TestNeedsYouIncludesWikiProposals(t *testing.T) {
+	e := newEnv(t, time.Millisecond)
+	ctx := context.Background()
+	now := domain.Now()
+
+	// The proposing run: completed, so it contributes no needs-you row of its own.
+	run := domain.Run{
+		ID: domain.NewID(), Seq: 201, ProjectID: e.project.ID, AgentID: e.agent.ID,
+		State: domain.RunCompleted, Autonomy: domain.AutonomyAuto, Model: "fake-model",
+		Effort: "medium", Prompt: "p", RuntimeID: "scripted", SandboxID: "fake",
+		SubjectKey: "repo", QueuedAt: now,
+	}
+	if err := e.st.Runs().Create(ctx, &run); err != nil {
+		t.Fatal(err)
+	}
+	reason := "You corrected me twice about migrations"
+	page := domain.WikiPage{
+		ID: domain.NewID(), ProjectID: e.project.ID, Slug: "database-migrations-proposal",
+		Title: "Database migrations", AgentScope: domain.ScopeAuto,
+		ScopePaths: []string{}, Tags: []string{}, Body: "Always use the migration tool.",
+		State: domain.WikiProposed, ProposedByRunID: &run.ID, ProposedReason: &reason,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := e.st.Wiki().CreatePage(ctx, &page); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/api/v1/projects/PAY/runs?view=needs_you", "/api/v1/inbox"} {
+		status, body := e.doJSON("GET", path, "")
+		if status != http.StatusOK {
+			t.Fatalf("%s = %d: %v", path, status, body)
+		}
+		rows := body["runs"].([]any)
+		if len(rows) != 1 {
+			t.Fatalf("%s rows = %d, want 1: %v", path, len(rows), rows)
+		}
+		row := rows[0].(map[string]any)
+		if row["kind"] != "wiki_proposal" || row["flavor"] != "review" ||
+			row["id"] != page.ID || row["page_slug"] != page.Slug ||
+			row["page_title"] != "Database migrations" || row["agent"] != "Dev" ||
+			row["project_key"] != "PAY" {
+			t.Fatalf("%s proposal row = %v", path, row)
+		}
+	}
+
+	// An archived (dismissed/accepted) proposal drops off the surfaces.
+	archived := now
+	page.ArchivedAt = &archived
+	page.UpdatedAt = now
+	if err := e.st.Wiki().UpdatePage(ctx, &page); err != nil {
+		t.Fatal(err)
+	}
+	status, body := e.doJSON("GET", "/api/v1/inbox", "")
+	if status != http.StatusOK || len(body["runs"].([]any)) != 0 {
+		t.Fatalf("inbox after archive = %d: %v", status, body)
+	}
+}

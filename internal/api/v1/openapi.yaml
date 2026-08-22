@@ -1427,6 +1427,80 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /wiki/{id}/accept:
+    post:
+      operationId: acceptWikiProposal
+      summary: >
+        Accept an agent proposal (S35). A create-proposal's own row goes live (its version-1
+        snapshot already exists). An edit-proposal runs the three-way check first: the
+        target's latest version must still equal `proposed_base_version` — a target that
+        moved on is the 409 `wiki_proposal_conflict` problem naming both versions, resolved
+        by editing the proposal, never by clobbering. A clean accept applies the proposal
+        body to the target as a new version attributed to the proposing run and archives the
+        proposal row. A page that is not a pending proposal is 409 `wiki_not_a_proposal`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: >
+            The resulting live page — the proposal itself for creates, the updated target
+            for edits.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AcceptWikiProposalResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /wiki/{id}/dismiss:
+    post:
+      operationId: dismissWikiProposal
+      summary: >
+        Dismiss an agent proposal (S35): the proposal row is archived — never deleted, so
+        the dismissal leaves the row and an audit entry behind. A page that is not a pending
+        proposal is 409 `wiki_not_a_proposal`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Dismissed.
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/wiki/import:
+    post:
+      operationId: wikiImport
+      summary: >
+        Import instruction docs from the connected repository as live wiki pages (S35; D-11
+        import-only). `{"preview": true}` returns the detected files with proposed scopes
+        and already-imported flags and writes nothing; `{"files": [{path, scope}]}` imports
+        exactly the checked subset. Re-runnable: idempotency is
+        `wiki_pages.imported_from` — a path already imported is skipped even when re-sent,
+        so importing twice never duplicates. The same detection and page creation as the S15
+        bootstrap checklist's docs section. 404 when no repository is connected.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WikiImportRequest" }
+      responses:
+        "200":
+          description: >
+            The preview (`docs`) for `{"preview": true}`, the import result
+            (`pages_created`/`docs_skipped`) otherwise.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/WikiImportPreview"
+                  - $ref: "#/components/schemas/WikiImportResult"
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /agents/{id}/permission-rules:
     get:
       operationId: listPermissionRules
@@ -2615,11 +2689,15 @@ components:
       type: object
       description: >
         One wiki page with its full front matter (data model §5). `state` distinguishes live
-        pages from agent proposals (rendered with a PROPOSED chip; accept/dismiss is S35).
-        Positions are fractional — drag ordering writes midpoints.
+        pages from agent proposals (rendered with a PROPOSED chip; accepted/edited/dismissed
+        through the S35 proposal verbs). The `proposed_*` columns are the proposal's
+        provenance: which run proposed it and why, and — for edit-proposals — the target
+        page and the version the proposal was written against. Positions are fractional —
+        drag ordering writes midpoints.
       required:
         [id, project_id, slug, title, parent_id, position, owner_id, verified_until,
-         agent_scope, scope_paths, tags, body, token_estimate, state, imported_from,
+         agent_scope, scope_paths, tags, body, token_estimate, state, proposed_by_run_id,
+         proposed_base_version, proposal_target_id, proposed_reason, imported_from,
          demoted_at, demoted_from, archived_at, created_at, updated_at]
       properties:
         id: { type: string }
@@ -2636,6 +2714,10 @@ components:
         body: { type: string }
         token_estimate: { type: integer }
         state: { $ref: "#/components/schemas/WikiState" }
+        proposed_by_run_id: { type: [string, "null"] }
+        proposed_base_version: { type: [integer, "null"] }
+        proposal_target_id: { type: [string, "null"] }
+        proposed_reason: { type: [string, "null"] }
         imported_from: { type: [string, "null"] }
         demoted_at: { type: [string, "null"] }
         demoted_from: { type: [string, "null"] }
@@ -2700,6 +2782,54 @@ components:
         slug: { type: string }
         title: { type: string }
         paragraph: { type: string }
+    WikiProposalInfo:
+      type: object
+      description: >
+        The review view's extras for a proposed page (S35): why and by which run, and — for
+        edit-proposals — the target with the bodies the diff and the three-way conflict
+        warning render from. The target fields are absent for create-proposals (and for an
+        edit-proposal whose target has vanished — the view degrades to the full-body
+        rendering). `base_version` ≠ `current_version` means the target moved on: accepting
+        as-is would 409, and the view shows both diffs up front.
+      required: [reason, run_id]
+      properties:
+        reason: { type: string, description: Why the agent proposed — its own words. }
+        run_id: { type: [string, "null"], description: The proposing run. }
+        target_id: { type: [string, "null"] }
+        target_slug: { type: string }
+        target_title: { type: string }
+        target_body: { type: string, description: The target's CURRENT body — what the diff renders against. }
+        base_version: { type: integer, description: The version the proposal was written against. }
+        current_version: { type: integer, description: The target's latest version now. }
+        base_body: { type: string, description: The base version's body — the conflict view's anchor. }
+    AcceptWikiProposalResponse:
+      type: object
+      required: [page]
+      properties:
+        page: { $ref: "#/components/schemas/WikiPage" }
+    WikiImportRequest:
+      type: object
+      description: >
+        `{"preview": true}` detects and marks, writing nothing; otherwise `files` is the
+        checked subset to import.
+      properties:
+        preview: { type: boolean }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/DocChoice" }
+    WikiImportPreview:
+      type: object
+      required: [docs]
+      properties:
+        docs:
+          type: array
+          items: { $ref: "#/components/schemas/DocCandidate" }
+    WikiImportResult:
+      type: object
+      required: [pages_created, docs_skipped]
+      properties:
+        pages_created: { type: array, items: { type: string }, description: Slugs of the pages created. }
+        docs_skipped: { type: array, items: { type: string }, description: Already-imported paths skipped. }
     WikiPageDetail:
       type: object
       required: [page, version, backlinks, unlinked_mentions]
@@ -2712,6 +2842,9 @@ components:
         unlinked_mentions:
           type: array
           items: { $ref: "#/components/schemas/WikiUnlinkedMention" }
+        proposal:
+          $ref: "#/components/schemas/WikiProposalInfo"
+          description: Present when the page is a pending proposal.
     WikiSearchResult:
       type: object
       description: >
@@ -3566,11 +3699,17 @@ components:
       type: object
       description: >
         One row of the needs-you surfaces (architecture §12). `flavor` is the §4.3
-        vocabulary and every renderer prints it in words (interaction rule 1).
+        vocabulary and every renderer prints it in words (interaction rule 1). `kind`
+        discriminates the subject (S35): "run" rows are blocked runs (`id` is a run id, the
+        row links to the run); "wiki_proposal" rows are pending agent proposals awaiting
+        review, flavor `review` (`id` is the proposed page's id, `page_slug`/`page_title`
+        name it, and the row links to the wiki page). S36's full inbox adds the remaining
+        review subjects on this same shape.
       required:
-        [id, project_key, ticket_id, ticket_key, ticket_title, agent, flavor, status,
+        [kind, id, project_key, ticket_id, ticket_key, ticket_title, agent, flavor, status,
          started_at]
       properties:
+        kind: { type: string, enum: [run, wiki_proposal] }
         id: { type: string }
         project_key: { type: string }
         ticket_id: { type: [string, "null"] }
@@ -3578,8 +3717,10 @@ components:
         ticket_title: { type: [string, "null"] }
         agent: { type: string, description: The agent's display name. }
         flavor: { type: string, enum: [question, approval, review, failure] }
-        status: { type: string, description: The underlying run state. }
+        status: { type: string, description: The underlying run state, or `proposed` for wiki-proposal rows. }
         started_at: { type: string }
+        page_slug: { type: string, description: Wiki-proposal rows only. }
+        page_title: { type: string, description: Wiki-proposal rows only. }
     NeedsYouListResponse:
       type: object
       required: [runs]

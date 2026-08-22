@@ -300,6 +300,7 @@ CREATE TABLE wiki_pages (
   proposed_by_run_id TEXT REFERENCES runs(id),
   proposed_base_version INTEGER,              -- set when the proposal edits an existing page
   proposal_target_id TEXT REFERENCES wiki_pages(id),
+  proposed_reason TEXT,                       -- the agent's own words (S35 review banner; migration 0003)
   imported_from TEXT,                         -- 'AGENTS.md' etc (D-11)
   demoted_at TEXT, demoted_from TEXT,         -- verified_until enforcement leaves a trace
   archived_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,

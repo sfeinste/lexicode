@@ -12,18 +12,9 @@ import type { NeedsYouRun, ProjectListItem } from "../../lib/api/client";
 import { useInboxQuery } from "../../lib/api/attentionQueries";
 import { useProjectsQuery } from "../../lib/api/projectQueries";
 import { formatRelativeTime, formatUSD } from "../../lib/format/format";
-import { NEEDS_YOU_FLAVORS } from "../project/board/TicketCard";
+import { needsYouView } from "../inbox/needsYouView";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import styles from "./home.module.css";
-
-/** The single inline action per card (UI spec §5.1). All four land on the run detail,
- * where answering/approving happens inline in the timeline. */
-const FLAVOR_ACTIONS: Record<string, string> = {
-  question: "Answer",
-  approval: "Approve",
-  review: "View diff",
-  failure: "View run",
-};
 
 export function HomePage() {
   const [creating, setCreating] = useState(false);
@@ -82,24 +73,18 @@ export function HomePage() {
 
 /** One blocked item, the flavor in words, one inline action (interaction rule 1). */
 function NeedsYouCard({ row }: { row: NeedsYouRun }) {
-  const flavor = NEEDS_YOU_FLAVORS[row.flavor as keyof typeof NEEDS_YOU_FLAVORS] ?? row.flavor;
+  const view = needsYouView(row);
   return (
     <div className={styles.needsYouCard}>
       <div className={styles.needsYouTop}>
         <span className={styles.needsYouProject}>{row.project_key}</span>
         <span className={styles.needsYouAge}>{formatRelativeTime(row.started_at)}</span>
       </div>
-      <div className={styles.needsYouTicket}>
-        {row.ticket_key !== null ? `${row.ticket_key} · ${row.ticket_title ?? ""}` : row.agent}
-      </div>
+      <div className={styles.needsYouTicket}>{view.subject}</div>
       <div className={styles.needsYouBottom}>
-        <span className={styles.needsYouFlavor}>▲ {flavor}</span>
-        <Link
-          to="/p/$key/runs/$id"
-          params={{ key: row.project_key, id: row.id }}
-          className={styles.needsYouAction}
-        >
-          {FLAVOR_ACTIONS[row.flavor] ?? "Open"}
+        <span className={styles.needsYouFlavor}>▲ {view.flavorLabel}</span>
+        <Link to={view.link.to} params={view.link.params} className={styles.needsYouAction}>
+          {view.action}
         </Link>
       </div>
     </div>

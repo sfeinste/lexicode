@@ -118,34 +118,12 @@ func (s *Service) Apply(ctx context.Context, projectKey string, in ApplyInput) (
 
 	// ---- docs → live wiki pages --------------------------------------------------------
 	if len(in.Docs) > 0 {
-		importedPaths, err := s.st.Wiki().ImportedPaths(ctx, p.ID)
+		created, skipped, err := s.importDocChoices(ctx, p, creds, ref, branch, in.Docs, userID)
 		if err != nil {
 			return ApplyResult{}, err
 		}
-		for _, choice := range in.Docs {
-			if _, done := importedPaths[choice.Path]; done {
-				res.DocsSkipped = append(res.DocsSkipped, choice.Path)
-				continue
-			}
-			scope := domain.AgentScope(choice.Scope)
-			if !scope.IsValid() {
-				return ApplyResult{}, fieldErr("docs",
-					fmt.Sprintf("%q is not a valid agent scope for %s.", choice.Scope, choice.Path))
-			}
-			content, ok, err := s.docs.ReadFileIfExists(ctx, creds, ref, branch, choice.Path)
-			if err != nil {
-				return ApplyResult{}, err
-			}
-			if !ok {
-				continue // deleted since the preview; nothing to import
-			}
-			slug, err := s.importDoc(ctx, p, choice, string(content), userID)
-			if err != nil {
-				return ApplyResult{}, err
-			}
-			importedPaths[choice.Path] = slug
-			res.PagesCreated = append(res.PagesCreated, slug)
-		}
+		res.PagesCreated = created
+		res.DocsSkipped = skipped
 	}
 
 	// ---- CI → disabled triggers --------------------------------------------------------

@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   wikiApi,
   type CreateWikiPageRequest,
+  type DocChoice,
   type UpdateWikiPageRequest,
 } from "./client";
 
@@ -72,6 +73,58 @@ export function useArchiveWikiPage(projectKey: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: wikiKeys.list(projectKey) });
       void qc.invalidateQueries({ queryKey: ["wikiPage"] });
+    },
+  });
+}
+
+// ---- the S35 proposal review verbs ----------------------------------------------------
+
+export function useAcceptProposal(projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => wikiApi.accept(id),
+    onSuccess: () => {
+      // Accepting reshapes the tree (a page went live / a target changed) and retires the
+      // proposal — refresh the family plus the needs-you surfaces its row sat on.
+      void qc.invalidateQueries({ queryKey: wikiKeys.list(projectKey) });
+      void qc.invalidateQueries({ queryKey: ["wikiPage"] });
+      void qc.invalidateQueries({ queryKey: ["inbox"] });
+    },
+  });
+}
+
+export function useDismissProposal(projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => wikiApi.dismiss(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: wikiKeys.list(projectKey) });
+      void qc.invalidateQueries({ queryKey: ["wikiPage"] });
+      void qc.invalidateQueries({ queryKey: ["inbox"] });
+    },
+  });
+}
+
+// ---- the S35 repo import --------------------------------------------------------------
+
+export function useWikiImportPreview(projectKey: string, open: boolean) {
+  return useQuery({
+    queryKey: ["wikiImportPreview", projectKey] as const,
+    queryFn: () => wikiApi.importPreview(projectKey),
+    enabled: open,
+    // Always re-detect when the dialog opens: the marks must reflect this moment's pages.
+    staleTime: 0,
+    gcTime: 0,
+  });
+}
+
+export function useWikiImport(projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (files: DocChoice[]) => wikiApi.import(projectKey, files),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: wikiKeys.list(projectKey) });
+      void qc.invalidateQueries({ queryKey: ["wikiImportPreview", projectKey] });
     },
   });
 }

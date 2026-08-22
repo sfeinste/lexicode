@@ -21,8 +21,8 @@ func (t *Tx) Wiki() *WikiRepo { return &WikiRepo{h: t.handle()} }
 
 const wikiCols = `id, project_id, slug, title, parent_id, position, owner_id, verified_until,
 	agent_scope, scope_paths, tags, body, token_estimate, state, proposed_by_run_id,
-	proposed_base_version, proposal_target_id, imported_from, demoted_at, demoted_from,
-	archived_at, created_at, updated_at`
+	proposed_base_version, proposal_target_id, proposed_reason, imported_from, demoted_at,
+	demoted_from, archived_at, created_at, updated_at`
 
 // CreatePage inserts a wiki page. The FTS index follows via the 0002 triggers — every
 // wiki_pages write path (insert, update, delete) syncs wiki_fts without repo code having to
@@ -38,13 +38,13 @@ func (r *WikiRepo) CreatePage(ctx context.Context, p *domain.WikiPage) error {
 	}
 	_, err = r.h.w.ExecContext(ctx, `
 		INSERT INTO wiki_pages (`+wikiCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.ProjectID, p.Slug, p.Title, nullStr(p.ParentID), p.Position,
 		nullStr(p.OwnerID), nullStr(p.VerifiedUntil), string(p.AgentScope), scopePaths, tags,
 		p.Body, p.TokenEstimate, string(p.State), nullStr(p.ProposedByRunID),
-		nullInt(p.ProposedBaseVersion), nullStr(p.ProposalTargetID), nullStr(p.ImportedFrom),
-		nullStr(p.DemotedAt), nullStr(p.DemotedFrom), nullStr(p.ArchivedAt),
-		p.CreatedAt, p.UpdatedAt)
+		nullInt(p.ProposedBaseVersion), nullStr(p.ProposalTargetID), nullStr(p.ProposedReason),
+		nullStr(p.ImportedFrom), nullStr(p.DemotedAt), nullStr(p.DemotedFrom),
+		nullStr(p.ArchivedAt), p.CreatedAt, p.UpdatedAt)
 	return mapErr(err)
 }
 
@@ -228,6 +228,56 @@ func (r *WikiRepo) LatestVersion(ctx context.Context, pageID string) (int64, err
 	return v, mapErr(err)
 }
 
+// Version returns one specific snapshot row of a page, or ErrNotFound — the S35 accept
+// flow's three-way base (the body the proposal was written against).
+func (r *WikiRepo) Version(ctx context.Context, pageID string, version int64) (domain.WikiVersion, error) {
+	v := domain.WikiVersion{PageID: pageID, Version: version}
+	var fm string
+	var userID, runID sql.NullString
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT id, title, body, front_matter, author_user_id, author_run_id, created_at
+		FROM wiki_versions WHERE page_id = ? AND version = ?`, pageID, version).
+		Scan(&v.ID, &v.Title, &v.Body, &fm, &userID, &runID, &v.CreatedAt)
+	if err != nil {
+		return domain.WikiVersion{}, mapErr(err)
+	}
+	v.AuthorUserID = strPtr(userID)
+	v.AuthorRunID = strPtr(runID)
+	if err := jsonScan(fm, &v.FrontMatter); err != nil {
+		return domain.WikiVersion{}, err
+	}
+	return v, nil
+}
+
+// Proposals returns the pending (non-archived) agent proposals — for one project, or across
+// every project when projectID is "". Oldest first: the needs-you surfaces show the
+// longest-waiting review first (S35; architecture §12).
+func (r *WikiRepo) Proposals(ctx context.Context, projectID string) ([]domain.WikiPage, error) {
+	q := `SELECT ` + wikiCols + ` FROM wiki_pages
+		WHERE state = 'proposed' AND archived_at IS NULL`
+	args := []any{}
+	if projectID != "" {
+		q += ` AND project_id = ?`
+		args = append(args, projectID)
+	}
+	q += ` ORDER BY created_at, id`
+	rows, err := r.h.r.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.WikiPage
+	for rows.Next() {
+		p, err := scanWikiPage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // ImportedPaths returns the set of repo paths already seeded as wiki pages
 // (imported_from → page slug), the idempotency basis for a re-scan (S15).
 func (r *WikiRepo) ImportedPaths(ctx context.Context, projectID string) (map[string]string, error) {
@@ -256,6 +306,7 @@ type wikiScanBuf struct {
 	p                                          domain.WikiPage
 	scope, state, scopePaths, tags             string
 	parent, owner, verified, runID, target     sql.NullString
+	reason                                     sql.NullString
 	imported, demotedAt, demotedFrom, archived sql.NullString
 	baseVersion                                sql.NullInt64
 }
@@ -263,8 +314,8 @@ type wikiScanBuf struct {
 func (b *wikiScanBuf) dests() []any {
 	return []any{&b.p.ID, &b.p.ProjectID, &b.p.Slug, &b.p.Title, &b.parent, &b.p.Position,
 		&b.owner, &b.verified, &b.scope, &b.scopePaths, &b.tags, &b.p.Body,
-		&b.p.TokenEstimate, &b.state, &b.runID, &b.baseVersion, &b.target, &b.imported,
-		&b.demotedAt, &b.demotedFrom, &b.archived, &b.p.CreatedAt, &b.p.UpdatedAt}
+		&b.p.TokenEstimate, &b.state, &b.runID, &b.baseVersion, &b.target, &b.reason,
+		&b.imported, &b.demotedAt, &b.demotedFrom, &b.archived, &b.p.CreatedAt, &b.p.UpdatedAt}
 }
 
 func (b *wikiScanBuf) finish() (domain.WikiPage, error) {
@@ -277,6 +328,7 @@ func (b *wikiScanBuf) finish() (domain.WikiPage, error) {
 	p.ProposedByRunID = strPtr(b.runID)
 	p.ProposedBaseVersion = intPtr(b.baseVersion)
 	p.ProposalTargetID = strPtr(b.target)
+	p.ProposedReason = strPtr(b.reason)
 	p.ImportedFrom = strPtr(b.imported)
 	p.DemotedAt = strPtr(b.demotedAt)
 	p.DemotedFrom = strPtr(b.demotedFrom)

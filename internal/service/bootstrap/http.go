@@ -31,6 +31,9 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("PATCH /api/v1/projects/{key}/repo/network", member(s.handleUpdateNetwork))
 	mux.Handle("POST /api/v1/projects/{key}/bootstrap/preview", member(s.handlePreview))
 	mux.Handle("POST /api/v1/projects/{key}/bootstrap/apply", member(s.handleApply))
+	// The S35 wiki import — the docs section of this checklist, re-runnable from the WIKI
+	// page (see wikiimport.go).
+	s.wikiImportRoutes(mux, a)
 }
 
 // repoBody is how the connection renders: everything the About card and the settings pane

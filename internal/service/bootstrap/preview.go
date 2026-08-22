@@ -173,15 +173,7 @@ func (s *Service) BuildPreview(ctx context.Context, projectKey string) (Preview,
 	if err != nil {
 		return Preview{}, err
 	}
-	pv.Docs = make([]DocCandidate, 0, len(detected))
-	for _, d := range detected {
-		if slug, ok := importedPaths[d.Path]; ok {
-			d.Checked = false
-			d.AlreadyImported = true
-			d.PageSlug = slug
-		}
-		pv.Docs = append(pv.Docs, d)
-	}
+	pv.Docs = markImported(detected, importedPaths)
 
 	// CI → the two pre-filled triggers, marked against existing trigger names.
 	workflows, err := s.docs.ListDir(ctx, creds, ref, branch, ".github/workflows")

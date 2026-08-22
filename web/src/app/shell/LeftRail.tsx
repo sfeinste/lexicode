@@ -19,6 +19,8 @@ interface NeedsYouRow {
   id: string;
   ticketKey: string;
   projectKey: string;
+  /** Wiki-proposal rows (S35) link to the page's review view instead of a run. */
+  pageSlug?: string;
 }
 
 export function LeftRail({ collapsed }: { collapsed: boolean }) {
@@ -29,8 +31,10 @@ export function LeftRail({ collapsed }: { collapsed: boolean }) {
   const inbox = useInboxQuery();
   const needsYou: NeedsYouRow[] = (inbox.data?.runs ?? []).map((r) => ({
     id: r.id,
-    ticketKey: r.ticket_key ?? r.agent,
+    ticketKey:
+      r.kind === "wiki_proposal" ? (r.page_title ?? "wiki proposal") : (r.ticket_key ?? r.agent),
     projectKey: r.project_key,
+    pageSlug: r.kind === "wiki_proposal" ? r.page_slug : undefined,
   }));
 
   const shown = needsYou.slice(0, NEEDS_YOU_RAIL_CAP);
@@ -67,13 +71,23 @@ export function LeftRail({ collapsed }: { collapsed: boolean }) {
         <ul className={styles.railList}>
           {shown.map((row) => (
             <li key={row.id}>
-              <Link
-                to="/p/$key/runs/$id"
-                params={{ key: row.projectKey, id: row.id }}
-                className={styles.railLink}
-              >
-                ▲ {row.ticketKey}
-              </Link>
+              {row.pageSlug !== undefined ? (
+                <Link
+                  to="/p/$key/wiki/$slug"
+                  params={{ key: row.projectKey, slug: row.pageSlug }}
+                  className={styles.railLink}
+                >
+                  ▲ {row.ticketKey}
+                </Link>
+              ) : (
+                <Link
+                  to="/p/$key/runs/$id"
+                  params={{ key: row.projectKey, id: row.id }}
+                  className={styles.railLink}
+                >
+                  ▲ {row.ticketKey}
+                </Link>
+              )}
             </li>
           ))}
         </ul>
