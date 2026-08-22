@@ -94,6 +94,9 @@ export function useRespondElicitation(runID: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["run", runID] });
       void qc.invalidateQueries({ queryKey: ["runs"] });
+      // S36: answering happens from the home card and the inbox row too — the needs-you
+      // surfaces must drop the row without waiting for the refetch interval.
+      void qc.invalidateQueries({ queryKey: ["inbox"] });
     },
   });
 }

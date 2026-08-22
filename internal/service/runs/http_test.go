@@ -534,3 +534,77 @@ func TestNeedsYouIncludesWikiProposals(t *testing.T) {
 		t.Fatalf("inbox after archive = %d: %v", status, body)
 	}
 }
+
+// S36: an open agent PR is a review-flavored needs-you row (architecture §12: outputs
+// awaiting review include open agent PRs). The completed run's `pull_request` output joins
+// against poll_pr_state: no snapshot (no poller running) keeps the row, an `open` snapshot
+// keeps it, merged/closed drops it — on both the project view and /inbox.
+func TestNeedsYouIncludesOpenAgentPRs(t *testing.T) {
+	e := newEnv(t, time.Millisecond)
+	ctx := context.Background()
+	now := domain.Now()
+
+	run := domain.Run{
+		ID: domain.NewID(), Seq: 301, ProjectID: e.project.ID, AgentID: e.agent.ID,
+		State: domain.RunCompleted, Autonomy: domain.AutonomyAuto, Model: "fake-model",
+		Effort: "medium", Prompt: "p", RuntimeID: "scripted", SandboxID: "fake",
+		SubjectKey: "ticket:" + e.ticket.Key, QueuedAt: now,
+	}
+	tid := e.ticket.ID
+	run.TicketID = &tid
+	if err := e.st.Runs().Create(ctx, &run); err != nil {
+		t.Fatal(err)
+	}
+	out := domain.RunOutput{
+		ID: domain.NewID(), RunID: run.ID, Kind: domain.OutputPullRequest,
+		Ref: "212", URL: "https://github.com/acme/payments/pull/212",
+		Summary: "opened PR #212: Add idempotency keys", CreatedAt: now,
+	}
+	if err := e.st.RunOutputs().Append(ctx, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	// No poll_pr_state snapshot yet (no poller running): the PR shows as a review row
+	// until closed events arrive.
+	assertPRRow := func(want int) map[string]any {
+		t.Helper()
+		var row map[string]any
+		for _, path := range []string{"/api/v1/projects/PAY/runs?view=needs_you", "/api/v1/inbox"} {
+			status, body := e.doJSON("GET", path, "")
+			if status != http.StatusOK {
+				t.Fatalf("%s = %d: %v", path, status, body)
+			}
+			rows := body["runs"].([]any)
+			if len(rows) != want {
+				t.Fatalf("%s rows = %d, want %d: %v", path, len(rows), want, rows)
+			}
+			if want > 0 {
+				row = rows[0].(map[string]any)
+			}
+		}
+		return row
+	}
+	row := assertPRRow(1)
+	if row["kind"] != "pull_request" || row["flavor"] != "review" || row["status"] != "open" ||
+		row["id"] != out.ID || row["run_id"] != run.ID ||
+		row["pr_number"] != float64(212) || row["url"] != out.URL ||
+		row["agent"] != "Dev" || row["ticket_key"] != e.ticket.Key ||
+		row["project_key"] != "PAY" {
+		t.Fatalf("PR row = %v", row)
+	}
+
+	// The poller records the PR open: still a review row.
+	st := domain.PollPRState{ProjectID: e.project.ID, Number: 212, HeadSHA: "9f31c2",
+		State: "open", UpdatedAt: now}
+	if err := e.st.PollPRState().Upsert(ctx, &st); err != nil {
+		t.Fatal(err)
+	}
+	assertPRRow(1)
+
+	// Merged (GitHub reports merged PRs as closed): the row drops off every surface.
+	st.State = "closed"
+	if err := e.st.PollPRState().Upsert(ctx, &st); err != nil {
+		t.Fatal(err)
+	}
+	assertPRRow(0)
+}

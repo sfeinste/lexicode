@@ -201,6 +201,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// endpoints the inbox badge reads. The ticker starts alongside the bus, below.
 	notifySvc := notifysvc.New(notifysvc.Options{Store: st, Bus: b, Logger: logger})
 	notifySvc.Routes(mux, authSvc)
+	// S36: terminal run states rewrite the run's notification row in place (the flavor
+	// changes — "asked a question" becomes "finished — review the output" — never a second
+	// row). Registered before b.Start so boot recovery reaches it.
+	if err := notifySvc.Subscribe(b); err != nil {
+		return err
+	}
 	// The context-resolution surfaces (S34, architecture §11): the agent detail's dry
 	// preview and the wiki context-budget endpoint, plus the daily verified_until demotion
 	// job (boot + every 24h; started below with the other tickers). The resolver itself is

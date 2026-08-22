@@ -10,13 +10,16 @@
 // model a per-ticket delegating human — tickets.delegate_agent_id is an agent — so the
 // assignee is the first ticket-level fallback.)
 //
-// S24 ships the escalation path and the badge; the full inbox page, read/dismiss UX and
-// browser push tiers are S36.
+// S24 shipped the escalation path and the badge. S36 completes the surface: the run-state
+// subscriber below rewrites a run's notification in place when it ends (the flavor changes,
+// the row never stacks), and the browser push tiers are computed client-side from the
+// flavor (see Subscribe).
 package notify
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -78,6 +81,108 @@ func New(opts Options) *Service {
 	return &Service{
 		st: opts.Store, bus: opts.Bus, logger: logger,
 		escalateAfter: opts.EscalateAfter, interval: opts.Interval, now: opts.Now,
+	}
+}
+
+// Subscribe registers the run-state listener on the bus (S36) — call before bus.Start so
+// boot recovery reaches it. When a run whose notification row exists reaches a terminal
+// state, the row is updated IN PLACE — the flavor changes, the row never stacks (the
+// UNIQUE(user_id, run_id) index; interaction rule 3).
+//
+// Tiering (architecture §12): the backend carries only the flavor; the browser decides the
+// delivery tier from it — `question` / `approval` / `failure` push (Notification API,
+// permission requested at the first occurrence, never on load), `review` (which includes
+// "completed — review the output") silently updates the badge. See web/src/lib/push/tier.ts.
+func (s *Service) Subscribe(b *bus.Bus) error {
+	return b.SubscribeKind("notify.run-state", "run", s.handleRunEvent)
+}
+
+// handleRunEvent reacts to run.state frames: a terminal run's existing notification rows
+// are rewritten in place with the terminal copy. Rows are only ever updated, never created
+// here — a run nobody was notified about completes silently (the needs-you surfaces still
+// carry it when it needs review). Idempotent: boot recovery may re-deliver, and a row that
+// already carries the terminal copy is left alone whatever its read state.
+func (s *Service) handleRunEvent(ctx context.Context, e domain.Event) error {
+	if e.ActivityType != "state" || e.SubjectID == nil {
+		return nil
+	}
+	run, err := s.st.Runs().ByID(ctx, *e.SubjectID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil // the run vanished (project delete); nothing to update
+	}
+	if err != nil {
+		return err
+	}
+	if !run.State.Terminal() {
+		return nil // the escalation ticker owns the parked states
+	}
+	rows, err := s.st.Notifications().ForRun(ctx, run.ID)
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+
+	agentName := "An agent"
+	if a, err := s.st.Agents().ByID(ctx, run.AgentID); err == nil {
+		agentName = a.Name
+	}
+	now := domain.FormatTime(s.now())
+
+	for _, existing := range rows {
+		if run.State == domain.RunCanceled {
+			// A human stopped the run; the pending ask is moot. Quiet the row rather than
+			// re-raise it.
+			if existing.State == domain.NotificationDismissed {
+				continue
+			}
+			if err := s.st.Notifications().MarkState(ctx, existing.ID,
+				domain.NotificationDismissed, now); err != nil {
+				return err
+			}
+			existing.State = domain.NotificationDismissed
+			existing.UpdatedAt = now
+			s.emitUpdated(ctx, existing)
+			continue
+		}
+		flavor, title, body := terminalCopy(run, agentName)
+		if existing.Flavor == flavor && existing.Title == title && existing.Body == body {
+			continue // already carries this outcome (redelivery); do not flip read → unread
+		}
+		rid := run.ID
+		n := domain.Notification{
+			ID: domain.NewID(), UserID: existing.UserID, ProjectID: run.ProjectID,
+			RunID: &rid, Flavor: flavor, Title: title, Body: body,
+			State: domain.NotificationUnread, CreatedAt: now, UpdatedAt: now,
+		}
+		// Upsert hits the (user_id, run_id) unique row: the stored id and created_at
+		// survive — updated in place, never stacked.
+		if err := s.st.Notifications().Upsert(ctx, &n); err != nil {
+			return err
+		}
+		s.emitUpdated(ctx, n)
+	}
+	return nil
+}
+
+// terminalCopy is the in-place rewrite for a terminal run's notification: `completed`
+// becomes a review row ("completed" is the badge-only tier — see Subscribe), everything
+// else a failure row naming what happened.
+func terminalCopy(run domain.Run, agentName string) (domain.NotificationFlavor, string, string) {
+	switch run.State {
+	case domain.RunCompleted:
+		return domain.FlavorReview, agentName + " finished — review the output",
+			fmt.Sprintf("Run #%d completed.", run.Seq)
+	case domain.RunTimedOut:
+		return domain.FlavorFailure, agentName + " timed out",
+			fmt.Sprintf("Run #%d hit its wall-clock limit.", run.Seq)
+	case domain.RunLoopStopped:
+		return domain.FlavorFailure, agentName + " was stopped by loop protection",
+			fmt.Sprintf("Run #%d tripped the loop guard.", run.Seq)
+	default: // failed
+		body := fmt.Sprintf("Run #%d failed.", run.Seq)
+		if run.ErrorMessage != "" {
+			body = run.ErrorMessage
+		}
+		return domain.FlavorFailure, agentName + " failed", body
 	}
 }
 

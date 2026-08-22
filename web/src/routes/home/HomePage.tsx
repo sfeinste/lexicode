@@ -13,6 +13,7 @@ import { useInboxQuery } from "../../lib/api/attentionQueries";
 import { useProjectsQuery } from "../../lib/api/projectQueries";
 import { formatRelativeTime, formatUSD } from "../../lib/format/format";
 import { needsYouView } from "../inbox/needsYouView";
+import { InlineElicitation } from "../project/runs/InlineElicitation";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import styles from "./home.module.css";
 
@@ -71,22 +72,56 @@ export function HomePage() {
   );
 }
 
-/** One blocked item, the flavor in words, one inline action (interaction rule 1). */
-function NeedsYouCard({ row }: { row: NeedsYouRun }) {
+/**
+ * One blocked item, the flavor in words, one inline primary action (interaction rule 1).
+ * For question/approval rows the action expands the S24 respond surface ON the card
+ * (InlineElicitation): answering resumes the run without a navigation — the whole point
+ * of the strip (UI spec §5.1). PR review rows link to the PR and the producing run.
+ * Exported for needsYouCardInline.test.tsx.
+ */
+export function NeedsYouCard({ row }: { row: NeedsYouRun }) {
   const view = needsYouView(row);
+  const [open, setOpen] = useState(false);
   return (
-    <div className={styles.needsYouCard}>
+    <div className={styles.needsYouCard} data-expanded={open || undefined}>
       <div className={styles.needsYouTop}>
         <span className={styles.needsYouProject}>{row.project_key}</span>
         <span className={styles.needsYouAge}>{formatRelativeTime(row.started_at)}</span>
       </div>
-      <div className={styles.needsYouTicket}>{view.subject}</div>
-      <div className={styles.needsYouBottom}>
-        <span className={styles.needsYouFlavor}>▲ {view.flavorLabel}</span>
-        <Link to={view.link.to} params={view.link.params} className={styles.needsYouAction}>
-          {view.action}
+      <div className={styles.needsYouTicket}>
+        <Link to={view.link.to} params={view.link.params} className={styles.needsYouSubject}>
+          {view.subject}
         </Link>
       </div>
+      <div className={styles.needsYouBottom}>
+        <span className={styles.needsYouFlavor}>▲ {view.flavorLabel}</span>
+        {view.respondRunId !== undefined ? (
+          <button
+            type="button"
+            className={styles.needsYouAction}
+            data-active={open || undefined}
+            onClick={() => setOpen((o) => !o)}
+          >
+            {view.action}
+          </button>
+        ) : view.href !== undefined ? (
+          <a
+            href={view.href}
+            target="_blank"
+            rel="noreferrer noopener"
+            className={styles.needsYouAction}
+          >
+            {view.action}
+          </a>
+        ) : (
+          <Link to={view.link.to} params={view.link.params} className={styles.needsYouAction}>
+            {view.action}
+          </Link>
+        )}
+      </div>
+      {open && view.respondRunId !== undefined && (
+        <InlineElicitation runId={view.respondRunId} projectKey={row.project_key} />
+      )}
     </div>
   );
 }

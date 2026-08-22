@@ -1,11 +1,9 @@
 package runs
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/spruce/lexicode/internal/domain"
@@ -226,17 +224,7 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 				Message: "Unknown view: " + view}})
 			return
 		}
-		runs, err := s.st.Runs().NeedsYou(r.Context(), p.ID)
-		if err != nil {
-			s.writeError(w, err)
-			return
-		}
-		proposals, err := s.st.Wiki().Proposals(r.Context(), p.ID)
-		if err != nil {
-			s.writeError(w, err)
-			return
-		}
-		rows, err := s.needsYouRows(r.Context(), runs, proposals)
+		rows, err := s.NeedsYou(r.Context(), NeedsYouScope{ProjectID: p.ID})
 		if err != nil {
 			s.writeError(w, err)
 			return
@@ -550,146 +538,10 @@ func (s *Service) handleAcknowledge(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- needs-you -----
 
-// needsYouBody is one row of the needs-you surfaces (architecture §12): the flavor is the
-// §4.3 vocabulary, and every renderer prints it in words (interaction rule 1).
-//
-// `kind` discriminates the row's subject (S35): "run" rows are blocked runs (`id` is a run
-// id, the row links to the run), "wiki_proposal" rows are pending agent proposals awaiting
-// review (`id` is the proposed page's id, `page_slug`/`page_title` name it, and the row
-// links to the wiki page). S36's full inbox adds the remaining review subjects (open agent
-// PRs) on this same shape.
-type needsYouBody struct {
-	Kind        string  `json:"kind"`
-	ID          string  `json:"id"`
-	ProjectKey  string  `json:"project_key"`
-	TicketID    *string `json:"ticket_id"`
-	TicketKey   *string `json:"ticket_key"`
-	TicketTitle *string `json:"ticket_title"`
-	Agent       string  `json:"agent"`
-	Flavor      string  `json:"flavor"`
-	Status      string  `json:"status"`
-	StartedAt   string  `json:"started_at"`
-	PageSlug    string  `json:"page_slug,omitempty"`
-	PageTitle   string  `json:"page_title,omitempty"`
-}
-
-// needsYouFlavor is the §4.3 flavor computation, one place: parked runs are a question or
-// an approval by state; unacknowledged terminal failures are a failure. The fourth flavor,
-// review, is the wiki-proposal rows' (S35); S36 extends it to the remaining outputs
-// awaiting a human.
-func needsYouFlavor(state domain.RunState) string {
-	switch state {
-	case domain.RunNeedsInput:
-		return "question"
-	case domain.RunAwaitingApproval:
-		return "approval"
-	default:
-		return "failure"
-	}
-}
-
-// flavorRank is the home-strip sort (UI spec §5.1): answer a question first, then approve,
-// then failed, then review.
-func flavorRank(flavor string) int {
-	switch flavor {
-	case "question":
-		return 0
-	case "approval":
-		return 1
-	case "failure":
-		return 2
-	default:
-		return 3
-	}
-}
-
-// needsYouRows joins runs with their agent and ticket names, appends the pending
-// wiki-proposal rows (flavor review, S35), and sorts by flavor rank, then oldest first
-// (the longest-blocked row surfaces first).
-func (s *Service) needsYouRows(ctx context.Context, runs []domain.Run, proposals []domain.WikiPage) ([]needsYouBody, error) {
-	agents := map[string]string{}
-	projects := map[string]string{}
-	out := make([]needsYouBody, 0, len(runs)+len(proposals))
-	for _, run := range runs {
-		name, ok := agents[run.AgentID]
-		if !ok {
-			if a, err := s.st.Agents().ByID(ctx, run.AgentID); err == nil {
-				name = a.Name
-			} else {
-				name = "agent"
-			}
-			agents[run.AgentID] = name
-		}
-		key, ok := projects[run.ProjectID]
-		if !ok {
-			if p, err := s.st.Projects().ByID(ctx, run.ProjectID); err == nil {
-				key = p.Key
-			}
-			projects[run.ProjectID] = key
-		}
-		row := needsYouBody{
-			Kind:       "run",
-			ID:         run.ID,
-			ProjectKey: key,
-			TicketID:   run.TicketID,
-			Agent:      name,
-			Flavor:     needsYouFlavor(run.State),
-			Status:     string(run.State),
-			StartedAt:  run.QueuedAt,
-		}
-		if run.StartedAt != nil {
-			row.StartedAt = *run.StartedAt
-		}
-		if run.TicketID != nil {
-			if tk, err := s.st.Tickets().ByID(ctx, *run.TicketID); err == nil {
-				k, t := tk.Key, tk.Title
-				row.TicketKey, row.TicketTitle = &k, &t
-			}
-		}
-		out = append(out, row)
-	}
-	for _, page := range proposals {
-		key, ok := projects[page.ProjectID]
-		if !ok {
-			if p, err := s.st.Projects().ByID(ctx, page.ProjectID); err == nil {
-				key = p.Key
-			}
-			projects[page.ProjectID] = key
-		}
-		// The proposing agent's name, through the proposing run — "agent" when either link
-		// is gone (a proposal outlives nothing, but degrade rather than 500).
-		name := "agent"
-		if page.ProposedByRunID != nil {
-			if run, err := s.st.Runs().ByID(ctx, *page.ProposedByRunID); err == nil {
-				if cached, ok := agents[run.AgentID]; ok {
-					name = cached
-				} else if a, err := s.st.Agents().ByID(ctx, run.AgentID); err == nil {
-					name = a.Name
-					agents[run.AgentID] = name
-				}
-			}
-		}
-		out = append(out, needsYouBody{
-			Kind:       "wiki_proposal",
-			ID:         page.ID,
-			ProjectKey: key,
-			Agent:      name,
-			Flavor:     "review",
-			Status:     string(page.State),
-			StartedAt:  page.CreatedAt,
-			PageSlug:   page.Slug,
-			PageTitle:  page.Title,
-		})
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return flavorRank(out[i].Flavor) < flavorRank(out[j].Flavor)
-	})
-	return out, nil
-}
-
-// handleInbox is GET /inbox: the workspace-wide needs-you rows, restricted to projects the
-// user is a member of — the home strip, the left rail and /inbox render this one query
-// (architecture §12; the S36 inbox adds outputs awaiting review on top).
+// handleInbox is GET /inbox: the workspace-wide needs-you rows — blocked runs, pending
+// wiki proposals, open agent PRs — restricted to projects the user is a member of. The
+// home strip, the left rail and /inbox render this one query (architecture §12); the
+// project-scoped board lane is the same method with a ProjectID scope (handleList).
 func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request, a *auth.Service) {
 	u, ok := auth.UserFrom(r.Context())
 	if !ok {
@@ -697,56 +549,25 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request, a *auth.Se
 			"Not authenticated", "Sign in to use this endpoint.")
 		return
 	}
-	runs, err := s.st.Runs().NeedsYouAll(r.Context())
-	if err != nil {
-		s.writeError(w, err)
-		return
-	}
 	memberOf := map[string]bool{}
-	member := func(projectID string) (bool, error) {
-		allowed, seen := memberOf[projectID]
-		if !seen {
-			p, err := s.st.Projects().ByID(r.Context(), projectID)
-			if err != nil {
-				memberOf[projectID] = false
-				return false, nil // a vanished project hides its rows, it does not 500
+	rows, err := s.NeedsYou(r.Context(), NeedsYouScope{
+		Visible: func(projectID string) (bool, error) {
+			allowed, seen := memberOf[projectID]
+			if !seen {
+				p, err := s.st.Projects().ByID(r.Context(), projectID)
+				if err != nil {
+					memberOf[projectID] = false
+					return false, nil // a vanished project hides its rows, it does not 500
+				}
+				allowed, err = a.IsProjectMember(r.Context(), u, p)
+				if err != nil {
+					return false, err
+				}
+				memberOf[projectID] = allowed
 			}
-			allowed, err = a.IsProjectMember(r.Context(), u, p)
-			if err != nil {
-				return false, err
-			}
-			memberOf[projectID] = allowed
-		}
-		return allowed, nil
-	}
-	visible := runs[:0]
-	for _, run := range runs {
-		allowed, err := member(run.ProjectID)
-		if err != nil {
-			s.writeError(w, err)
-			return
-		}
-		if allowed {
-			visible = append(visible, run)
-		}
-	}
-	proposals, err := s.st.Wiki().Proposals(r.Context(), "")
-	if err != nil {
-		s.writeError(w, err)
-		return
-	}
-	visibleProposals := proposals[:0]
-	for _, page := range proposals {
-		allowed, err := member(page.ProjectID)
-		if err != nil {
-			s.writeError(w, err)
-			return
-		}
-		if allowed {
-			visibleProposals = append(visibleProposals, page)
-		}
-	}
-	rows, err := s.needsYouRows(r.Context(), visible, visibleProposals)
+			return allowed, nil
+		},
+	})
 	if err != nil {
 		s.writeError(w, err)
 		return

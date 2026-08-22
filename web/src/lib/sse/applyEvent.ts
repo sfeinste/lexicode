@@ -80,6 +80,9 @@ export function applyStreamEvent(
     case "run.state":
       void qc.invalidateQueries({ queryKey: ["run", id] });
       void qc.invalidateQueries({ queryKey: ["runs"] });
+      // A state edge can add or remove a needs-you row (S36: the home strip, board lane
+      // and /inbox render one query keyed ["inbox"]).
+      void qc.invalidateQueries({ queryKey: ["inbox"] });
       break;
     // Usage frames carry a delta; the run row carries the rollup — refetch the row rather
     // than double-count a replayed delta.

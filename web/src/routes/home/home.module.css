@@ -351,3 +351,33 @@
 .needsYouAge {
   color: var(--text-3);
 }
+
+/* ---- S36: answering from the card, without a navigation ---------------------------------- */
+
+.needsYouCard[data-expanded] {
+  width: 420px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.needsYouSubject {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.needsYouSubject:hover {
+  text-decoration: underline;
+}
+
+.needsYouAction[data-active] {
+  background: var(--surface-2);
+}
+
+button.needsYouAction {
+  cursor: pointer;
+  background: transparent;
+}
+
+button.needsYouAction[data-active] {
+  background: var(--surface-2);
+}

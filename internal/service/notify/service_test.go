@@ -218,3 +218,188 @@ func TestEscalationSkipsAnsweredAndTerminal(t *testing.T) {
 		t.Fatalf("answered elicitation escalated: %v", err)
 	}
 }
+
+// S36 acceptance: four concurrent runs entering needs_input produce four rows, and a run
+// re-entering needs_input with a new question updates its row in place — never a fifth.
+func TestFourRunsFourRowsReentryNeverAFifth(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	uid := f.other.ID
+
+	runs := make([]domain.Run, 0, 4)
+	els := make([]domain.Elicitation, 0, 4)
+	for i := int64(1); i <= 4; i++ {
+		run, el := f.park(t, 10+i, domain.ElicitationQuestion, &uid)
+		runs = append(runs, run)
+		els = append(els, el)
+	}
+	f.advance(90 * time.Second)
+	f.svc.Escalate(ctx)
+	rows, err := f.st.Notifications().ForUser(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("four blocked runs produced %d rows, want 4", len(rows))
+	}
+	var reentrant domain.Notification
+	for _, n := range rows {
+		if n.RunID != nil && *n.RunID == runs[0].ID {
+			reentrant = n
+		}
+	}
+	if reentrant.ID == "" {
+		t.Fatalf("no row for run %s: %+v", runs[0].ID, rows)
+	}
+
+	// Run 1's question is answered; the run resumes and re-enters needs_input with a NEW
+	// question. The row is updated in place — four rows, never a fifth.
+	if err := f.st.Elicitations().Respond(ctx, els[0].ID, domain.ElicitationAnswered,
+		[]byte(`{}`), &uid, domain.FormatTime(*f.clock)); err != nil {
+		t.Fatal(err)
+	}
+	nowStr := domain.FormatTime(*f.clock)
+	a := domain.Activity{
+		RunID: runs[0].ID, Type: domain.ActivityElicitation, Level: 0,
+		Title: "Question: Postgres or SQLite?", Payload: []byte(`{}`),
+		Attempt: 1, CreatedAt: nowStr,
+	}
+	if err := f.st.Activities().AppendNext(ctx, &a); err != nil {
+		t.Fatal(err)
+	}
+	el2 := domain.Elicitation{
+		ID: domain.NewID(), RunID: runs[0].ID, ActivitySeq: a.Seq,
+		Kind: domain.ElicitationQuestion, Request: []byte(`{}`),
+		State: domain.ElicitationPending, CreatedAt: nowStr,
+	}
+	if err := f.st.Elicitations().Create(ctx, &el2); err != nil {
+		t.Fatal(err)
+	}
+	f.advance(90 * time.Second)
+	f.svc.Escalate(ctx)
+
+	rows, err = f.st.Notifications().ForUser(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("re-entry produced %d rows, want 4 (never a fifth)", len(rows))
+	}
+	after, err := f.st.Notifications().ByUserAndRun(ctx, uid, runs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ID != reentrant.ID {
+		t.Fatalf("re-entry replaced the row: id %s → %s", reentrant.ID, after.ID)
+	}
+	if after.Body != "Question: Postgres or SQLite?" || after.State != domain.NotificationUnread {
+		t.Fatalf("re-entry row not updated in place: %+v", after)
+	}
+}
+
+// S36 acceptance: a notification for a run that later completes updates in place — the
+// flavor changes on the SAME row (id preserved), never a second row. Redelivery of the
+// same terminal frame does not flip a read row back to unread.
+func TestRunCompletionUpdatesNotificationInPlace(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	uid := f.other.ID
+	run, _ := f.park(t, 21, domain.ElicitationQuestion, &uid)
+
+	f.advance(90 * time.Second)
+	f.svc.Escalate(ctx)
+	before, err := f.st.Notifications().ByUserAndRun(ctx, uid, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Flavor != domain.FlavorQuestion {
+		t.Fatalf("flavor = %s, want question", before.Flavor)
+	}
+
+	// The question is answered and the run completes (tests may drive SetState; in the
+	// process it is scheduler-only).
+	if ok, err := f.st.Runs().SetState(ctx, run.ID,
+		[]domain.RunState{domain.RunNeedsInput}, domain.RunCompleted,
+		store.RunStateUpdate{}); err != nil || !ok {
+		t.Fatalf("SetState: ok=%v err=%v", ok, err)
+	}
+	rid := run.ID
+	if err := f.svc.handleRunEvent(ctx, domain.Event{
+		Kind: "run", ActivityType: "state", SubjectKind: "run", SubjectID: &rid,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := f.st.Notifications().ForUser(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("completion stacked a second row: %+v", rows)
+	}
+	after := rows[0]
+	if after.ID != before.ID {
+		t.Fatalf("completion replaced the row: id %s → %s", before.ID, after.ID)
+	}
+	if after.Flavor != domain.FlavorReview || after.Title != "Dev finished — review the output" {
+		t.Fatalf("terminal copy wrong: %+v", after)
+	}
+	if after.State != domain.NotificationUnread {
+		t.Fatalf("completion should surface as unread (badge tier): %+v", after)
+	}
+
+	// Reading the row, then a redelivered frame: the row stays read — same content is
+	// never re-raised.
+	if err := f.st.Notifications().MarkState(ctx, after.ID, domain.NotificationRead,
+		domain.FormatTime(*f.clock)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.handleRunEvent(ctx, domain.Event{
+		Kind: "run", ActivityType: "state", SubjectKind: "run", SubjectID: &rid,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := f.st.Notifications().ByID(ctx, after.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.State != domain.NotificationRead {
+		t.Fatalf("redelivery re-raised a read row: %+v", again)
+	}
+}
+
+// S36: a run that fails rewrites its row as a failure naming the error, same row id.
+func TestRunFailureUpdatesNotificationInPlace(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	uid := f.other.ID
+	run, _ := f.park(t, 31, domain.ElicitationApproval, &uid)
+
+	f.advance(90 * time.Second)
+	f.svc.Escalate(ctx)
+	before, err := f.st.Notifications().ByUserAndRun(ctx, uid, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg := "container exited 1"
+	if ok, err := f.st.Runs().SetState(ctx, run.ID,
+		[]domain.RunState{domain.RunAwaitingApproval}, domain.RunFailed,
+		store.RunStateUpdate{ErrorMessage: &msg}); err != nil || !ok {
+		t.Fatalf("SetState: ok=%v err=%v", ok, err)
+	}
+	rid := run.ID
+	if err := f.svc.handleRunEvent(ctx, domain.Event{
+		Kind: "run", ActivityType: "state", SubjectKind: "run", SubjectID: &rid,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := f.st.Notifications().ByUserAndRun(ctx, uid, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ID != before.ID || after.Flavor != domain.FlavorFailure ||
+		after.Title != "Dev failed" || after.Body != msg {
+		t.Fatalf("failure rewrite wrong: %+v", after)
+	}
+}

@@ -39,15 +39,24 @@
 }
 
 .row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: block;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-left: 3px solid var(--needs-you);
   border-radius: 7px;
   background: var(--surface);
   margin-bottom: 6px;
+}
+
+.row[data-selected] {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+}
+
+.rowLine {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .flavor {
@@ -95,4 +104,20 @@
 
 .action:hover {
   background: var(--surface-2);
+}
+
+.action[data-active] {
+  background: var(--surface-2);
+}
+
+.secondary {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  text-decoration: underline;
+}
+
+.action {
+  cursor: pointer;
+  background: transparent;
 }

@@ -29,6 +29,17 @@ export interface NeedsYouView {
   link:
     | { to: "/p/$key/runs/$id"; params: { key: string; id: string } }
     | { to: "/p/$key/wiki/$slug"; params: { key: string; slug: string } };
+  /**
+   * Pull-request rows only: the PR's web URL. The primary action opens this (review
+   * happens on the forge) while `link` still reaches the producing run — S36's "link to
+   * PR + run".
+   */
+  href?: string;
+  /**
+   * Blocked-run rows (question/approval) answer from the row itself: the S24 respond
+   * components render inline against this run id, no navigation (S36).
+   */
+  respondRunId?: string;
 }
 
 export function needsYouView(row: NeedsYouRun): NeedsYouView {
@@ -46,6 +57,24 @@ export function needsYouView(row: NeedsYouRun): NeedsYouView {
       },
     };
   }
+  if (row.kind === "pull_request") {
+    return {
+      isProposal: false,
+      flavorLabel,
+      subject:
+        row.pr_number !== undefined && row.pr_number > 0
+          ? `${row.agent} opened PR #${row.pr_number}`
+          : `${row.agent} opened a pull request`,
+      action: "Review PR",
+      // The row links to the producing run; the action opens the PR itself.
+      link: {
+        to: "/p/$key/runs/$id",
+        params: { key: row.project_key, id: row.run_id ?? "" },
+      },
+      href: row.url !== undefined && row.url !== "" ? row.url : undefined,
+    };
+  }
+  const inline = row.flavor === "question" || row.flavor === "approval";
   return {
     isProposal: false,
     flavorLabel,
@@ -53,5 +82,18 @@ export function needsYouView(row: NeedsYouRun): NeedsYouView {
       row.ticket_key !== null ? `${row.ticket_key} · ${row.ticket_title ?? ""}` : row.agent,
     action: FLAVOR_ACTIONS[row.flavor] ?? "Open",
     link: { to: "/p/$key/runs/$id", params: { key: row.project_key, id: row.id } },
+    respondRunId: inline ? row.id : undefined,
   };
+}
+
+/**
+ * The inbox sort (UI spec §5.10): approvals to the top ALWAYS, whatever their age —
+ * everything else keeps the service order (question → failure → review, oldest first).
+ * This is a rendering decision of /inbox; the home strip keeps the service's
+ * question-first order (§5.1). Pure and stable, so it is testable and group-safe.
+ */
+export function sortForInbox(rows: readonly NeedsYouRun[]): NeedsYouRun[] {
+  const approvals = rows.filter((r) => r.flavor === "approval");
+  const rest = rows.filter((r) => r.flavor !== "approval");
+  return [...approvals, ...rest];
 }

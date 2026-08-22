@@ -15,6 +15,7 @@ import {
 } from "../../lib/api/attentionQueries";
 import { queryClient } from "../../lib/api/queryClient";
 import { chordLabel } from "../../lib/keyboard/hooks";
+import { usePushNotifications } from "../../lib/push/usePush";
 import { useStreamTopics } from "../../lib/sse/useStreamTopics";
 import { useUIStore, type Density, type ThemePreference } from "../../stores/ui";
 import styles from "./shell.module.css";
@@ -28,6 +29,9 @@ export function TopBar({ user }: { user: User }) {
   useStreamTopics(["inbox"]);
   const notifications = useNotificationsQuery();
   const unread = notifications.data?.unread ?? 0;
+  // S36 push tiers: question/approval/failure push (permission requested at the first
+  // occurrence, never on load); review — completed runs included — only moves the badge.
+  usePushNotifications(notifications.data?.notifications);
 
   return (
     <header className={styles.topbar}>

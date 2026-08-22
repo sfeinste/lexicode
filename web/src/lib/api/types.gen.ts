@@ -1159,7 +1159,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The workspace-wide needs-you rows for the caller's projects — the one query behind the home strip, the left rail and /inbox (architecture §12). S24 ships the run rows; the S36 inbox adds outputs awaiting review. */
+        /** The workspace-wide needs-you rows for the caller's projects — the one query behind the home strip, the left rail and /inbox (architecture §12): blocked runs, pending wiki proposals, and open agent PRs awaiting review. */
         get: operations["getInbox"];
         put?: never;
         post?: never;
@@ -2453,10 +2453,10 @@ export interface components {
             /** @description The copy-paste block, e.g. `git fetch origin && git checkout dev/PAY-14`. Empty when the run never got a branch. */
             checkout: string;
         };
-        /** @description One row of the needs-you surfaces (architecture §12). `flavor` is the §4.3 vocabulary and every renderer prints it in words (interaction rule 1). `kind` discriminates the subject (S35): "run" rows are blocked runs (`id` is a run id, the row links to the run); "wiki_proposal" rows are pending agent proposals awaiting review, flavor `review` (`id` is the proposed page's id, `page_slug`/`page_title` name it, and the row links to the wiki page). S36's full inbox adds the remaining review subjects on this same shape. */
+        /** @description One row of the needs-you surfaces (architecture §12). `flavor` is the §4.3 vocabulary and every renderer prints it in words (interaction rule 1). `kind` discriminates the subject: "run" rows are blocked runs (`id` is a run id, the row links to the run); "wiki_proposal" rows are pending agent proposals awaiting review, flavor `review` (`id` is the proposed page's id, `page_slug`/`page_title` name it, and the row links to the wiki page); "pull_request" rows (S36) are open agent PRs awaiting review, flavor `review` (`id` is the run-output row's id, `run_id` names the producing run, `pr_number`/`url` locate the PR — the row links to both). A PR row drops out once the poller's snapshot records it merged or closed; with no poller running it stays until those events arrive. */
         NeedsYouRun: {
             /** @enum {string} */
-            kind: "run" | "wiki_proposal";
+            kind: "run" | "wiki_proposal" | "pull_request";
             id: string;
             project_key: string;
             ticket_id: string | null;
@@ -2466,13 +2466,19 @@ export interface components {
             agent: string;
             /** @enum {string} */
             flavor: "question" | "approval" | "review" | "failure";
-            /** @description The underlying run state */
+            /** @description The underlying run state, `proposed` for wiki-proposal rows, or `open` for pull-request rows. */
             status: string;
             started_at: string;
             /** @description Wiki-proposal rows only. */
             page_slug?: string;
             /** @description Wiki-proposal rows only. */
             page_title?: string;
+            /** @description Pull-request rows only — the producing run. */
+            run_id?: string;
+            /** @description Pull-request rows only. */
+            pr_number?: number;
+            /** @description Pull-request rows only — the PR's web URL. */
+            url?: string;
         };
         NeedsYouListResponse: {
             runs: components["schemas"]["NeedsYouRun"][];
@@ -5255,7 +5261,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The needs-you rows, question → approval → failure, oldest first. */
+            /** @description The needs-you rows, question → approval → failure → review, oldest first. */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -329,8 +329,10 @@ export interface InterveneContext {
 
 /** ask_human / request_approval rows. A pending elicitation renders its interactive
  * respond surface inline — never a modal (interaction rule; UI spec §5.7). A resolution
- * row (payload {elicitation_id, response}) renders the response. */
-function ElicitationDetail({ a, intervene }: { a: RunActivity; intervene?: InterveneContext }) {
+ * row (payload {elicitation_id, response}) renders the response. Exported since S36:
+ * InlineElicitation embeds this exact component in the home needs-you card and the inbox
+ * rows, so answering from a card and answering on the run detail are one code path. */
+export function ElicitationDetail({ a, intervene }: { a: RunActivity; intervene?: InterveneContext }) {
   const p = payloadOf(a) as KnownPayload & {
     elicitation_id?: string;
     response?: unknown;

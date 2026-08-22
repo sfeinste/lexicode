@@ -67,6 +67,29 @@ func (r *NotificationsRepo) ByUserAndRun(ctx context.Context, userID, runID stri
 		userID, runID))
 }
 
+// ForRun returns every user's notification row for one run (the UNIQUE(user_id, run_id)
+// index allows at most one per user) — what the S36 run-state subscriber updates in place
+// when the run reaches a terminal state.
+func (r *NotificationsRepo) ForRun(ctx context.Context, runID string) ([]domain.Notification, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+notificationCols+` FROM notifications
+		WHERE run_id = ? ORDER BY created_at, id`, runID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Notification
+	for rows.Next() {
+		n, err := scanNotification(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // ForUser returns a user's non-dismissed notifications, most recently updated first.
 func (r *NotificationsRepo) ForUser(ctx context.Context, userID string) ([]domain.Notification, error) {
 	rows, err := r.h.r.QueryContext(ctx, `
