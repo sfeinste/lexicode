@@ -21,6 +21,7 @@ import (
 // later stories transcribe the other ports, embed them here the same way.
 type stubPort struct {
 	ports.ForgeProvider
+	ports.Sandbox
 	id string
 }
 

@@ -42,3 +42,21 @@ jobs:
           args: --version
 
       - run: make check
+
+  # The Docker sandbox acceptance suite (story S17): real containers against the runner's
+  # daemon, so Linux only. Best-effort — the first run builds the agent base image, which
+  # depends on external downloads (nodejs.org, npm), so a transient failure here must not
+  # block the check job. Run it locally with: go test -tags docker ./internal/module/docker/
+  docker-sandbox:
+    name: docker-tagged tests (linux)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go test -tags docker -timeout 30m -v ./internal/module/docker/

@@ -12,14 +12,7 @@ type EventSource interface {
 
 // ForgeProvider lives in forge.go (contracts §2.2, transcribed in story S14).
 
-// Sandbox is an execution substrate for a run: it prepares an isolated workspace and hands back
-// an instance that commands can be executed in.
-//
-// Method set: contracts §2.3, transcribed in story S17.
-type Sandbox interface {
-	// ID is the stable identifier, e.g. "docker". It must be unique across registered sandboxes.
-	ID() string
-}
+// Sandbox lives in sandbox.go (contracts §2.3, transcribed in story S17).
 
 // AgentRuntime is an agent CLI or SDK that can be launched inside a sandbox instance and streams
 // its work back as activities.

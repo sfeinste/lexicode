@@ -25,6 +25,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
+	dockermod "github.com/spruce/lexicode/internal/module/docker"
 	githubmod "github.com/spruce/lexicode/internal/module/github"
 	agentsvc "github.com/spruce/lexicode/internal/service/agents"
 	"github.com/spruce/lexicode/internal/service/board"
@@ -151,10 +152,14 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	agentsSvc := agentsvc.New(agentsvc.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
 	agentsSvc.Routes(mux, authSvc)
 
-	// Modules (architecture §3.1); each is one line here. docker, claudecode, actions, context
-	// and notify arrive with the stories that build them.
+	// Modules (architecture §3.1); each is one line here. claudecode, actions, context and
+	// notify arrive with the stories that build them.
 	ghMod := githubmod.New(githubmod.Options{BaseURL: cfg.GitHubBaseURL})
 	if err := k.RegisterModule(ghMod); err != nil {
+		return err
+	}
+	dockerMod := dockermod.New(dockermod.Options{Host: cfg.DockerHost})
+	if err := k.RegisterModule(dockerMod); err != nil {
 		return err
 	}
 

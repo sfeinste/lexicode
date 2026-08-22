@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -186,7 +187,8 @@ func newTestServer(t *testing.T) string {
 // auth, so the test walks the first-run path: with zero users every API call is 401
 // "setup_required", and after setup the cookie unlocks the list. Since S14 the github module is
 // wired in; with no repository connected it has nothing to verify at boot, so it reports ready.
-// docker and the rest arrive with the stories that build them.
+// Since S17 the docker module is wired in; its state depends on whether a daemon is reachable
+// on the machine running the test. The rest arrive with the stories that build them.
 func TestSystemModulesIsServed(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -237,8 +239,24 @@ func TestSystemModulesIsServed(t *testing.T) {
 		t.Errorf("content-type = %q, want application/json", ct)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	want := `{"modules":[{"name":"github","state":"ready"}]}`
-	if got := strings.TrimSpace(string(body)); got != want {
-		t.Errorf("body = %s, want %s", got, want)
+	var got struct {
+		Modules []struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"modules"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("body %s is not the modules shape: %v", body, err)
+	}
+	if len(got.Modules) != 2 || got.Modules[0].Name != "github" || got.Modules[1].Name != "docker" {
+		t.Fatalf("modules = %s, want github then docker in registration order", body)
+	}
+	if got.Modules[0].State != "ready" {
+		t.Errorf("github state = %q, want ready", got.Modules[0].State)
+	}
+	// docker's state depends on the machine: ready where a daemon is reachable, degraded
+	// where it is not (the whole point of the degraded state — boot must not require Docker).
+	if s := got.Modules[1].State; s != "ready" && s != "degraded" {
+		t.Errorf("docker state = %q, want ready or degraded", s)
 	}
 }
