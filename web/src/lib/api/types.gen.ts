@@ -758,6 +758,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{key}/trigger-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The merged trigger-editor catalog (S29): every registered event source's Catalog() (WHEN options; each event's `fields` doubles as the IF field vocabulary and the {{...}} interpolation picker's list), every registered action's {id, label, schema} (THEN options), and the static contracts §4.1 operator table (IF operator dropdowns, type-prefixed). The editor is generated from this one payload — a new source or action appears with no frontend change. */
+        get: operations["getTriggerCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{key}/runs": {
         parameters: {
             query?: never;
@@ -2084,6 +2101,8 @@ export interface components {
             created_at: string;
             updated_at: string;
             health?: components["schemas"]["TriggerHealth"];
+            /** @description One Describe() sentence per action, in action order — the THEN line of the prose card ("run agent Reviewer"). Present on the health-carrying reads (list/get); an unregistered action degrades to naming its id. */
+            action_summaries?: string[];
         };
         /** @description Stage-1 matcher filters; an absent or empty list is no constraint. */
         TriggerFilters: {
@@ -2104,12 +2123,14 @@ export interface components {
             depth_limit?: number;
             daily_budget_cents?: number | null;
         };
-        /** @description Per-outcome counts over the last 50 firings — the `14 ok · 3 no action · 1 loop` breakdown, never collapsed to success/failure. */
+        /** @description Per-outcome counts over the last 50 firings — the `14 ok · 3 no action · 1 loop` breakdown, never collapsed to success/failure — plus the recent outcome sequence the card sparkline renders. */
         TriggerHealth: {
             counts: {
                 [key: string]: number;
             };
             last_fired_at: string | null;
+            /** @description The last (up to) 20 firing outcome classes, oldest first. */
+            recent: components["schemas"]["FiringOutcome"][];
         };
         /** @description Create/patch body. Every field optional; absent = unchanged (create fills defaults and requires name and event). `cron: ""` clears the expression. */
         TriggerInput: {
@@ -2132,16 +2153,100 @@ export interface components {
             id: string;
             trigger_id: string;
             event_id: string;
-            /** @enum {string} */
-            outcome: "succeeded" | "no_action" | "awaiting_approval" | "errored" | "debounced" | "superseded" | "loop_stopped" | "budget_exceeded";
+            outcome: components["schemas"]["FiringOutcome"];
             reason: string;
             run_id: string | null;
             absorbed_by_run_id: string | null;
             warnings: string[];
             created_at: string;
+            event?: components["schemas"]["TriggerFiringEvent"];
+        };
+        /**
+         * @description The eight §4.2 trigger outcome classes.
+         * @enum {string}
+         */
+        FiringOutcome: "succeeded" | "no_action" | "awaiting_approval" | "errored" | "debounced" | "superseded" | "loop_stopped" | "budget_exceeded";
+        /** @description A summary of the event that caused the firing, so the history list can say what happened without a per-row fetch. */
+        TriggerFiringEvent: {
+            kind: string;
+            activity_type: string;
+            actor_kind: string;
+            actor_login: string | null;
+            /** @description The guard-style subject ("pr:219" / "ticket:PAY-14" / "repo"). */
+            subject: string;
+            occurred_at: string;
         };
         TriggerFiringListResponse: {
             firings: components["schemas"]["TriggerFiring"][];
+        };
+        /** @description The whole trigger-editor payload (S29): sources → WHEN, actions → THEN, operators → IF. Interpolation ({{...}}) offers each event descriptor's `fields`. */
+        TriggerCatalog: {
+            sources: components["schemas"]["CatalogSource"][];
+            actions: components["schemas"]["CatalogAction"][];
+            operators: components["schemas"]["CatalogOperator"][];
+        };
+        /** @description One registered EventSource's Catalog(), keyed by its port ID. */
+        CatalogSource: {
+            id: string;
+            events: components["schemas"]["CatalogEvent"][];
+        };
+        /** @description One event kind (contracts §2.1 EventDescriptor), rendered as stored. */
+        CatalogEvent: {
+            kind: string;
+            label: string;
+            activity_types: components["schemas"]["CatalogActivityType"][];
+            filters: components["schemas"]["CatalogFilter"][] | null;
+            /** @description The payload paths conditions and {{...}} interpolation may address for this event kind — the IF field dropdown and the interpolation picker share it. */
+            fields: components["schemas"]["CatalogField"][] | null;
+            subject_key: string;
+        };
+        CatalogActivityType: {
+            value: string;
+            label: string;
+            /** @description Why this activity type is different — "opened vs synchronize". */
+            help?: string;
+        };
+        CatalogFilter: {
+            key: string;
+            /** @enum {string} */
+            kind: "glob-list" | "label-list";
+            label: string;
+        };
+        CatalogField: {
+            path: string;
+            /** @enum {string} */
+            type: "text" | "number" | "bool" | "enum" | "set";
+            /** @description An enum field's known values; absent means free text. */
+            enum?: string[];
+        };
+        /** @description One registered TriggerAction — its Schema() drives the THEN form. */
+        CatalogAction: {
+            id: string;
+            label: string;
+            schema: components["schemas"]["ActionParamSchema"];
+        };
+        ActionParamSchema: {
+            fields: components["schemas"]["ActionParamField"][] | null;
+        };
+        /** @description One typed action parameter (contracts §2.5). The type vocabulary drives the THEN widgets: "agent" renders the project's agent picker, "template" a text input with the {{...}} interpolation field picker, "category" the fixed column-category select (D2 — never column names), "list" a list of strings. */
+        ActionParamField: {
+            key: string;
+            label: string;
+            /** @enum {string} */
+            type: "text" | "number" | "bool" | "enum" | "agent" | "template" | "category" | "list";
+            required: boolean;
+            enum?: string[];
+            help?: string;
+        };
+        /** @description One contracts §4.1 condition operator. `family` is the visible type prefix ("(text) contains"); `value` says what right-hand input the operator takes; `field` is false for actor.* operators, whose field is implied. */
+        CatalogOperator: {
+            op: string;
+            /** @enum {string} */
+            family: "text" | "number" | "enum" | "bool" | "set" | "actor";
+            label: string;
+            /** @enum {string} */
+            value: "text" | "number" | "bool" | "enum" | "enum_list" | "none";
+            field: boolean;
         };
     };
     responses: {
@@ -3967,6 +4072,31 @@ export interface operations {
                 };
             };
             400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getTriggerCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The catalog. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerCatalog"];
+                };
+            };
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

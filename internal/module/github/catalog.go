@@ -25,12 +25,12 @@ var (
 		{Path: "pr.number", Type: "number"},
 		{Path: "pr.title", Type: "text"},
 		{Path: "pr.author", Type: "text"},
-		{Path: "pr.author_kind", Type: "enum"},
+		{Path: "pr.author_kind", Type: "enum", Enum: []string{"human", "agent"}},
 		{Path: "pr.branch", Type: "text"},
 		{Path: "pr.base", Type: "text"},
 		{Path: "pr.draft", Type: "bool"},
 		{Path: "pr.merged", Type: "bool"},
-		{Path: "pr.state", Type: "enum"},
+		{Path: "pr.state", Type: "enum", Enum: []string{"open", "closed"}},
 		{Path: "pr.additions", Type: "number"},
 		{Path: "pr.deletions", Type: "number"},
 		{Path: "pr.files_changed", Type: "number"},
@@ -47,7 +47,7 @@ var (
 		{Path: "repo.default_branch", Type: "text"},
 	}
 	actorFields = []ports.PayloadField{
-		{Path: "actor.kind", Type: "enum"},
+		{Path: "actor.kind", Type: "enum", Enum: []string{"human", "agent", "external"}},
 		{Path: "actor.login", Type: "text"},
 		{Path: "actor.agent", Type: "text"},
 	}
@@ -98,7 +98,7 @@ func catalog() ports.EventCatalog {
 			Fields: fields([]ports.PayloadField{
 				{Path: "review.id", Type: "text"},
 				{Path: "review.author", Type: "text"},
-				{Path: "review.state", Type: "enum"},
+				{Path: "review.state", Type: "enum", Enum: []string{"approved", "changes_requested", "commented"}},
 				{Path: "review.body", Type: "text"},
 			}, prFields, repoFields, actorFields),
 			SubjectKey: "pr:{{pr.number}}",
@@ -144,7 +144,9 @@ func catalog() ports.EventCatalog {
 			Fields: fields([]ports.PayloadField{
 				{Path: "check.suite_id", Type: "text"},
 				{Path: "check.name", Type: "text"},
-				{Path: "check.conclusion", Type: "enum"},
+				{Path: "check.conclusion", Type: "enum", Enum: []string{
+					"success", "failure", "neutral", "cancelled",
+					"timed_out", "action_required", "stale", "skipped"}},
 				{Path: "check.url", Type: "text"},
 			}, prFields, repoFields, actorFields),
 			SubjectKey: "pr:{{pr.number}}",

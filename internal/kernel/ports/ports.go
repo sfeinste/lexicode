@@ -66,6 +66,10 @@ type FilterField struct {
 type PayloadField struct {
 	Path string `json:"path"`
 	Type string `json:"type"` // "text" | "number" | "bool" | "enum" | "set"
+	// Enum lists an enum-typed field's known values, so the editor can render a select
+	// instead of a free-text input. Optional and additive (S29): an enum field without
+	// values still works — the editor falls back to text.
+	Enum []string `json:"enum,omitempty"`
 }
 
 // ForgeProvider lives in forge.go (contracts §2.2, transcribed in story S14).

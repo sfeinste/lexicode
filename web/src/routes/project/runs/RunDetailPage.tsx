@@ -18,6 +18,7 @@ import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CostChip } from "../../../components/CostChip/CostChip";
+import { LoopChain } from "../../../components/LoopChain/LoopChain";
 import { StatusDot } from "../../../components/StatusDot/StatusDot";
 import type {
   Run,
@@ -31,6 +32,7 @@ import {
   useRunDetailQuery,
   useRunsQuery,
 } from "../../../lib/api/runQueries";
+import { useRunChainQuery } from "../../../lib/api/triggerQueries";
 import { formatDuration, formatRelativeTime, formatTokenCount } from "../../../lib/format/format";
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
 import { useStreamTopics } from "../../../lib/sse/useStreamTopics";
@@ -264,6 +266,9 @@ export function RunDetailPage() {
         )}
       </header>
 
+      {/* S29: a loop-stopped run leads with the cycle it built — the §5.9 chain view. */}
+      {run.state === "loop_stopped" && <LoopChainPanel projectKey={key} runId={run.id} />}
+
       <div className={styles.panes}>
         {/* Left — step timeline (virtualized) + the verbosity switch. */}
         <aside className={styles.timelinePane}>
@@ -352,6 +357,23 @@ export function RunDetailPage() {
       {/* S24: the live steering composer, Stop, and Take over. */}
       <InterventionBar run={run} messages={detailQuery.data.messages} />
     </div>
+  );
+}
+
+/** The §5.9 loop chain panel: why this run was stopped, as the cycle itself. */
+function LoopChainPanel({ projectKey, runId }: { projectKey: string; runId: string }) {
+  const chain = useRunChainQuery(runId);
+  return (
+    <section className={styles.chainPanel} aria-label="Loop chain">
+      <h2 className={styles.paneTitle}>Loop stopped — the causal chain</h2>
+      {chain.isPending ? (
+        <p className={styles.muted}>Loading chain…</p>
+      ) : chain.isError || chain.data === undefined ? (
+        <p className={styles.muted}>The chain failed to load.</p>
+      ) : (
+        <LoopChain chain={chain.data.chain} projectKey={projectKey} />
+      )}
+    </section>
   );
 }
 

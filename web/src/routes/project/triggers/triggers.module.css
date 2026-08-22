@@ -1,0 +1,666 @@
+/* Triggers — the §5.9 rule cards, the WHEN/IF/THEN editor, the loop-protection panel and
+ * the firing history. The keyword headers are literal and monospace-bold: a rule must read
+ * as prose with WHEN/IF/THEN as its grammar. */
+
+.page {
+  padding: 16px 20px 48px;
+  max-width: 860px;
+}
+
+.pageTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pageTitle h1 {
+  margin: 0;
+  font-size: var(--fs-title);
+}
+
+.titleActions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.backLink {
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: var(--fs-body);
+}
+
+.backLink:hover {
+  color: var(--text);
+}
+
+.newButton,
+.saveButton {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: var(--fs-body);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.saveButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.muted {
+  color: var(--text-3);
+  font-size: var(--fs-body);
+}
+
+.errorText {
+  color: var(--fail);
+  font-size: var(--fs-body);
+}
+
+.fieldErrors {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  color: var(--fail);
+  font-size: var(--fs-mono);
+}
+
+/* ---- rule cards ------------------------------------------------------------------------ */
+
+.cardList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  transition: opacity var(--ease-state);
+}
+
+.card[data-disabled] {
+  opacity: 0.55;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cardGlyph {
+  color: var(--needs-you);
+}
+
+.cardName {
+  margin: 0;
+  font-size: var(--fs-section);
+  font-weight: 600;
+  flex: 1;
+}
+
+.cardBody {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.proseLines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.proseLine {
+  margin: 0;
+  display: flex;
+  gap: 10px;
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+
+.proseKeyword {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-mono);
+  color: var(--accent);
+  min-width: 42px;
+  padding-top: 1px;
+}
+
+.cardRule {
+  border-top: 1px solid var(--border);
+  margin: 10px 0 8px;
+}
+
+.healthRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-body);
+}
+
+.firedCount {
+  font-weight: 600;
+}
+
+.breakdown {
+  color: var(--text-2);
+}
+
+.sparkline {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  min-width: 20px;
+  min-height: 10px;
+}
+
+.sparkline[data-empty] {
+  border-bottom: 2px dotted var(--border-strong);
+  width: 60px;
+}
+
+.sparkCell {
+  width: 6px;
+  height: 12px;
+  border-radius: 1px;
+  display: inline-block;
+}
+
+.suppressionRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+}
+
+.lastFired {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+/* ---- editor ---------------------------------------------------------------------------- */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nameField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 420px;
+}
+
+.fieldLabel {
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+}
+
+.helpText {
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+}
+
+.form input[type="text"],
+.form input[type="number"],
+.form select,
+.form textarea {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: var(--fs-body);
+  font-family: var(--font-ui);
+}
+
+.form textarea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+
+.editorSection {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.keywordHead {
+  margin: 0;
+  padding: 8px 14px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionBody {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rowField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 560px;
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  padding: 3px 12px;
+  cursor: pointer;
+  transition: border-color var(--ease-state), color var(--ease-state);
+}
+
+.chip[data-selected] {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+}
+
+/* An activity type that carries catalog Help (`opened` vs `synchronize`) is visually
+ * distinct: the amber needs-you edge marks "this one is different — read why below". */
+.chip[data-distinct] {
+  border-style: dashed;
+  border-color: var(--needs-you);
+}
+
+.chip[data-distinct][data-selected] {
+  border-style: solid;
+  border-color: var(--needs-you);
+  background: color-mix(in srgb, var(--needs-you) 12%, var(--surface-2));
+}
+
+.helpNotes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+}
+
+.filterRow {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filterRow .rowField {
+  min-width: 180px;
+}
+
+/* ---- IF rows --------------------------------------------------------------------------- */
+
+.orGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orDivider {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 700;
+  color: var(--halt);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 2px 0;
+}
+
+.conditionRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.conditionRow select,
+.conditionRow input {
+  max-width: 240px;
+}
+
+.removeButton {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: var(--fs-body);
+  padding: 2px 6px;
+}
+
+.removeButton:hover {
+  color: var(--fail);
+}
+
+/* `+ And` is an inline link; `Add Or group` is a separate, heavier button — OR should
+ * feel rarer and more deliberate (§5.9). */
+.andLink {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--fs-body);
+  padding: 0;
+  align-self: flex-start;
+}
+
+.andLink:hover {
+  text-decoration: underline;
+}
+
+.orButton {
+  align-self: flex-start;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.rawConditions {
+  min-height: 120px;
+}
+
+/* ---- THEN ------------------------------------------------------------------------------ */
+
+.actionBlock {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-2);
+}
+
+.actionHead {
+  display: flex;
+  align-items: center;
+}
+
+.actionLabel {
+  font-weight: 600;
+  font-size: var(--fs-body);
+}
+
+.actionControls {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.actionControls button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: var(--fs-mono);
+  padding: 1px 6px;
+}
+
+.actionControls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.templateField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.interpWrap {
+  position: relative;
+}
+
+.interpButton {
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  padding: 2px 8px;
+}
+
+.interpMenu {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  left: 0;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
+  max-height: 220px;
+  overflow-y: auto;
+  min-width: 220px;
+}
+
+.interpMenu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  padding: 3px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.interpMenu button:hover {
+  background: var(--surface-2);
+}
+
+/* ---- loop protection panel ------------------------------------------------------------- */
+
+.loopPanel {
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--halt);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionHead {
+  margin: 0 0 4px;
+  font-size: var(--fs-section);
+  font-weight: 600;
+}
+
+.loopRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.loopRow[data-off] .loopDescription {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.loopName {
+  font-weight: 600;
+  font-size: var(--fs-body);
+  color: var(--text);
+  min-width: 130px;
+  display: inline-block;
+}
+
+.loopDescription {
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-style: italic;
+}
+
+.knob {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+  margin-left: auto;
+}
+
+.knob input {
+  width: 72px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: var(--fs-mono);
+}
+
+.knobHint {
+  margin-left: auto;
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+}
+
+/* ---- firing history -------------------------------------------------------------------- */
+
+.historySection {
+  margin-top: 20px;
+}
+
+.firingList {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.firingRow {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.firingLine {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--fs-body);
+  flex-wrap: wrap;
+}
+
+.firingEvent {
+  color: var(--text);
+}
+
+.firingReason {
+  color: var(--text-2);
+}
+
+.firingLinks {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.firingLinks a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: var(--fs-mono);
+}
+
+.firingLinks a:hover {
+  text-decoration: underline;
+}
+
+.chainToggle {
+  background: none;
+  border: none;
+  color: var(--halt);
+  cursor: pointer;
+  font-size: var(--fs-mono);
+  padding: 0;
+}
+
+.chainToggle:hover {
+  text-decoration: underline;
+}
+
+.firingTime {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+
+.firingWarnings {
+  list-style: none;
+  margin: 2px 0 0;
+  padding-left: 24px;
+  color: var(--needs-you);
+  font-size: var(--fs-mono);
+}
+
+.inlineChain {
+  margin: 8px 0 4px 24px;
+}

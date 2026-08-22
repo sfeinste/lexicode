@@ -195,7 +195,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// during k.Init below.
 	triggersSvc := triggersvc.New(triggersvc.Options{
 		Store: st, Audit: auditW, Bus: b, Logger: logger,
-		Sources: k.EventSources, Action: k.Action,
+		Sources: k.EventSources, Action: k.Action, Actions: k.Actions,
 	})
 	triggersSvc.Routes(mux, authSvc)
 	// The trigger engine (S26, architecture §8): match → conditions → guard → actions.

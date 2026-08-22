@@ -1152,3 +1152,14 @@ button.optionCard:hover:not(:disabled) {
   color: var(--accent);
   text-decoration: underline;
 }
+
+/* ---- S29: the loop chain panel on a loop-stopped run ----------------------------------- */
+
+.chainPanel {
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--halt);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px 14px 12px;
+  margin: 0 0 10px;
+}

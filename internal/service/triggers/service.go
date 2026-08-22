@@ -25,6 +25,7 @@ type Service struct {
 	bus     *bus.Bus
 	sources func() []ports.EventSource
 	action  func(id string) (ports.TriggerAction, error)
+	actions func() []ports.TriggerAction
 	logger  *slog.Logger
 	now     func() string
 }
@@ -45,6 +46,9 @@ type Options struct {
 	// params only for IDs the registry knows; unknown IDs are stored and fire as `errored`
 	// (see validate.go). Nil means nothing is registered.
 	Action func(id string) (ports.TriggerAction, error)
+	// Actions lists every registered action — kernel.Actions in production. The
+	// trigger-catalog endpoint (S29) renders the THEN picker from it. Nil means none.
+	Actions func() []ports.TriggerAction
 	// Logger receives failure lines. Nil means slog.Default().
 	Logger *slog.Logger
 	// Now overrides the clock in tests. Nil means domain.Now.
@@ -71,8 +75,12 @@ func New(opts Options) *Service {
 			return nil, fmt.Errorf("no trigger actions are registered")
 		}
 	}
+	actions := opts.Actions
+	if actions == nil {
+		actions = func() []ports.TriggerAction { return nil }
+	}
 	return &Service{st: opts.Store, audit: opts.Audit, bus: opts.Bus,
-		sources: sources, action: action, logger: logger, now: now}
+		sources: sources, action: action, actions: actions, logger: logger, now: now}
 }
 
 // ValidationError carries field-level problems up to the HTTP layer as a 400 validation_failed.
@@ -96,10 +104,67 @@ func (e *InUseError) Error() string {
 	return fmt.Sprintf("trigger %q is referenced by tickets or runs it created; disable it instead of deleting it", e.Name)
 }
 
-// WithHealth is one trigger plus its rule-health aggregate (last 50 firings).
+// WithHealth is one trigger plus its rule-health aggregate (last 50 firings), the recent
+// outcome sequence the S29 sparkline renders, and each action's Describe() sentence for the
+// THEN line of the prose card.
 type WithHealth struct {
 	Trigger domain.Trigger
 	Health  store.Health
+	// Recent is the last (up to) 20 firing outcomes, oldest first — the sparkline reads
+	// left-to-right in time order.
+	Recent []domain.FiringOutcome
+	// ActionSummaries is one sentence per configured action, in action order — the
+	// registered action's Describe() ("run agent Reviewer"), or a plain fallback naming the
+	// action_id when the action is unregistered or its params no longer describe.
+	ActionSummaries []string
+}
+
+// sparklineN is how many recent firings the card sparkline shows (UI spec §5.9: "last ~20").
+const sparklineN = 20
+
+// withHealth assembles the read model for one trigger.
+func (s *Service) withHealth(ctx context.Context, tr domain.Trigger) (WithHealth, error) {
+	h, err := s.st.Firings().HealthFor(ctx, tr.ID, 50)
+	if err != nil {
+		return WithHealth{}, err
+	}
+	recentRows, err := s.st.Firings().ForTrigger(ctx, tr.ID, sparklineN)
+	if err != nil {
+		return WithHealth{}, err
+	}
+	// ForTrigger returns newest first; the sparkline reads oldest first.
+	recent := make([]domain.FiringOutcome, 0, len(recentRows))
+	for i := len(recentRows) - 1; i >= 0; i-- {
+		recent = append(recent, recentRows[i].Outcome)
+	}
+	return WithHealth{Trigger: tr, Health: h, Recent: recent,
+		ActionSummaries: s.describeActions(tr.Actions)}, nil
+}
+
+// describeActions renders each stored action in words via its registered Describe. An
+// unregistered ID (or params Describe refuses — possible when the module's validation
+// tightened after the rule was stored) degrades to naming the action rather than erroring
+// the whole list.
+func (s *Service) describeActions(raw json.RawMessage) []string {
+	var refs []actionRef
+	if err := json.Unmarshal(raw, &refs); err != nil {
+		return []string{}
+	}
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		act, err := s.action(ref.ActionID)
+		if err != nil {
+			out = append(out, ref.ActionID+" (not registered)")
+			continue
+		}
+		desc, err := act.Describe(ref.Params)
+		if err != nil {
+			out = append(out, act.Label())
+			continue
+		}
+		out = append(out, desc)
+	}
+	return out
 }
 
 // Input is the create/patch body: every field optional so PATCH is a true partial. Create
@@ -131,11 +196,11 @@ func (s *Service) List(ctx context.Context, projectKey string) ([]WithHealth, er
 	}
 	out := make([]WithHealth, 0, len(trs))
 	for _, tr := range trs {
-		h, err := s.st.Firings().HealthFor(ctx, tr.ID, 50)
+		wh, err := s.withHealth(ctx, tr)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, WithHealth{Trigger: tr, Health: h})
+		out = append(out, wh)
 	}
 	return out, nil
 }
@@ -146,11 +211,7 @@ func (s *Service) Get(ctx context.Context, id string) (WithHealth, error) {
 	if err != nil {
 		return WithHealth{}, err
 	}
-	h, err := s.st.Firings().HealthFor(ctx, tr.ID, 50)
-	if err != nil {
-		return WithHealth{}, err
-	}
-	return WithHealth{Trigger: tr, Health: h}, nil
+	return s.withHealth(ctx, tr)
 }
 
 // Create validates and inserts a trigger. Unlike bootstrap's suggested rules, an explicitly

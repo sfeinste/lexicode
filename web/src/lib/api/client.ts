@@ -101,6 +101,27 @@ export type NotificationListResponse = components["schemas"]["NotificationListRe
 export type NotificationResponse = components["schemas"]["NotificationResponse"];
 export type PermissionRule = components["schemas"]["PermissionRule"];
 export type PermissionRuleList = components["schemas"]["PermissionRuleList"];
+export type Trigger = components["schemas"]["Trigger"];
+export type TriggerInput = components["schemas"]["TriggerInput"];
+export type TriggerListResponse = components["schemas"]["TriggerListResponse"];
+export type TriggerFilters = components["schemas"]["TriggerFilters"];
+export type TriggerActionRef = components["schemas"]["TriggerActionRef"];
+export type TriggerHealth = components["schemas"]["TriggerHealth"];
+export type LoopConfig = components["schemas"]["LoopConfig"];
+export type FiringOutcome = components["schemas"]["FiringOutcome"];
+export type TriggerFiring = components["schemas"]["TriggerFiring"];
+export type TriggerFiringListResponse = components["schemas"]["TriggerFiringListResponse"];
+export type TriggerCatalog = components["schemas"]["TriggerCatalog"];
+export type CatalogSource = components["schemas"]["CatalogSource"];
+export type CatalogEvent = components["schemas"]["CatalogEvent"];
+export type CatalogActivityType = components["schemas"]["CatalogActivityType"];
+export type CatalogFilter = components["schemas"]["CatalogFilter"];
+export type CatalogField = components["schemas"]["CatalogField"];
+export type CatalogAction = components["schemas"]["CatalogAction"];
+export type ActionParamField = components["schemas"]["ActionParamField"];
+export type CatalogOperator = components["schemas"]["CatalogOperator"];
+export type RunChainResponse = components["schemas"]["RunChainResponse"];
+export type RunChainEntry = components["schemas"]["RunChainEntry"];
 
 export const API_BASE = "/api/v1";
 
@@ -444,6 +465,36 @@ export const runsApi = {
     }),
   acknowledge: (id: string) =>
     api<{ run: Run }>("POST", `/runs/${encodeURIComponent(id)}/acknowledge`, { body: {} }),
+  chain: (id: string, signal?: AbortSignal) =>
+    api<RunChainResponse>("GET", `/runs/${encodeURIComponent(id)}/chain`, { signal }),
+};
+
+/**
+ * Triggers (S26 endpoints, S29 surfaces). The catalog is the one payload the editor is
+ * generated from — sources → WHEN, operators → IF, actions → THEN (contracts §5).
+ */
+export const triggersApi = {
+  list: (projectKey: string, signal?: AbortSignal) =>
+    api<TriggerListResponse>("GET", `/projects/${encodeURIComponent(projectKey)}/triggers`, {
+      signal,
+    }),
+  create: (projectKey: string, body: TriggerInput) =>
+    api<Trigger>("POST", `/projects/${encodeURIComponent(projectKey)}/triggers`, { body }),
+  get: (id: string, signal?: AbortSignal) =>
+    api<Trigger>("GET", `/triggers/${encodeURIComponent(id)}`, { signal }),
+  update: (id: string, body: TriggerInput) =>
+    api<Trigger>("PATCH", `/triggers/${encodeURIComponent(id)}`, { body }),
+  remove: (id: string) => api<void>("DELETE", `/triggers/${encodeURIComponent(id)}`),
+  firings: (id: string, limit = 50, signal?: AbortSignal) =>
+    api<TriggerFiringListResponse>(
+      "GET",
+      `/triggers/${encodeURIComponent(id)}/firings?limit=${limit}`,
+      { signal },
+    ),
+  catalog: (projectKey: string, signal?: AbortSignal) =>
+    api<TriggerCatalog>("GET", `/projects/${encodeURIComponent(projectKey)}/trigger-catalog`, {
+      signal,
+    }),
 };
 
 export const elicitationsApi = {

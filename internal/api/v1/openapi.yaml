@@ -1284,6 +1284,27 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/trigger-catalog:
+    get:
+      operationId: getTriggerCatalog
+      summary: >
+        The merged trigger-editor catalog (S29): every registered event source's
+        Catalog() (WHEN options; each event's `fields` doubles as the IF field vocabulary
+        and the {{...}} interpolation picker's list), every registered action's
+        {id, label, schema} (THEN options), and the static contracts §4.1 operator table
+        (IF operator dropdowns, type-prefixed). The editor is generated from this one
+        payload — a new source or action appears with no frontend change.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The catalog.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TriggerCatalog" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /projects/{key}/runs:
     get:
       operationId: listRuns
@@ -3141,6 +3162,13 @@ components:
         created_at: { type: string }
         updated_at: { type: string }
         health: { $ref: "#/components/schemas/TriggerHealth" }
+        action_summaries:
+          type: array
+          description: >
+            One Describe() sentence per action, in action order — the THEN line of the
+            prose card ("run agent Reviewer"). Present on the health-carrying reads
+            (list/get); an unregistered action degrades to naming its id.
+          items: { type: string }
     TriggerFilters:
       type: object
       description: Stage-1 matcher filters; an absent or empty list is no constraint.
@@ -3176,13 +3204,18 @@ components:
       type: object
       description: >
         Per-outcome counts over the last 50 firings — the `14 ok · 3 no action · 1 loop`
-        breakdown, never collapsed to success/failure.
-      required: [counts, last_fired_at]
+        breakdown, never collapsed to success/failure — plus the recent outcome sequence
+        the card sparkline renders.
+      required: [counts, last_fired_at, recent]
       properties:
         counts:
           type: object
           additionalProperties: { type: integer }
         last_fired_at: { type: [string, "null"] }
+        recent:
+          type: array
+          description: The last (up to) 20 firing outcome classes, oldest first.
+          items: { $ref: "#/components/schemas/FiringOutcome" }
     TriggerInput:
       type: object
       description: >
@@ -3222,10 +3255,7 @@ components:
         id: { type: string }
         trigger_id: { type: string }
         event_id: { type: string }
-        outcome:
-          type: string
-          enum: [succeeded, no_action, awaiting_approval, errored,
-                 debounced, superseded, loop_stopped, budget_exceeded]
+        outcome: { $ref: "#/components/schemas/FiringOutcome" }
         reason: { type: string }
         run_id: { type: [string, "null"] }
         absorbed_by_run_id: { type: [string, "null"] }
@@ -3233,6 +3263,27 @@ components:
           type: array
           items: { type: string }
         created_at: { type: string }
+        event: { $ref: "#/components/schemas/TriggerFiringEvent" }
+    FiringOutcome:
+      type: string
+      description: The eight §4.2 trigger outcome classes.
+      enum: [succeeded, no_action, awaiting_approval, errored,
+             debounced, superseded, loop_stopped, budget_exceeded]
+    TriggerFiringEvent:
+      type: object
+      description: >
+        A summary of the event that caused the firing, so the history list can say what
+        happened without a per-row fetch.
+      required: [kind, activity_type, actor_kind, actor_login, subject, occurred_at]
+      properties:
+        kind: { type: string }
+        activity_type: { type: string }
+        actor_kind: { type: string }
+        actor_login: { type: [string, "null"] }
+        subject:
+          type: string
+          description: The guard-style subject ("pr:219" / "ticket:PAY-14" / "repo").
+        occurred_at: { type: string }
     TriggerFiringListResponse:
       type: object
       required: [firings]
@@ -3240,3 +3291,121 @@ components:
         firings:
           type: array
           items: { $ref: "#/components/schemas/TriggerFiring" }
+    TriggerCatalog:
+      type: object
+      description: >
+        The whole trigger-editor payload (S29): sources → WHEN, actions → THEN,
+        operators → IF. Interpolation ({{...}}) offers each event descriptor's `fields`.
+      required: [sources, actions, operators]
+      properties:
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/CatalogSource" }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/CatalogAction" }
+        operators:
+          type: array
+          items: { $ref: "#/components/schemas/CatalogOperator" }
+    CatalogSource:
+      type: object
+      description: One registered EventSource's Catalog(), keyed by its port ID.
+      required: [id, events]
+      properties:
+        id: { type: string }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/CatalogEvent" }
+    CatalogEvent:
+      type: object
+      description: One event kind (contracts §2.1 EventDescriptor), rendered as stored.
+      required: [kind, label, activity_types, filters, fields, subject_key]
+      properties:
+        kind: { type: string }
+        label: { type: string }
+        activity_types:
+          type: array
+          items: { $ref: "#/components/schemas/CatalogActivityType" }
+        filters:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/CatalogFilter" }
+        fields:
+          type: [array, "null"]
+          description: >
+            The payload paths conditions and {{...}} interpolation may address for this
+            event kind — the IF field dropdown and the interpolation picker share it.
+          items: { $ref: "#/components/schemas/CatalogField" }
+        subject_key: { type: string }
+    CatalogActivityType:
+      type: object
+      required: [value, label]
+      properties:
+        value: { type: string }
+        label: { type: string }
+        help:
+          type: string
+          description: Why this activity type is different — "opened vs synchronize".
+    CatalogFilter:
+      type: object
+      required: [key, kind, label]
+      properties:
+        key: { type: string }
+        kind: { type: string, enum: [glob-list, label-list] }
+        label: { type: string }
+    CatalogField:
+      type: object
+      required: [path, type]
+      properties:
+        path: { type: string }
+        type: { type: string, enum: [text, number, bool, enum, set] }
+        enum:
+          type: array
+          description: An enum field's known values; absent means free text.
+          items: { type: string }
+    CatalogAction:
+      type: object
+      description: One registered TriggerAction — its Schema() drives the THEN form.
+      required: [id, label, schema]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        schema: { $ref: "#/components/schemas/ActionParamSchema" }
+    ActionParamSchema:
+      type: object
+      required: [fields]
+      properties:
+        fields:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/ActionParamField" }
+    ActionParamField:
+      type: object
+      description: >
+        One typed action parameter (contracts §2.5). The type vocabulary drives the THEN
+        widgets: "agent" renders the project's agent picker, "template" a text input with
+        the {{...}} interpolation field picker, "category" the fixed column-category
+        select (D2 — never column names), "list" a list of strings.
+      required: [key, label, type, required]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        type:
+          type: string
+          enum: [text, number, bool, enum, agent, template, category, list]
+        required: { type: boolean }
+        enum:
+          type: array
+          items: { type: string }
+        help: { type: string }
+    CatalogOperator:
+      type: object
+      description: >
+        One contracts §4.1 condition operator. `family` is the visible type prefix
+        ("(text) contains"); `value` says what right-hand input the operator takes;
+        `field` is false for actor.* operators, whose field is implied.
+      required: [op, family, label, value, field]
+      properties:
+        op: { type: string }
+        family: { type: string, enum: [text, number, enum, bool, set, actor] }
+        label: { type: string }
+        value: { type: string, enum: [text, number, bool, enum, enum_list, none] }
+        field: { type: boolean }

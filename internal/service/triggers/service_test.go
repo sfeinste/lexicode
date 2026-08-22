@@ -107,6 +107,7 @@ func newEnv(t *testing.T) *env {
 			}
 			return nil, fmt.Errorf("no trigger action %q is registered", id)
 		},
+		Actions: func() []ports.TriggerAction { return []ports.TriggerAction{pickyAction{}} },
 	})
 	svc.Routes(mux, authSvc)
 
