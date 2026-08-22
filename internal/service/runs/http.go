@@ -149,7 +149,12 @@ type activityBody struct {
 	OK         *bool           `json:"ok"`
 	Attempt    int64           `json:"attempt"`
 	DurationMS *int64          `json:"duration_ms"`
+	QueuedMS   *int64          `json:"queued_ms"`
+	ModelMS    *int64          `json:"model_ms"`
+	ToolMS     *int64          `json:"tool_ms"`
 	CostCents  int64           `json:"cost_cents"`
+	TokensIn   int64           `json:"tokens_in"`
+	TokensOut  int64           `json:"tokens_out"`
 	CreatedAt  string          `json:"created_at"`
 }
 
@@ -242,7 +247,9 @@ func (s *Service) handleActivities(w http.ResponseWriter, r *http.Request) {
 		out = append(out, activityBody{
 			Seq: a.Seq, Type: string(a.Type), Level: a.Level, ToolName: a.ToolName,
 			GroupKey: a.GroupKey, Title: a.Title, Payload: a.Payload, OK: a.OK,
-			Attempt: a.Attempt, DurationMS: a.DurationMS, CostCents: a.CostCents,
+			Attempt: a.Attempt, DurationMS: a.DurationMS,
+			QueuedMS: a.QueuedMS, ModelMS: a.ModelMS, ToolMS: a.ToolMS,
+			CostCents: a.CostCents, TokensIn: a.TokensIn, TokensOut: a.TokensOut,
 			CreatedAt: a.CreatedAt,
 		})
 	}

@@ -2609,7 +2609,7 @@ components:
       description: One step of a run's transcript, keyed (run_id, seq).
       required:
         [seq, type, level, tool_name, group_key, title, payload, ok, attempt, duration_ms,
-         cost_cents, created_at]
+         queued_ms, model_ms, tool_ms, cost_cents, tokens_in, tokens_out, created_at]
       properties:
         seq: { type: integer }
         type:
@@ -2623,7 +2623,14 @@ components:
         ok: { type: [boolean, "null"] }
         attempt: { type: integer }
         duration_ms: { type: [integer, "null"] }
+        queued_ms:
+          type: [integer, "null"]
+          description: The queued / model / tool timing-gutter split (UI spec §5.7).
+        model_ms: { type: [integer, "null"] }
+        tool_ms: { type: [integer, "null"] }
         cost_cents: { type: integer }
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
         created_at: { type: string }
     RunListResponse:
       type: object

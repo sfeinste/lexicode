@@ -21,7 +21,8 @@ import type { EditorHandle } from "../../../components/Editor/Editor";
 import { MarkdownView } from "../../../components/Editor/MarkdownView";
 import type { MentionSources } from "../../../components/Editor/engine";
 import { collapseToSingleLine } from "../../../components/Editor/engine";
-import { useEligibleAgents } from "../../../lib/api/agentQueries";
+import { useAgentsQuery, useEligibleAgents } from "../../../lib/api/agentQueries";
+import { LiveRunSessionCard } from "../../../components/RunSessionCard/LiveRunSessionCard";
 import {
   ApiProblem,
   type Agent,
@@ -398,6 +399,7 @@ function LoadedTicket({
         />
 
         <StreamSection
+          projectKey={projectKey}
           entries={stream}
           columns={columns}
           membersById={membersById}
@@ -632,14 +634,21 @@ function SubticketsBlock({
 // ---- the unified stream (no tabs — the §5.4 hill) ---------------------------------------
 
 function StreamSection({
+  projectKey,
   entries,
   columns,
   membersById,
 }: {
+  projectKey: string;
   entries: TicketStreamEntry[];
   columns: Column[];
   membersById: Map<string, Member>;
 }) {
+  // The full roster (not just delegate-eligible): a run by a since-disabled agent still
+  // needs its name on the card.
+  const roster = useAgentsQuery(projectKey);
+  const agentName = (id: string) =>
+    roster.data?.agents.find((a) => a.id === id)?.name ?? "agent";
   const columnName = (id: string) => columns.find((c) => c.id === id)?.name ?? "…";
   const userName = (id: string) => membersById.get(id)?.display_name ?? "someone";
   const actorName = (e: TicketStreamEntry): string => {
@@ -678,8 +687,18 @@ function StreamSection({
           );
         }
         if (e.kind === "run") {
-          // S23 writes these rows and renders RunSessionCard from live run data. Until
-          // then the row cannot exist; a defensive compact line keeps an early row visible.
+          // S23: the row carries the run id; the card renders live from the run queries
+          // and the run's SSE topic. A row without one (defensive) stays a compact line.
+          if (e.run_id !== null) {
+            return (
+              <LiveRunSessionCard
+                key={e.id}
+                projectKey={projectKey}
+                runId={e.run_id}
+                agentName={agentName}
+              />
+            );
+          }
           return (
             <div key={e.id} className={styles.systemRow}>
               <span aria-hidden="true" className={styles.systemGlyph}>

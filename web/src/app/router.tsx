@@ -204,10 +204,28 @@ const runsRoute = createRoute({
   path: "runs",
 });
 
+/**
+ * Run-list filter state, in the URL (interaction rule 12): `?state=` a comma list of run
+ * states, `?agent=` / `?ticket=` ids, `?view=` a saved-view name ("all" is the explicit
+ * everything view). No search at all means the default **Needs attention** view (§5.7).
+ */
+export interface RunsSearch {
+  state?: string;
+  agent?: string;
+  ticket?: string;
+  view?: string;
+}
+
 const runsIndexRoute = createRoute({
   getParentRoute: () => runsRoute,
   path: "/",
   component: RunsPage,
+  validateSearch: (search: Record<string, unknown>): RunsSearch => ({
+    state: optStr(search.state),
+    agent: optStr(search.agent),
+    ticket: optStr(search.ticket),
+    view: optStr(search.view),
+  }),
 });
 
 /** Run-detail selection state: sharing a step or a log line is copying the URL (§5.7). */

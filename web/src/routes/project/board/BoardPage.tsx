@@ -175,7 +175,9 @@ export function BoardPage() {
       void navigate({
         to: "/p/$key/board",
         params: { key },
-        search: (prev: BoardSearch) => ({ ...prev, ...patchObj }),
+        // prev arrives as the router-wide search union (S23 added a runs-list `view` of a
+        // different shape); this navigate targets the board route, so the cast is honest.
+        search: (prev) => ({ ...(prev as BoardSearch), ...patchObj }),
         replace,
       });
     },

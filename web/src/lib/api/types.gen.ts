@@ -1757,7 +1757,13 @@ export interface components {
             ok: boolean | null;
             attempt: number;
             duration_ms: number | null;
+            /** @description The queued / model / tool timing-gutter split (UI spec §5.7). */
+            queued_ms: number | null;
+            model_ms: number | null;
+            tool_ms: number | null;
             cost_cents: number;
+            tokens_in: number;
+            tokens_out: number;
             created_at: string;
         };
         RunListResponse: {

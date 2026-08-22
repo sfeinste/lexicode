@@ -2,6 +2,7 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strconv"
@@ -194,12 +195,22 @@ func (k *runSink) Offset(n int64) {
 	}
 }
 
-// activityBody is the run.activity frame payload.
+// activityBody is the run.activity frame payload — the full activity row, so the frontend's
+// cache reducer can append (or merge, when a Seq is re-emitted) without a refetch (S23; the
+// shape mirrors the GET /runs/{id}/activities body).
 func activityBody(a domain.Activity) map[string]any {
+	payload := json.RawMessage(a.Payload)
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
+	}
 	return map[string]any{
 		"run_id": a.RunID, "seq": a.Seq, "type": string(a.Type), "level": a.Level,
 		"tool_name": a.ToolName, "group_key": a.GroupKey, "title": a.Title,
-		"ok": a.OK, "attempt": a.Attempt, "created_at": a.CreatedAt,
+		"payload": payload, "ok": a.OK, "attempt": a.Attempt,
+		"duration_ms": a.DurationMS, "queued_ms": a.QueuedMS,
+		"model_ms": a.ModelMS, "tool_ms": a.ToolMS,
+		"cost_cents": a.CostCents, "tokens_in": a.TokensIn, "tokens_out": a.TokensOut,
+		"created_at": a.CreatedAt,
 	}
 }
 

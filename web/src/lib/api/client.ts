@@ -81,6 +81,14 @@ export type SetSecretRequest = components["schemas"]["SetSecretRequest"];
 export type RenameSecretRequest = components["schemas"]["RenameSecretRequest"];
 export type CredentialsStatus = components["schemas"]["CredentialsStatus"];
 export type CredentialSourceStatus = components["schemas"]["CredentialSourceStatus"];
+export type Run = components["schemas"]["Run"];
+export type RunState = components["schemas"]["RunState"];
+export type RunOutput = components["schemas"]["RunOutput"];
+export type RunContextItem = components["schemas"]["RunContextItem"];
+export type RunActivity = components["schemas"]["RunActivity"];
+export type RunListResponse = components["schemas"]["RunListResponse"];
+export type RunDetailResponse = components["schemas"]["RunDetailResponse"];
+export type RunActivitiesResponse = components["schemas"]["RunActivitiesResponse"];
 
 export const API_BASE = "/api/v1";
 
@@ -391,6 +399,20 @@ export const agentsApi = {
     api<DirectiveListResponse>("GET", `/agents/${encodeURIComponent(id)}/directives`, {
       signal,
     }),
+};
+
+/**
+ * Runs (S22 endpoints, S23 surfaces). The list is fetched unfiltered and filtered
+ * client-side — filter chips and saved views are instant and never refetch (§13); the
+ * server-side query params exist for other clients.
+ */
+export const runsApi = {
+  list: (projectKey: string, signal?: AbortSignal) =>
+    api<RunListResponse>("GET", `/projects/${encodeURIComponent(projectKey)}/runs`, { signal }),
+  get: (id: string, signal?: AbortSignal) =>
+    api<RunDetailResponse>("GET", `/runs/${encodeURIComponent(id)}`, { signal }),
+  activities: (id: string, signal?: AbortSignal) =>
+    api<RunActivitiesResponse>("GET", `/runs/${encodeURIComponent(id)}/activities`, { signal }),
 };
 
 export const bootstrapApi = {
