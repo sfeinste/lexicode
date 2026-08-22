@@ -248,11 +248,15 @@ func TestSystemModulesIsServed(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("body %s is not the modules shape: %v", body, err)
 	}
-	if len(got.Modules) != 2 || got.Modules[0].Name != "github" || got.Modules[1].Name != "docker" {
-		t.Fatalf("modules = %s, want github then docker in registration order", body)
+	if len(got.Modules) != 3 || got.Modules[0].Name != "github" ||
+		got.Modules[1].Name != "docker" || got.Modules[2].Name != "credentials" {
+		t.Fatalf("modules = %s, want github, docker, credentials in registration order", body)
 	}
 	if got.Modules[0].State != "ready" {
 		t.Errorf("github state = %q, want ready", got.Modules[0].State)
+	}
+	if got.Modules[2].State != "ready" {
+		t.Errorf("credentials state = %q, want ready", got.Modules[2].State)
 	}
 	// docker's state depends on the machine: ready where a daemon is reachable, degraded
 	// where it is not (the whole point of the degraded state — boot must not require Docker).

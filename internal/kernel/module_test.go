@@ -22,6 +22,7 @@ import (
 type stubPort struct {
 	ports.ForgeProvider
 	ports.Sandbox
+	ports.CredentialSource
 	id string
 }
 

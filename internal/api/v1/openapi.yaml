@@ -1214,6 +1214,70 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /workspace/credentials:
+    get:
+      operationId: getWorkspaceCredentials
+      summary: >
+        Credential sources and their health (owner only, D-5). Configuration state and
+        actionable health messages — never a token value (D-16).
+      responses:
+        "200":
+          description: The credentials status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialsStatus" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /workspace/credentials/oauth-token:
+    put:
+      operationId: setOAuthToken
+      summary: >
+        Store the pasted `claude setup-token` output as the workspace credential (owner
+        only). The value is write-only; the response is the refreshed status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetOAuthTokenRequest" }
+      responses:
+        "200":
+          description: The refreshed credentials status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialsStatus" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: clearOAuthToken
+      summary: Forget the stored OAuth token (owner only).
+      responses:
+        "200":
+          description: The refreshed credentials status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialsStatus" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /workspace/credentials/import:
+    post:
+      operationId: importOAuthToken
+      summary: >
+        Import the Claude Code CLI's own stored login from ~/.claude/.credentials.json
+        (owner only). Linux only — macOS keeps the login in the system Keychain — and the
+        file is read at click time, never per run (D-5). 409 on a non-Linux server; 404 when
+        no usable file exists.
+      responses:
+        "200":
+          description: The refreshed credentials status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialsStatus" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /audit:
     get:
       operationId: auditList
@@ -1909,6 +1973,38 @@ components:
       required: [name]
       properties:
         name: { type: string }
+    CredentialSourceStatus:
+      type: object
+      description: One credential source's health. Value-free by construction (D-16).
+      required: [configured, healthy, message]
+      properties:
+        configured: { type: boolean }
+        healthy: { type: boolean }
+        message:
+          type: string
+          description: The source's health error, rendered verbatim in settings; empty when healthy.
+    CredentialsStatus:
+      type: object
+      description: The workspace credentials screen's data (D-5).
+      required: [oauth_token, env, import]
+      properties:
+        oauth_token: { $ref: "#/components/schemas/CredentialSourceStatus" }
+        env: { $ref: "#/components/schemas/CredentialSourceStatus" }
+        import:
+          type: object
+          required: [available, path]
+          properties:
+            available:
+              type: boolean
+              description: True only when the server runs on Linux (macOS uses the Keychain).
+            path: { type: string }
+    SetOAuthTokenRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: The `claude setup-token` output. Write-only; never returned by any route.
     TicketPriority:
       type: string
       enum: [none, low, medium, high, urgent]

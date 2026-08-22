@@ -59,6 +59,17 @@ func (r *RunsRepo) ByID(ctx context.Context, id string) (domain.Run, error) {
 		`SELECT `+runCols+` FROM runs WHERE id = ?`, id))
 }
 
+// BranchInUse reports whether any of the project's runs already claimed this branch name —
+// the S19 collision check behind the deterministic `-2`, `-3` suffixes. Terminal runs count
+// too: their branches may still exist on the remote.
+func (r *RunsRepo) BranchInUse(ctx context.Context, projectID, branch string) (bool, error) {
+	var n int64
+	err := r.h.r.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runs WHERE project_id = ? AND branch = ?`, projectID, branch).
+		Scan(&n)
+	return n > 0, mapErr(err)
+}
+
 // ForProject returns a project's runs, newest first.
 func (r *RunsRepo) ForProject(ctx context.Context, projectID string) ([]domain.Run, error) {
 	rows, err := r.h.r.QueryContext(ctx,

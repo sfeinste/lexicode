@@ -48,6 +48,11 @@ func TestNoAPIHandlerTouchesSecretValues(t *testing.T) {
 	}
 	exempt := map[string]bool{
 		filepath.Join("service", "bootstrap", "service.go"): true,
+		// S19: the workspace-prep builder is the other sanctioned in-process reader D-16
+		// names ("container env building"). Its Get calls feed SandboxSpec.Env and the
+		// run's Redactor only; no HTTP handler calls into the file, and the runs service's
+		// future handlers live in other files that stay under this lint.
+		filepath.Join("service", "runs", "prep.go"): true,
 	}
 	forbiddenWords := []string{"ciphertext", "plaintext", "nonce"}
 

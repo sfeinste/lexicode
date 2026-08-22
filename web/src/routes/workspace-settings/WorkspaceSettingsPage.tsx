@@ -21,6 +21,7 @@ import {
   useWorkspaceSettingsQuery,
 } from "../../lib/api/projectQueries";
 import { useAutosave } from "../../lib/autosave";
+import { CredentialsSection } from "./CredentialsSection";
 import styles from "./workspace.module.css";
 
 export function WorkspaceSettingsPage() {
@@ -171,6 +172,12 @@ function SettingsForm({ settings }: { settings: WorkspaceSettings }) {
           />
         </label>
       </div>
+
+      {/*
+        Claude credentials (S19, D-5): the pasted `claude setup-token` output, with health.
+        Owner-only like the rest of this screen.
+      */}
+      <CredentialsSection />
 
       {/*
         Workspace-scope secrets (S13, D-16): the schema's other scope. Owner-only like the

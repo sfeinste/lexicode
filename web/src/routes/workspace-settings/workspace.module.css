@@ -71,6 +71,45 @@
   font-family: var(--font-mono);
 }
 
+.credentialHealth {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.credentialForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.credentialActions {
+  display: flex;
+  gap: 8px;
+}
+
+.credentialActions button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.credentialActions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.credentialError {
+  margin-top: 8px;
+  color: var(--fail);
+  font-size: var(--fs-body);
+}
+
 .hint {
   color: var(--text-3);
   font-size: var(--fs-micro);

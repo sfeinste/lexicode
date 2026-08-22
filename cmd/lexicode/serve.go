@@ -25,11 +25,13 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
+	credentialsmod "github.com/spruce/lexicode/internal/module/credentials"
 	dockermod "github.com/spruce/lexicode/internal/module/docker"
 	githubmod "github.com/spruce/lexicode/internal/module/github"
 	agentsvc "github.com/spruce/lexicode/internal/service/agents"
 	"github.com/spruce/lexicode/internal/service/board"
 	"github.com/spruce/lexicode/internal/service/bootstrap"
+	credsvc "github.com/spruce/lexicode/internal/service/credentials"
 	"github.com/spruce/lexicode/internal/service/projects"
 	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
 	"github.com/spruce/lexicode/internal/service/tickets"
@@ -162,6 +164,18 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	if err := k.RegisterModule(dockerMod); err != nil {
 		return err
 	}
+	credsMod := credentialsmod.New(credentialsmod.Options{Secrets: sec})
+	if err := k.RegisterModule(credsMod); err != nil {
+		return err
+	}
+	// The credentials settings service checks health through the module's concrete sources —
+	// handed over here, at the one wiring site, like bootstrap's DocLister.
+	credentialsSvc := credsvc.New(credsvc.Options{
+		Secrets: sec, Audit: auditW, Logger: logger,
+		OAuth: credsMod.OAuth(), Env: credsMod.Env(),
+		SecretName: credentialsmod.OAuthSecretName,
+	})
+	credentialsSvc.Routes(mux, authSvc)
 
 	// The bootstrap service resolves the forge port through the kernel at call time; its doc
 	// detection uses the github adapter's extra ListDir/ReadFileIfExists methods, which the

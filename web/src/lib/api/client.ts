@@ -79,6 +79,8 @@ export type Secret = components["schemas"]["Secret"];
 export type SecretListResponse = components["schemas"]["SecretListResponse"];
 export type SetSecretRequest = components["schemas"]["SetSecretRequest"];
 export type RenameSecretRequest = components["schemas"]["RenameSecretRequest"];
+export type CredentialsStatus = components["schemas"]["CredentialsStatus"];
+export type CredentialSourceStatus = components["schemas"]["CredentialSourceStatus"];
 
 export const API_BASE = "/api/v1";
 
@@ -228,6 +230,21 @@ export const secretsApi = {
     api<Secret>("PATCH", `/workspace/secrets/${encodeURIComponent(id)}`, { body }),
   workspaceRemove: (id: string) =>
     api<void>("DELETE", `/workspace/secrets/${encodeURIComponent(id)}`),
+};
+
+/**
+ * Workspace credentials (D-5): status and health only. The token goes in via setOauthToken
+ * and never comes back out of any route (D-16). Owner-only, like workspace settings.
+ */
+export const credentialsApi = {
+  get: (signal?: AbortSignal) =>
+    api<CredentialsStatus>("GET", "/workspace/credentials", { signal }),
+  setOauthToken: (token: string) =>
+    api<CredentialsStatus>("PUT", "/workspace/credentials/oauth-token", { body: { token } }),
+  clearOauthToken: () =>
+    api<CredentialsStatus>("DELETE", "/workspace/credentials/oauth-token"),
+  importOauthToken: () =>
+    api<CredentialsStatus>("POST", "/workspace/credentials/import"),
 };
 
 export const columnsApi = {

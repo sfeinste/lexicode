@@ -85,6 +85,38 @@ func TestFilesTar(t *testing.T) {
 	}
 }
 
+// TestFilesTarMarksShebangFilesExecutable covers the S19 git-hook path: a hook git would
+// silently skip without the executable bit.
+func TestFilesTarMarksShebangFilesExecutable(t *testing.T) {
+	r, err := filesTar(map[string][]byte{
+		".lexicode/hooks/commit-msg": []byte("#!/bin/sh\nexit 0\n"),
+		".lexicode/mcp.json":         []byte("{}"),
+	})
+	if err != nil {
+		t.Fatalf("filesTar: %v", err)
+	}
+	modes := map[string]int64{}
+	tr := tar.NewReader(r)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading tar: %v", err)
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			modes[hdr.Name] = hdr.Mode
+		}
+	}
+	if modes[".lexicode/hooks/commit-msg"] != 0o755 {
+		t.Errorf("commit-msg mode = %04o, want 0755", modes[".lexicode/hooks/commit-msg"])
+	}
+	if modes[".lexicode/mcp.json"] != 0o644 {
+		t.Errorf("mcp.json mode = %04o, want 0644", modes[".lexicode/mcp.json"])
+	}
+}
+
 func TestFilesTarRejectsEscapingPaths(t *testing.T) {
 	for _, bad := range []string{"/etc/passwd", "../outside", "a/../../b", ""} {
 		if _, err := filesTar(map[string][]byte{bad: nil}); err == nil {

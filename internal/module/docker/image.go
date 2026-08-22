@@ -211,8 +211,14 @@ func filesTar(files map[string][]byte) (io.Reader, error) {
 		}
 
 		content := files[name]
+		// Shebang files are executable: S19 materializes git hooks (.lexicode/hooks/…)
+		// through this path, and git silently skips a hook without the executable bit.
+		mode := int64(0o644)
+		if bytes.HasPrefix(content, []byte("#!")) {
+			mode = 0o755
+		}
 		if err := tw.WriteHeader(&tar.Header{
-			Name: clean, Mode: 0o644, Size: int64(len(content)), Uid: 1000, Gid: 1000,
+			Name: clean, Mode: mode, Size: int64(len(content)), Uid: 1000, Gid: 1000,
 		}); err != nil {
 			return nil, fmt.Errorf("packing %s: %w", name, err)
 		}

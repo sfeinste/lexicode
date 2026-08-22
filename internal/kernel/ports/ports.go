@@ -1,5 +1,7 @@
 package ports
 
+import "context"
+
 // EventSource turns something that happens in the world into a normalized domain event: the
 // GitHub poller, the cron source, and later webhooks or a filesystem watcher (architecture §7).
 //
@@ -55,9 +57,21 @@ type Notifier interface {
 // CredentialSource supplies the environment an agent run needs to authenticate — an OAuth token,
 // an API key from the secret store, or the operator's own environment.
 //
-// Method set: contracts §2.7, transcribed in story S19.
+// Method set: contracts §2.7, transcribed in story S19. V1 ships two implementations in
+// internal/module/credentials: "oauth-token" (D-5: the pasted `claude setup-token` output,
+// stored in the encrypted secret store) and "env" (the orchestrator's own environment, as a
+// fallback for development setups).
 type CredentialSource interface {
 	// ID is the stable identifier, e.g. "oauth-token". It must be unique across registered
 	// credential sources.
 	ID() string
+	// AgentEnv returns the environment variables a run's container needs to authenticate
+	// against the model provider, e.g. {"CLAUDE_CODE_OAUTH_TOKEN": "..."}. The values are
+	// secrets: callers merge them into SandboxSpec.Env and register them with their
+	// redactor; they must never be logged or serialized anywhere else.
+	AgentEnv(ctx context.Context, projectID string) (map[string]string, error)
+	// Health reports whether this source can currently supply credentials. The error is
+	// surfaced verbatim in the settings UI, so it must name the fix (e.g. "run `claude
+	// setup-token` and paste the result into Settings"), never contain a credential value.
+	Health(ctx context.Context) error
 }

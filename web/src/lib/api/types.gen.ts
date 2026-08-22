@@ -707,6 +707,58 @@ export interface paths {
         patch: operations["renameWorkspaceSecret"];
         trace?: never;
     };
+    "/workspace/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Credential sources and their health (owner only, D-5). Configuration state and actionable health messages — never a token value (D-16). */
+        get: operations["getWorkspaceCredentials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace/credentials/oauth-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Store the pasted `claude setup-token` output as the workspace credential (owner only). The value is write-only; the response is the refreshed status. */
+        put: operations["setOAuthToken"];
+        post?: never;
+        /** Forget the stored OAuth token (owner only). */
+        delete: operations["clearOAuthToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace/credentials/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import the Claude Code CLI's own stored login from ~/.claude/.credentials.json (owner only). Linux only — macOS keeps the login in the system Keychain — and the file is read at click time, never per run (D-5). 409 on a non-Linux server; 404 when no usable file exists. */
+        post: operations["importOAuthToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -1226,6 +1278,27 @@ export interface components {
         };
         RenameSecretRequest: {
             name: string;
+        };
+        /** @description One credential source's health. Value-free by construction (D-16). */
+        CredentialSourceStatus: {
+            configured: boolean;
+            healthy: boolean;
+            /** @description The source's health error, rendered verbatim in settings; empty when healthy. */
+            message: string;
+        };
+        /** @description The workspace credentials screen's data (D-5). */
+        CredentialsStatus: {
+            oauth_token: components["schemas"]["CredentialSourceStatus"];
+            env: components["schemas"]["CredentialSourceStatus"];
+            import: {
+                /** @description True only when the server runs on Linux (macOS uses the Keychain). */
+                available: boolean;
+                path: string;
+            };
+        };
+        SetOAuthTokenRequest: {
+            /** @description The `claude setup-token` output. Write-only; never returned by any route. */
+            token: string;
         };
         /** @enum {string} */
         TicketPriority: "none" | "low" | "medium" | "high" | "urgent";
@@ -3146,6 +3219,102 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    getWorkspaceCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The credentials status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialsStatus"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    setOAuthToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetOAuthTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description The refreshed credentials status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialsStatus"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    clearOAuthToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The refreshed credentials status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialsStatus"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    importOAuthToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The refreshed credentials status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialsStatus"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
         };
     };
     auditList: {
