@@ -101,7 +101,21 @@ function useShellKeyBindings(projectKey: string | undefined): void {
       nav("go.agents", "g a", "Go to Agents", "/p/$key/agents", true),
       nav("go.triage", "g t", "Go to Triage", "/p/$key/triage", true),
       nav("go.triggers", "g g", "Go to Triggers", "/p/$key/triggers", true),
-      nav("go.settings", "g s", "Go to Settings", "/p/$key/settings", true),
+      nav("go.settings", "g s", "Go to Project settings", "/p/$key/settings", true),
+      // Same chord, the other context: outside a project "settings" can only mean the
+      // workspace's own screen (§1). Exactly one of the two is ever enabled, so the registry
+      // never has to choose. This also puts "Workspace settings" in the ⌘K palette, which is
+      // the other place a person looks for a screen they cannot find.
+      {
+        id: "go.workspace-settings",
+        scope: "global",
+        chord: "g s",
+        title: "Go to Workspace settings",
+        group: "Navigation",
+        palette: true,
+        enabled: () => projectKey === undefined,
+        run: () => void navigate({ to: "/settings" }),
+      },
     ];
   }, [navigate, projectKey]);
 }

@@ -12,7 +12,7 @@
  * sections as those panes land. Each renders through <InheritedField>, backed by the API's
  * {value, inherited, workspace_value} triple.
  */
-import { useParams } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
 
 import { InheritedField } from "../../../components/InheritedField/InheritedField";
 import { SaveStatus } from "../../../components/SaveStatus/SaveStatus";
@@ -63,14 +63,18 @@ export function ProjectSettingsPage() {
       <nav className={styles.rail} aria-label="Settings sections">
         {SECTIONS.map((s) =>
           s.enabled ? (
-            <a
+            // A router Link, not a bare <a href>: the rail is in-app navigation, and a raw
+            // href reloads the whole SPA — losing the query cache and blanking the screen —
+            // on what looks like a tab switch.
+            <Link
               key={s.id}
-              href={`/p/${key}/settings${s.id === "general" ? "" : `/${s.id}`}`}
+              to={s.id === "general" ? "/p/$key/settings" : "/p/$key/settings/$"}
+              params={s.id === "general" ? { key } : { key, _splat: s.id }}
               className={styles.railLink}
               data-active={(section === s.id || (s.id === "general" && !section)) || undefined}
             >
               {s.label}
-            </a>
+            </Link>
           ) : (
             <span key={s.id} className={styles.railDisabled} aria-disabled="true">
               {s.label}

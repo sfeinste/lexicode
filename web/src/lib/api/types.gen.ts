@@ -659,7 +659,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Delegate the ticket to an agent (S22): records the agent as the ticket's delegate and enqueues a run through the kernel scheduler (D-14). A nil error means "queued", not "running" — admission control (§10.2) decides when it starts, and the run's `hold_reason` says in words which limit is holding it. */
+        /** Delegate the ticket to an agent (S22): records the agent as the ticket's delegate and enqueues a run through the kernel scheduler (D-14). A nil error means "queued", not "running" — admission control (§10.2) decides when it starts, and the run's `hold_reason` says in words which limit is holding it. Starting is stricter than setting the field: a disabled agent is a 400 naming `agent_id`, even though the same agent stays settable through PATCH so history and auto-start columns keep pointing at it. */
         post: operations["delegateTicket"];
         delete?: never;
         options?: never;

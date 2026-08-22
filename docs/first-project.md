@@ -88,8 +88,16 @@ Board → **New ticket**. Title, a description, and — this is the part that pa
 the description: add them one at a time, reorder them, check them off. They go into the agent's
 prompt, and the agent can tick one off itself as it verifies it, with a note saying how.
 
-Then press **D**, or the Delegate button: pick Dev, optionally add a line of extra instruction,
-go.
+Then start it. There are exactly two ways to do that by hand: press **D** on the board and pick
+Dev — which records Dev as the delegate *and* queues a run — or, on the ticket itself, set the
+delegate in the sidebar and press **▶ Run delegate now**. Either way the answer is a run id and
+its real state: a queued run says in words what is holding it ("waiting: Dev is at its 1-run
+limit"), and a refusal says why nothing started.
+
+The sidebar's **Delegate** dropdown on its own only sets the field — who *would* run. That is
+what makes trigger-driven runs and auto-run columns meaningful, and it is why it does not start
+anything by itself. Dragging a card never starts a run either, unless the destination column is
+explicitly marked *⚡ auto-runs delegate*.
 
 A ticket has an **assignee** (the human accountable for it) and a **delegate** (the agent doing
 the work). Two fields, never one. Notifications from the run route to whoever delegated it.

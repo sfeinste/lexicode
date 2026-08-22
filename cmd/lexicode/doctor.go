@@ -250,7 +250,8 @@ func checkCredentialsAndRepos(ctx context.Context, cfg config.Config) []result {
 
 	if _, err := os.Stat(cfg.DBFile()); errors.Is(err, os.ErrNotExist) {
 		return []result{warn(claude, "no database yet at "+cfg.DBFile(),
-			"run `lexicode serve` once; then paste `claude setup-token` output into Settings → Credentials")}
+			"run `lexicode serve` once; then paste `claude setup-token` output into\n"+
+				"the avatar menu → Workspace settings → Credentials")}
 	}
 	st, err := store.Open(store.Options{Path: cfg.DBFile(), Logger: logger})
 	if err != nil {
@@ -274,10 +275,12 @@ func checkCredentialsAndRepos(ctx context.Context, cfg config.Config) []result {
 		out = append(out, ok(claude, "a stored OAuth token is present and well-formed"))
 	case envErr == nil:
 		out = append(out, warn(claude, "no stored token; falling back to the server's environment",
-			"that works, but the product path is `claude setup-token` pasted into Settings → Credentials"))
+			"that works, but the product path is `claude setup-token` pasted into the "+
+				"avatar menu → Workspace settings → Credentials"))
 	default:
 		out = append(out, fail(claude, oauthErr.Error(),
-			"run `claude setup-token` and paste the whole result into Settings → Credentials"))
+			"run `claude setup-token` and paste the whole result into the avatar menu → "+
+				"Workspace settings → Credentials"))
 	}
 
 	out = append(out, checkRepoTokens(ctx, cfg, st, sec, logger)...)

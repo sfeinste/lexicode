@@ -169,11 +169,15 @@
   color: var(--text-2);
 }
 
+/* Buttons and links share the row treatment: "Workspace settings" navigates, "Sign out"
+   acts, and they must not look like two different kinds of thing. */
 .menuAction {
+  display: block;
   text-align: left;
   padding: 6px 8px;
   border-radius: 4px;
   color: var(--text);
+  text-decoration: none;
   transition: background var(--ease-state);
 }
 

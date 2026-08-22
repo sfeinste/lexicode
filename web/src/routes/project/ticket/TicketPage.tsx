@@ -22,8 +22,10 @@ import type { MentionSources } from "../../../components/Editor/engine";
 import { collapseToSingleLine } from "../../../components/Editor/engine";
 import { useAgentsQuery, useEligibleAgents } from "../../../lib/api/agentQueries";
 import { LiveRunSessionCard } from "../../../components/RunSessionCard/LiveRunSessionCard";
+import { RunNotice } from "../../../components/RunNotice/RunNotice";
 import {
   ApiProblem,
+  problemMessage,
   type Agent,
   type Column,
   type CommentRunRequest,
@@ -54,6 +56,7 @@ import {
   usePatchTicket,
   usePostComment,
   useProjectLabels,
+  useRunDelegate,
   useSetLabel,
   useTicketDetail,
   useTicketId,
@@ -128,6 +131,7 @@ function LoadedTicket({
   const deleteCriterion = useDeleteCriterion(projectKey);
   const createSubtickets = useCreateSubtickets(projectKey);
   const setLabel = useSetLabel(projectKey);
+  const runDelegate = useRunDelegate(projectKey);
 
   const columns = columnsQuery.data?.columns ?? [];
   const labels = labelsQuery.data?.labels ?? [];
@@ -141,6 +145,10 @@ function LoadedTicket({
   const [subticketDraft, setSubticketDraft] = useState<string | null>(null);
   const [runNotices, setRunNotices] = useState<CommentRunRequest[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
+  // The Run button's answer: a run id and the state that run is actually in.
+  const [startedRun, setStartedRun] = useState<{ runId: string; agentName: string } | null>(
+    null,
+  );
 
   const editorRef = useRef<EditorHandle>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -271,6 +279,32 @@ function LoadedTicket({
     if (clean !== "" && clean !== detail.title) {
       patch.mutate({ id: detail.id, body: { title: clean } }, { onError: onMutationError });
     }
+  };
+
+  /**
+   * The Run button (§5.3). The delegate endpoint is the deliberate start; the sidebar's
+   * delegate <select> beside it is only the field editor. A refusal shows what the server
+   * said, field message first — never a silent no-op.
+   */
+  const runNow = () => {
+    const agentId = detail.delegate_agent_id;
+    if (agentId === null) return;
+    const agentName = eligibleAgents.find((a) => a.id === agentId)?.name ?? "the delegate";
+    runDelegate.mutate(
+      { id: detail.id, agentId },
+      {
+        onSuccess: (res) => {
+          setActionError(null);
+          setStartedRun({ runId: res.run_id, agentName });
+        },
+        onError: (err) => {
+          setStartedRun(null);
+          setActionError(
+            `No run started: ${problemMessage(err, "the request did not reach the scheduler.")}`,
+          );
+        },
+      },
+    );
   };
 
   const postComment = (body: string) =>
@@ -436,6 +470,11 @@ function LoadedTicket({
               { onError: onMutationError },
             )
           }
+          projectKey={projectKey}
+          onRun={runNow}
+          running={runDelegate.isPending}
+          startedRun={startedRun}
+          onDismissRun={() => setStartedRun(null)}
           onLabel={(labelId, attach) =>
             setLabel.mutate(
               attach
@@ -742,6 +781,11 @@ function Sidebar({
   onAssignee,
   onDelegate,
   onLabel,
+  projectKey,
+  onRun,
+  running,
+  startedRun,
+  onDismissRun,
 }: {
   detail: TicketDetail;
   columns: Column[];
@@ -753,7 +797,22 @@ function Sidebar({
   onAssignee: (userId: string | null) => void;
   onDelegate: (agentId: string | null) => void;
   onLabel: (labelId: string, attach: boolean) => void;
+  projectKey: string;
+  onRun: () => void;
+  running: boolean;
+  startedRun: { runId: string; agentName: string } | null;
+  onDismissRun: () => void;
 }) {
+  // Who a run would use, and why the button is off when it is.
+  const delegate = agents.find((a) => a.id === detail.delegate_agent_id);
+  const delegateName = delegate?.name ?? "the delegate";
+  const runDisabledReason: string | null =
+    detail.delegate_agent_id === null
+      ? "No delegate yet — pick one below, then run."
+      : delegate === undefined
+        ? "This ticket's delegate is disabled or archived — pick an enabled agent below."
+        : null;
+
   const copyBranch = () => {
     if (detail.branch !== null) {
       void navigator.clipboard.writeText(
@@ -820,6 +879,38 @@ function Sidebar({
         </select>
       </div>
 
+      {/*
+        The Run button §5.3 names, placed directly above the delegate row so the two read as
+        what they are: this one ACTS (posts to the delegate endpoint, which enqueues a run),
+        the row below only EDITS the field. Disabled without a delegate, with the reason said
+        out loud rather than a dead control.
+      */}
+      <div className={`${styles.sideRow} ${styles.runRow}`}>
+        <span className={styles.sideLabel}>Run</span>
+        <div className={styles.runBlock}>
+          <button
+            type="button"
+            className={styles.runButton}
+            disabled={runDisabledReason !== null || running}
+            title={runDisabledReason ?? "Queue a run of the delegate on this ticket"}
+            onClick={onRun}
+          >
+            {running ? "Starting…" : "▶ Run delegate now"}
+          </button>
+          <span className={styles.runHint}>
+            {runDisabledReason ?? `Queues a run of ${delegateName} on this ticket.`}
+          </span>
+          {startedRun !== null && (
+            <RunNotice
+              projectKey={projectKey}
+              runId={startedRun.runId}
+              agentName={startedRun.agentName}
+              onDismiss={onDismissRun}
+            />
+          )}
+        </div>
+      </div>
+
       <div className={`${styles.sideRow} ${styles.personRow}`} data-kind="agent">
         <span className={styles.sideLabel}>
           <span aria-hidden="true" className={styles.personIcon}>
@@ -851,6 +942,9 @@ function Sidebar({
               )}
           </select>
         )}
+        <span className={styles.fieldHint}>
+          Who would run — used by triggers and auto-run columns. Changing it starts nothing.
+        </span>
       </div>
 
       <div className={styles.sideRow}>

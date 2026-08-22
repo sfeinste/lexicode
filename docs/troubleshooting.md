@@ -63,9 +63,9 @@ Two different tokens expire, and they fail differently.
 activity stream. `doctor` says the token is present and well-formed, because it does not spend
 an API call to check — the shape is right, the token is just no longer valid.
 
-**Fix:** `claude setup-token` again and paste the new value into Settings → Credentials. Runs in
-flight keep the credential they started with; the next run picks up the new one. See
-[oauth-token.md](oauth-token.md).
+**Fix:** `claude setup-token` again and paste the new value into the avatar menu → Workspace
+settings → Credentials. Runs in flight keep the credential they started with; the next run
+picks up the new one. See [oauth-token.md](oauth-token.md).
 
 ### The GitHub token
 

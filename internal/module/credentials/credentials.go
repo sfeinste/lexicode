@@ -170,7 +170,7 @@ func (s *OAuthSource) token(ctx context.Context) (string, error) {
 // errNoToken is the "not configured yet" state; the settings screen renders it verbatim.
 var errNoToken = errors.New(
 	"no Claude Code OAuth token is configured; run `claude setup-token` in a terminal and " +
-		"paste the result into Settings → Credentials")
+		"paste the result into the avatar menu → Workspace settings → Credentials")
 
 // ---------------------------------------------------------------- env -----
 

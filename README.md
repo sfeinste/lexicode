@@ -37,8 +37,9 @@ lexicode doctor
 lexicode serve                 # http://127.0.0.1:7717
 ```
 
-Create the owner account on the first screen, paste a `claude setup-token` into
-Settings → Credentials, connect a repository, write a ticket, press **D**.
+Create the owner account on the first screen, then open the avatar menu at the top right →
+**Workspace settings → Credentials** and paste a `claude setup-token`. Connect a repository,
+write a ticket, press **D**.
 
 Just want to look around?
 

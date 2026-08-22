@@ -1,0 +1,27 @@
+/* The inline "here is the run you just started" line. Neutral, not celebratory: what it
+   says is a state, and the state may well be "queued behind a limit". */
+.root {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: var(--fs-body);
+  color: var(--text-2);
+}
+
+/* StatusDot is nowrap by design (a dot and its label are one token); a hold reason is a
+   sentence, so let this one wrap. */
+.root > span:first-child {
+  white-space: normal;
+}
+
+.on {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+}
+
+.dismiss {
+  font-size: var(--fs-micro);
+}
