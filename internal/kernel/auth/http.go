@@ -26,6 +26,10 @@ func (s *Service) Routes(mux httpx.Registrar) {
 	// Contracts §5 canonical form; token in the path, same handler underneath.
 	mux.Handle("POST /api/v1/invites/{token}/redeem", http.HandlerFunc(s.handleRedeem))
 	mux.Handle("GET /api/v1/auth/me", s.RequireAuth(http.HandlerFunc(s.handleMe)))
+	// S12: the member directory the assignee picker and `@` mention autocomplete read.
+	// Any signed-in user may list members (V1 light auth: every user is a workspace member);
+	// only the public display fields cross the wire — no email, no role, no hash.
+	mux.Handle("GET /api/v1/users", s.RequireAuth(http.HandlerFunc(s.handleListUsers)))
 	mux.Handle("POST /api/v1/invites",
 		s.RequireAuth(RequireOwner(http.HandlerFunc(s.handleCreateInvite))))
 }
@@ -97,6 +101,33 @@ func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toUserBody(u))
+}
+
+// memberBody is one row of GET /api/v1/users: the public display identity and nothing else.
+type memberBody struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	AvatarColor string `json:"avatar_color"`
+}
+
+func (s *Service) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := s.st.Users().List(r.Context())
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	out := struct {
+		Users []memberBody `json:"users"`
+	}{Users: make([]memberBody, 0, len(users))}
+	for _, u := range users {
+		if u.ArchivedAt != nil {
+			continue
+		}
+		out.Users = append(out.Users, memberBody{
+			ID: u.ID, DisplayName: u.DisplayName, AvatarColor: u.AvatarColor,
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // inviteBody is the response of POST /api/v1/invites: the one-time path the owner copies into a

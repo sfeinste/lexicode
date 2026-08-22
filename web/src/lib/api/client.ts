@@ -42,6 +42,12 @@ export type LabelListResponse = components["schemas"]["LabelListResponse"];
 export type CreateLabelRequest = components["schemas"]["CreateLabelRequest"];
 export type UpdateLabelRequest = components["schemas"]["UpdateLabelRequest"];
 export type TicketStreamResponse = components["schemas"]["TicketStreamResponse"];
+export type TicketStreamEntry = components["schemas"]["TicketStreamEntry"];
+export type CreateCommentRequest = components["schemas"]["CreateCommentRequest"];
+export type CommentResponse = components["schemas"]["CommentResponse"];
+export type CommentRunRequest = components["schemas"]["CommentRunRequest"];
+export type Member = components["schemas"]["Member"];
+export type MemberListResponse = components["schemas"]["MemberListResponse"];
 export type WorkspaceSettings = components["schemas"]["WorkspaceSettings"];
 export type UpdateWorkspaceSettingsRequest =
   components["schemas"]["UpdateWorkspaceSettingsRequest"];
@@ -211,6 +217,8 @@ export const ticketsApi = {
     api<TicketListResponse>("POST", `/tickets/${encodeURIComponent(id)}/subtickets`, { body }),
   stream: (id: string, signal?: AbortSignal) =>
     api<TicketStreamResponse>("GET", `/tickets/${encodeURIComponent(id)}/stream`, { signal }),
+  comment: (id: string, body: CreateCommentRequest) =>
+    api<CommentResponse>("POST", `/tickets/${encodeURIComponent(id)}/stream`, { body }),
   addCriterion: (id: string, body: CreateCriterionRequest) =>
     api<Criterion>("POST", `/tickets/${encodeURIComponent(id)}/criteria`, { body }),
   attachLabel: (id: string, labelId: string) =>
@@ -241,6 +249,11 @@ export const labelsApi = {
   update: (id: string, body: UpdateLabelRequest) =>
     api<Label>("PATCH", `/labels/${encodeURIComponent(id)}`, { body }),
   remove: (id: string) => api<void>("DELETE", `/labels/${encodeURIComponent(id)}`),
+};
+
+export const usersApi = {
+  /** The member directory (S12): public display identity only, non-archived users. */
+  list: (signal?: AbortSignal) => api<MemberListResponse>("GET", "/users", { signal }),
 };
 
 export const workspaceApi = {

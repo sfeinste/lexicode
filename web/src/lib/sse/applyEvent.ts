@@ -36,6 +36,7 @@ export function applyStreamEvent(
     // family alongside the ticket cache.
     case "ticket.created":
     case "ticket.updated":
+    case "ticket.commented":
     case "ticket.moved":
     case "ticket.archived":
     case "ticket.unarchived":

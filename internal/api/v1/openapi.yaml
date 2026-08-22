@@ -1,4 +1,4 @@
-# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S10).
+# Lexicode HTTP API v1 — the endpoints that exist TODAY (through story S12).
 #
 # This file is the source of truth for request/response shapes (contracts §5). The frontend's
 # TypeScript types are generated from it: `make api-types` regenerates
@@ -106,6 +106,20 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "410": { $ref: "#/components/responses/Problem" }
+  /users:
+    get:
+      operationId: listUsers
+      summary: >
+        The member directory (S12): every non-archived user's public display identity —
+        the assignee picker and `@` mention autocomplete read this. Any signed-in user;
+        no email, role or credential material crosses the wire.
+      responses:
+        "200":
+          description: Every non-archived user, oldest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
   /system/modules:
     get:
       operationId: systemModules
@@ -479,7 +493,7 @@ paths:
       operationId: getTicketStream
       summary: >
         The unified ticket stream, oldest first — one chronological history, no
-        Comments/Activity split (data model §4.1). Comments (POST) arrive with S12.
+        Comments/Activity split (data model §4.1).
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
@@ -491,6 +505,33 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createComment
+      summary: >
+        Append a comment to the stream (S12): one kind='comment' row with the markdown body
+        and actor attribution. `@[label](kind:id)` mention tokens in the body are parsed
+        into the mentions table; each distinct mentioned agent stages a run request through
+        the scheduler seam — `run_requests` reports the honest outcome per agent (staged is
+        false with an explanatory note until the S22 scheduler exists). 409
+        `ticket_archived` on an archived ticket.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCommentRequest" }
+      responses:
+        "201":
+          description: The created stream entry and any agent-mention run request outcomes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommentResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /tickets/{id}/criteria:
     post:
       operationId: addCriterion
@@ -1220,9 +1261,54 @@ components:
         entries:
           type: array
           items: { $ref: "#/components/schemas/TicketStreamEntry" }
+    CreateCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          description: >
+            Markdown. `@` mentions are the explicit token form the Editor writes —
+            `@[label](user|agent|wiki|ticket:id)`; bare `@name` text is not a mention.
+    CommentRunRequest:
+      type: object
+      description: >
+        The honest outcome of one agent mention: the run request went through the scheduler
+        seam. Until the S22 scheduler lands, `staged` is always false and `note` says so.
+      required: [agent_id, agent_name, staged, note]
+      properties:
+        agent_id: { type: string }
+        agent_name: { type: string }
+        staged: { type: boolean }
+        note: { type: string }
+    CommentResponse:
+      type: object
+      required: [entry, run_requests]
+      properties:
+        entry: { $ref: "#/components/schemas/TicketStreamEntry" }
+        run_requests:
+          type: array
+          items: { $ref: "#/components/schemas/CommentRunRequest" }
+    Member:
+      type: object
+      description: One row of the member directory — public display identity only.
+      required: [id, display_name, avatar_color]
+      properties:
+        id: { type: string }
+        display_name: { type: string }
+        avatar_color: { type: string, description: "#rrggbb" }
+    MemberListResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/Member" }
     StreamEventType:
       type: string
-      description: The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events).
+      description: >
+        The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's
+        ticket.commented).
       enum:
         - run.state
         - run.activity
@@ -1231,6 +1317,7 @@ components:
         - run.elicitation
         - ticket.created
         - ticket.updated
+        - ticket.commented
         - ticket.moved
         - ticket.archived
         - ticket.unarchived

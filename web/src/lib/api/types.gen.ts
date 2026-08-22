@@ -106,6 +106,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The member directory (S12): every non-archived user's public display identity — the assignee picker and `@` mention autocomplete read this. Any signed-in user; no email, role or credential material crosses the wire. */
+        get: operations["listUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/modules": {
         parameters: {
             query?: never;
@@ -307,10 +324,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The unified ticket stream, oldest first — one chronological history, no Comments/Activity split (data model §4.1). Comments (POST) arrive with S12. */
+        /** The unified ticket stream, oldest first — one chronological history, no Comments/Activity split (data model §4.1). */
         get: operations["getTicketStream"];
         put?: never;
-        post?: never;
+        /** Append a comment to the stream (S12): one kind='comment' row with the markdown body and actor attribution. `@[label](kind:id)` mention tokens in the body are parsed into the mentions table; each distinct mentioned agent stages a run request through the scheduler seam — `run_requests` reports the honest outcome per agent (staged is false with an explanatory note until the S22 scheduler exists). 409 `ticket_archived` on an archived ticket. */
+        post: operations["createComment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -811,11 +829,36 @@ export interface components {
         TicketStreamResponse: {
             entries: components["schemas"]["TicketStreamEntry"][];
         };
+        CreateCommentRequest: {
+            /** @description Markdown. `@` mentions are the explicit token form the Editor writes — `@[label](user|agent|wiki|ticket:id)`; bare `@name` text is not a mention. */
+            body: string;
+        };
+        /** @description The honest outcome of one agent mention: the run request went through the scheduler seam. Until the S22 scheduler lands, `staged` is always false and `note` says so. */
+        CommentRunRequest: {
+            agent_id: string;
+            agent_name: string;
+            staged: boolean;
+            note: string;
+        };
+        CommentResponse: {
+            entry: components["schemas"]["TicketStreamEntry"];
+            run_requests: components["schemas"]["CommentRunRequest"][];
+        };
+        /** @description One row of the member directory — public display identity only. */
+        Member: {
+            id: string;
+            display_name: string;
+            /** @description #rrggbb */
+            avatar_color: string;
+        };
+        MemberListResponse: {
+            users: components["schemas"]["Member"][];
+        };
         /**
-         * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events).
+         * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "ticket.created" | "ticket.updated" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;
@@ -981,6 +1024,27 @@ export interface operations {
             404: components["responses"]["Problem"];
             409: components["responses"]["Problem"];
             410: components["responses"]["Problem"];
+        };
+    };
+    listUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every non-archived user, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
         };
     };
     systemModules: {
@@ -1502,6 +1566,37 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    createComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description The created stream entry and any agent-mention run request outcomes. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommentResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
         };
     };
     addCriterion: {

@@ -22,7 +22,7 @@ import (
 //	POST /api/v1/tickets/{id}/unarchive
 //	POST /api/v1/tickets/{id}/move
 //	POST /api/v1/tickets/{id}/subtickets
-//	GET  /api/v1/tickets/{id}/stream
+//	GET|POST /api/v1/tickets/{id}/stream          POST = comment (S12)
 //	POST /api/v1/tickets/{id}/criteria
 //	PUT|DELETE /api/v1/tickets/{id}/labels/{label_id}
 //	PATCH|DELETE /api/v1/criteria/{id}            members, resolved via the criterion's ticket
@@ -53,6 +53,7 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("POST /api/v1/tickets/{id}/move", viaTicket(s.handleMove))
 	mux.Handle("POST /api/v1/tickets/{id}/subtickets", viaTicket(s.handleSubtickets))
 	mux.Handle("GET /api/v1/tickets/{id}/stream", viaTicket(s.handleStream))
+	mux.Handle("POST /api/v1/tickets/{id}/stream", viaTicket(s.handleComment))
 	mux.Handle("POST /api/v1/tickets/{id}/criteria", viaTicket(s.handleAddCriterion))
 	mux.Handle("PUT /api/v1/tickets/{id}/labels/{label_id}", viaTicket(s.handleAttachLabel))
 	mux.Handle("DELETE /api/v1/tickets/{id}/labels/{label_id}", viaTicket(s.handleDetachLabel))
@@ -410,6 +411,51 @@ func (s *Service) handleStream(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	httpx.WriteJSON(w, http.StatusOK, body)
+}
+
+type createCommentBody struct {
+	Body string `json:"body"`
+}
+
+type commentRunRequestBody struct {
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+	Staged    bool   `json:"staged"`
+	Note      string `json:"note"`
+}
+
+// commentResponseBody is the POST /tickets/{id}/stream response: the created stream entry
+// plus the honest outcome of every agent-mention run request (empty until an agent is
+// mentioned; `staged` stays false until the S22 scheduler exists).
+type commentResponseBody struct {
+	Entry       streamEntryBody         `json:"entry"`
+	RunRequests []commentRunRequestBody `json:"run_requests"`
+}
+
+func (s *Service) handleComment(w http.ResponseWriter, r *http.Request) {
+	body, ok := httpx.DecodeJSON[createCommentBody](w, r)
+	if !ok {
+		return
+	}
+	res, err := s.Comment(r.Context(), r.PathValue("id"), body.Body)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	e := res.Entry
+	out := commentResponseBody{
+		Entry: streamEntryBody{
+			ID: e.ID, TicketID: e.TicketID, Kind: string(e.Kind),
+			ActorKind: string(e.ActorKind), ActorID: e.ActorID,
+			Body: e.Body, Payload: e.Payload, RunID: e.RunID,
+			EditedAt: e.EditedAt, CreatedAt: e.CreatedAt,
+		},
+		RunRequests: make([]commentRunRequestBody, 0, len(res.RunRequests)),
+	}
+	for _, rr := range res.RunRequests {
+		out.RunRequests = append(out.RunRequests, commentRunRequestBody(rr))
+	}
+	httpx.WriteJSON(w, http.StatusCreated, out)
 }
 
 type addCriterionBody struct {

@@ -1,0 +1,117 @@
+.root {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--row-height);
+  padding: 0 10px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ease-state);
+}
+
+.head:hover {
+  background: var(--surface-2);
+}
+
+.agent {
+  font-weight: 600;
+  flex: none;
+}
+
+.elapsed {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-2);
+  flex: none;
+}
+
+.step {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.chevron {
+  color: var(--text-3);
+  flex: none;
+}
+
+.body {
+  border-top: 1px solid var(--border);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.activities {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-body);
+}
+
+.activity[data-type="error"] .text {
+  color: var(--fail);
+}
+
+.activity[data-type="elicitation"] .text {
+  color: var(--needs-you);
+}
+
+.glyph {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  width: 12px;
+  flex: none;
+  text-align: center;
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.time {
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+  font-family: var(--font-mono);
+  flex: none;
+}
+
+.openFull {
+  align-self: flex-start;
+  color: var(--accent);
+  font-size: var(--fs-body);
+  text-decoration: none;
+}
+
+.openFull:hover {
+  text-decoration: underline;
+}

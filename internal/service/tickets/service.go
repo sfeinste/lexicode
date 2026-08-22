@@ -346,6 +346,13 @@ func (s *Service) Create(ctx context.Context, projectKey string, in CreateInput)
 		parent = &pt
 	}
 
+	// Description `@` mentions land in the mentions table with the ticket as source (S12).
+	// Agents mentioned in a *description* do not stage runs — only comment mentions do.
+	descMentions, _, err := s.resolveMentions(ctx, p.ID, parseMentions(in.Description))
+	if err != nil {
+		return TicketWithMeta{}, err
+	}
+
 	now := s.now()
 	tk := domain.Ticket{
 		ID: domain.NewID(), ProjectID: p.ID,
@@ -375,6 +382,11 @@ func (s *Service) Create(ctx context.Context, projectKey string, in CreateInput)
 		tk.Position = domain.PositionBetween(last, 0)
 		if err := tx.Tickets().Create(ctx, &tk); err != nil {
 			return err
+		}
+		if len(descMentions) > 0 {
+			if err := writeMentions(ctx, tx, "ticket", tk.ID, descMentions); err != nil {
+				return err
+			}
 		}
 		return s.appendStream(ctx, tx, tk.ID, domain.StreamFieldChange, map[string]any{
 			"event": "created", "column_id": col.ID, "category": string(col.Category),
@@ -547,7 +559,8 @@ func (s *Service) Update(ctx context.Context, id string, patch UpdatePatch) (Tic
 				edited = append(edited, "title")
 			}
 		}
-		if patch.Description != nil && *patch.Description != tk.Description {
+		descChanged := patch.Description != nil && *patch.Description != tk.Description
+		if descChanged {
 			tk.Description = *patch.Description
 			edited = append(edited, "description")
 		}
@@ -652,6 +665,17 @@ func (s *Service) Update(ctx context.Context, id string, patch UpdatePatch) (Tic
 		tk.UpdatedAt = s.now()
 		if err := tx.Tickets().Update(ctx, &tk); err != nil {
 			return err
+		}
+		if descChanged {
+			// Re-derive the description's mentions wholesale (S12): an edit that removed a
+			// token must clear its row, so this runs even when the new body has none.
+			rows, _, err := s.resolveMentions(ctx, tk.ProjectID, parseMentions(tk.Description))
+			if err != nil {
+				return err
+			}
+			if err := writeMentions(ctx, tx, "ticket", tk.ID, rows); err != nil {
+				return err
+			}
 		}
 		for _, p := range streamPayloads {
 			if err := s.appendStream(ctx, tx, tk.ID, domain.StreamFieldChange, p); err != nil {

@@ -1,0 +1,57 @@
+.root {
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.p {
+  margin: 0;
+}
+
+.h1 {
+  margin: 0;
+  font-size: var(--fs-section);
+  font-weight: 600;
+}
+
+.h2 {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.bullet,
+.task {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+}
+
+.task input {
+  transform: translateY(1px);
+}
+
+.gap {
+  height: 8px;
+}
+
+.code {
+  margin: 4px 0;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  overflow-x: auto;
+}
+
+.mention {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-weight: 500;
+}
