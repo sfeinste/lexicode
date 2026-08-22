@@ -758,6 +758,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/triggers/{id}/backtest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replay the project's stored event history (D-13) through stages 1–2 of the pipeline — the same match and condition code the live engine runs — with the guard and actions deliberately not simulated; loop protection and budget are evaluated live and may reduce the count. An empty (or absent) body backtests the rule as stored; a TriggerInput body is an unsaved draft merged over the stored row exactly as PATCH would — validated whole, never written. A pure read either way. */
+        post: operations["backtestTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{key}/trigger-catalog": {
         parameters: {
             query?: never;
@@ -2178,6 +2195,26 @@ export interface components {
         };
         TriggerFiringListResponse: {
             firings: components["schemas"]["TriggerFiring"][];
+        };
+        /** @description One stages-1–2 replay (S30). `matched` counts every matching event; `events` holds the newest 100 of them (`truncated` says when they differ). `no_history` distinguishes "the project has no external event history at all" (nothing matched and no stored events beyond internal bookkeeping — history builds up from repo connection) from "history exists but nothing matched" — the editor's distinct empty state. The guard and actions are not simulated. */
+        BacktestResult: {
+            /** @description The window actually used, after clamping to 1..30. */
+            days: number;
+            /** @description How many stored events the window held, matching or not. */
+            scanned: number;
+            /** @description How many passed stages 1–2 (match + conditions). */
+            matched: number;
+            /** @description True when `events` holds fewer than `matched` rows. */
+            truncated: boolean;
+            /** @description The matching events, newest first, capped at 100. */
+            events: components["schemas"]["BacktestEvent"][];
+            /** @description One Describe() sentence per configured action, in action order — what each matching event would have caused ("run agent Reviewer"). */
+            would_do: string[];
+            /** @description True when nothing matched and the project has no stored events from an external source. */
+            no_history: boolean;
+        };
+        BacktestEvent: components["schemas"]["TriggerFiringEvent"] & {
+            event_id: string;
         };
         /** @description The whole trigger-editor payload (S29): sources → WHEN, actions → THEN, operators → IF. Interpolation ({{...}}) offers each event descriptor's `fields`. */
         TriggerCatalog: {
@@ -4069,6 +4106,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TriggerFiringListResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    backtestTrigger: {
+        parameters: {
+            query?: {
+                /** @description The window in days, clamped to 1..30 (default 7). */
+                days?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TriggerInput"];
+            };
+        };
+        responses: {
+            /** @description The replay result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestResult"];
                 };
             };
             400: components["responses"]["Problem"];

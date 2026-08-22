@@ -16,6 +16,7 @@ import {
   useTriggerQuery,
   useUpdateTrigger,
 } from "../../../lib/api/triggerQueries";
+import { BacktestPanel } from "./BacktestPanel";
 import { draftFromTrigger, draftToInput, emptyDraft } from "./draft";
 import { FiringHistory } from "./FiringHistory";
 import { TriggerForm, type FieldErrors, type TriggerDraft } from "./TriggerForm";
@@ -92,6 +93,8 @@ export function TriggerEditorPage() {
         onChange={setDraft}
         errors={errors}
       />
+
+      {!isNew && <BacktestPanel triggerId={id} draft={current} />}
 
       {!isNew && (
         <section className={styles.historySection} aria-label="Firing history">

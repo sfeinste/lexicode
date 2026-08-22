@@ -664,3 +664,111 @@
 .inlineChain {
   margin: 8px 0 4px 24px;
 }
+
+/* ---- backtest (S30) ---- */
+
+.backtestSection {
+  margin-top: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 12px 16px 14px;
+}
+
+.backtestHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.backtestHead .sectionHead {
+  margin: 0;
+  flex: 1;
+}
+
+.backtestWindow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+
+.backtestWindow select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.backtestResults {
+  margin-top: 12px;
+}
+
+.backtestHeadline {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.backtestCaveat {
+  margin: 0 0 10px;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+
+.backtestList {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.backtestRow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 11px;
+}
+
+.backtestRow + .backtestRow {
+  border-top: 1px solid var(--border);
+}
+
+.backtestSubject {
+  min-width: 240px;
+  font-size: var(--fs-mono);
+}
+
+.backtestWould {
+  flex: 1;
+  color: var(--text-2);
+  font-size: var(--fs-mono);
+}
+
+.backtestTime {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+  white-space: nowrap;
+}
+
+.backtestEmpty {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text-2);
+}
+
+.backtestEmpty p {
+  margin: 0 0 4px;
+}
+
+.backtestHint {
+  margin: 10px 0 0;
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}

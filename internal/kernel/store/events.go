@@ -126,6 +126,44 @@ func (r *EventsRepo) ByCauseRun(ctx context.Context, runID string) ([]domain.Eve
 	return out, rows.Err()
 }
 
+// SinceForProject returns the project's events with occurred_at >= since, newest first —
+// the backtest scan (D-13, architecture §8.1). `trigger` kind events are excluded for parity
+// with the engine, which never evaluates its own firing notifications. Rides the
+// ix_events_backtest index's (project_id, …) prefix.
+func (r *EventsRepo) SinceForProject(ctx context.Context, projectID, since string) ([]domain.Event, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+eventCols+` FROM events
+		WHERE project_id = ? AND kind != 'trigger' AND occurred_at >= ?
+		ORDER BY occurred_at DESC, created_at DESC, id DESC`, projectID, since)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Event
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// HasExternalForProject reports whether the project has any stored events from an external
+// source — how backtest tells "no history yet" apart from "history exists but nothing in the
+// window". Internal bookkeeping events (source 'internal', bus.SourceInternal — project
+// created, agent updated, …) exist from a project's first second and are not the history the
+// empty state talks about: that builds up from the moment a repository is connected.
+func (r *EventsRepo) HasExternalForProject(ctx context.Context, projectID string) (bool, error) {
+	var n int
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM events WHERE project_id = ? AND source != 'internal')`,
+		projectID).Scan(&n)
+	return n == 1, mapErr(err)
+}
+
 // NewestHumanActionAt returns the occurred_at of the newest human-actor event on the given
 // subject (matched on the subject columns, which agree with the descriptor-derived subject
 // keys), or "" when no human has acted there. This is the loop guard's depth-reset probe

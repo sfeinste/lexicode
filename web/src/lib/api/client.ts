@@ -111,6 +111,8 @@ export type LoopConfig = components["schemas"]["LoopConfig"];
 export type FiringOutcome = components["schemas"]["FiringOutcome"];
 export type TriggerFiring = components["schemas"]["TriggerFiring"];
 export type TriggerFiringListResponse = components["schemas"]["TriggerFiringListResponse"];
+export type BacktestResult = components["schemas"]["BacktestResult"];
+export type BacktestEvent = components["schemas"]["BacktestEvent"];
 export type TriggerCatalog = components["schemas"]["TriggerCatalog"];
 export type CatalogSource = components["schemas"]["CatalogSource"];
 export type CatalogEvent = components["schemas"]["CatalogEvent"];
@@ -494,6 +496,15 @@ export const triggersApi = {
   catalog: (projectKey: string, signal?: AbortSignal) =>
     api<TriggerCatalog>("GET", `/projects/${encodeURIComponent(projectKey)}/trigger-catalog`, {
       signal,
+    }),
+  /**
+   * Stages 1–2 replay of stored history (S30). `draft` is the editor's current, unsaved
+   * form state — the server backtests it in memory without writing; omit it to backtest
+   * the rule as stored.
+   */
+  backtest: (id: string, days: number, draft?: TriggerInput) =>
+    api<BacktestResult>("POST", `/triggers/${encodeURIComponent(id)}/backtest?days=${days}`, {
+      body: draft,
     }),
 };
 

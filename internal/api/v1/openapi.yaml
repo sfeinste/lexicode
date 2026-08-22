@@ -1284,6 +1284,37 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /triggers/{id}/backtest:
+    post:
+      operationId: backtestTrigger
+      summary: >
+        Replay the project's stored event history (D-13) through stages 1–2 of the pipeline —
+        the same match and condition code the live engine runs — with the guard and actions
+        deliberately not simulated; loop protection and budget are evaluated live and may
+        reduce the count. An empty (or absent) body backtests the rule as stored; a
+        TriggerInput body is an unsaved draft merged over the stored row exactly as PATCH
+        would — validated whole, never written. A pure read either way.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: days
+          in: query
+          schema: { type: integer }
+          description: The window in days, clamped to 1..30 (default 7).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TriggerInput" }
+      responses:
+        "200":
+          description: The replay result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BacktestResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /projects/{key}/trigger-catalog:
     get:
       operationId: getTriggerCatalog
@@ -3291,6 +3322,52 @@ components:
         firings:
           type: array
           items: { $ref: "#/components/schemas/TriggerFiring" }
+    BacktestResult:
+      type: object
+      description: >
+        One stages-1–2 replay (S30). `matched` counts every matching event; `events` holds the
+        newest 100 of them (`truncated` says when they differ). `no_history` distinguishes "the
+        project has no external event history at all" (nothing matched and no stored events
+        beyond internal bookkeeping — history builds up from repo connection) from "history
+        exists but nothing matched" — the editor's distinct empty state. The guard and actions
+        are not simulated.
+      required: [days, scanned, matched, truncated, events, would_do, no_history]
+      properties:
+        days:
+          type: integer
+          description: The window actually used, after clamping to 1..30.
+        scanned:
+          type: integer
+          description: How many stored events the window held, matching or not.
+        matched:
+          type: integer
+          description: How many passed stages 1–2 (match + conditions).
+        truncated:
+          type: boolean
+          description: True when `events` holds fewer than `matched` rows.
+        events:
+          type: array
+          description: The matching events, newest first, capped at 100.
+          items: { $ref: "#/components/schemas/BacktestEvent" }
+        would_do:
+          type: array
+          description: >
+            One Describe() sentence per configured action, in action order — what each
+            matching event would have caused ("run agent Reviewer").
+          items: { type: string }
+        no_history:
+          type: boolean
+          description: >
+            True when nothing matched and the project has no stored events from an external
+            source.
+    BacktestEvent:
+      allOf:
+        - $ref: "#/components/schemas/TriggerFiringEvent"
+        - type: object
+          description: One matching historical event.
+          required: [event_id]
+          properties:
+            event_id: { type: string }
     TriggerCatalog:
       type: object
       description: >

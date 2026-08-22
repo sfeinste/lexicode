@@ -19,8 +19,7 @@ import (
 //	GET|PATCH|DELETE /api/v1/triggers/{id}        members, resolved via the trigger
 //	GET /api/v1/triggers/{id}/firings
 //	GET /api/v1/projects/{key}/trigger-catalog    the merged editor catalog (S29, catalog.go)
-//
-// POST /triggers/{id}/backtest belongs to S30 and is not served yet.
+//	POST /api/v1/triggers/{id}/backtest           stages 1–2 replay (S30, backtest.go)
 func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	member := func(h http.HandlerFunc) http.Handler {
 		return a.RequireAuth(a.RequireProjectMember(h))
@@ -35,6 +34,7 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("PATCH /api/v1/triggers/{id}", viaTrigger(s.handlePatch))
 	mux.Handle("DELETE /api/v1/triggers/{id}", viaTrigger(s.handleDelete))
 	mux.Handle("GET /api/v1/triggers/{id}/firings", viaTrigger(s.handleFirings))
+	mux.Handle("POST /api/v1/triggers/{id}/backtest", viaTrigger(s.handleBacktest))
 	mux.Handle("GET /api/v1/projects/{key}/trigger-catalog", member(s.handleCatalog))
 }
 
