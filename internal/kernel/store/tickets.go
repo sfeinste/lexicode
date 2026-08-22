@@ -49,13 +49,18 @@ func (r *TicketsRepo) ByKey(ctx context.Context, key string) (domain.Ticket, err
 		`SELECT `+ticketCols+` FROM tickets WHERE key = ?`, key))
 }
 
-// ForProject returns a project's unarchived tickets in board order (column, then position).
-// Note the board itself must additionally exclude triage-pending tickets (data model §4); that
-// query arrives with the board service (S10), which owns the rule.
+// ForProject returns a project's unarchived tickets in board order (column, then position),
+// EXCLUDING tickets with an unresolved triage item. This is data model §10.7 — "a ticket is
+// on the board iff it has no pending triage item" — enforced here, in the one query the
+// tickets list and the board read from, not in six callers (S28). `snoozed` counts as
+// unresolved: snoozing defers triage, it does not grant board entry (S31 owns the resolution
+// verbs). ForProjectIncludingArchived stays the deliberate everything-view.
 func (r *TicketsRepo) ForProject(ctx context.Context, projectID string) ([]domain.Ticket, error) {
 	rows, err := r.h.r.QueryContext(ctx, `
 		SELECT `+ticketCols+` FROM tickets
 		WHERE project_id = ? AND archived_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM triage_items ti
+		                  WHERE ti.ticket_id = tickets.id AND ti.state IN ('pending','snoozed'))
 		ORDER BY column_id, position, id`, projectID)
 	if err != nil {
 		return nil, mapErr(err)

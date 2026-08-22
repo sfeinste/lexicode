@@ -6,7 +6,7 @@ package tickets
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/audit"
@@ -89,26 +89,64 @@ func (s *Service) Delegate(ctx context.Context, ticketID string, in DelegateInpu
 // no-op. Deliberately NOT the drag path: no auto-start re-entry — the scheduler moving a
 // ticket into a running column must not enqueue a second run.
 func (s *Service) MoveTicketToCategory(ctx context.Context, ticketID string, cat domain.ColumnCategory, note string) error {
+	_, _, err := s.moveToCategory(ctx, ticketID, cat, note)
+	return err
+}
+
+// TriggerMoveToCategory is the move_ticket trigger action's seam (S28). Same category move as
+// the scheduler's, with the two differences the action's contract demands:
+//
+//   - A ticket with an unresolved triage item is invisible to move_ticket (data model §10.7 /
+//     §10, invariant 7): the move is refused with the typed PendingTriageError.
+//   - Brief D3's one exception applies to ANY move, this one included: when the destination
+//     column auto-starts delegates and the ticket has one, the run request goes through the
+//     scheduler seam and is audited — exactly like the drag path. (The scheduler's own
+//     MoveTicketToCategory deliberately skips this, but only to avoid re-entry when the
+//     scheduler itself is the mover.)
+//
+// moved=false with a nil error means the ticket was already in a column of the category (or
+// is archived) — the action reports it as `no_action` rather than a lie of success.
+func (s *Service) TriggerMoveToCategory(ctx context.Context, ticketID string, cat domain.ColumnCategory, note string) (moved bool, err error) {
 	tk, err := s.st.Tickets().ByID(ctx, ticketID)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if it, err := s.st.Triage().ByTicket(ctx, tk.ID); err == nil && it.Unresolved() {
+		return false, &PendingTriageError{TicketKey: tk.Key}
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	res, moved, err := s.moveToCategory(ctx, ticketID, cat, note)
+	if err != nil || !moved {
+		return moved, err
+	}
+	s.maybeAutoStart(ctx, res)
+	return true, nil
+}
+
+// moveToCategory is the shared category-move core: resolve the destination, move, stream,
+// audit, emit. moved=false means the no-op cases (archived, already there).
+func (s *Service) moveToCategory(ctx context.Context, ticketID string, cat domain.ColumnCategory, note string) (moveResult, bool, error) {
+	tk, err := s.st.Tickets().ByID(ctx, ticketID)
+	if err != nil {
+		return moveResult{}, false, err
 	}
 	if tk.ArchivedAt != nil {
-		return nil // an archived ticket stays where history left it
+		return moveResult{}, false, nil // an archived ticket stays where history left it
 	}
 	fromCol, err := s.st.Columns().ByID(ctx, tk.ColumnID)
 	if err != nil {
-		return err
+		return moveResult{}, false, err
 	}
 	if fromCol.Category == cat {
-		return nil
+		return moveResult{}, false, nil
 	}
 	cols, err := s.st.Columns().ByCategory(ctx, tk.ProjectID, cat)
 	if err != nil {
-		return err
+		return moveResult{}, false, err
 	}
 	if len(cols) == 0 {
-		return fmt.Errorf("tickets: project has no %s-category column", cat)
+		return moveResult{}, false, &NoColumnOfCategoryError{Category: cat}
 	}
 	dest := cols[0]
 
@@ -132,18 +170,18 @@ func (s *Service) MoveTicketToCategory(ctx context.Context, ticketID string, cat
 		})
 	})
 	if err != nil {
-		return err
+		return moveResult{}, false, err
 	}
 	if err := s.audit.Write(ctx, "ticket.move",
 		audit.Target{Kind: "ticket", ID: tk.ID, ProjectID: tk.ProjectID, Note: note},
 		map[string]any{"column_id": before.ColumnID, "position": before.Position},
 		map[string]any{"column_id": tk.ColumnID, "position": tk.Position},
 	); err != nil {
-		return err
+		return moveResult{}, false, err
 	}
 	s.emitTicket(ctx, "moved", tk, map[string]any{
 		"from_category": string(fromCol.Category),
 		"to_category":   string(dest.Category),
 	})
-	return nil
+	return moveResult{before: before, after: tk, fromCol: fromCol, toCol: dest}, true, nil
 }

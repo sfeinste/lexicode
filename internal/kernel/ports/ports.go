@@ -156,11 +156,15 @@ type ParamSchema struct {
 	Fields []ParamField `json:"fields"`
 }
 
-// ParamField is one typed action parameter.
+// ParamField is one typed action parameter. The Type vocabulary drives the THEN form's
+// widgets (S29): "agent" renders the project's agent picker, "template" a text input with the
+// {{...}} interpolation field picker, "category" the fixed column-category picker (D2 — never
+// column names), "list" a list of strings (label names). "category" and "list" were added
+// additively by S28 for move_ticket and create_ticket.
 type ParamField struct {
 	Key      string   `json:"key"`
 	Label    string   `json:"label"`
-	Type     string   `json:"type"` // "text" | "number" | "bool" | "enum" | "agent" | "template"
+	Type     string   `json:"type"` // "text" | "number" | "bool" | "enum" | "agent" | "template" | "category" | "list"
 	Required bool     `json:"required"`
 	Enum     []string `json:"enum,omitempty"`
 	Help     string   `json:"help,omitempty"`
@@ -202,13 +206,18 @@ type ContextItem struct {
 	Injected   bool // repo files are listed, not injected (D-11)
 }
 
-// Notifier delivers a notification through one channel. V1 ships in-app only; Slack, email and
-// push are the extension this port buys.
+// Notifier delivers a notification through one channel. V1 ships in-app only (story S28's
+// module/notify); Slack, email and push are the extension this port buys.
 //
-// Method set: contracts §2.7, transcribed in story S36.
+// Method set: contracts §2.7, transcribed verbatim.
 type Notifier interface {
 	// ID is the stable identifier, e.g. "inapp". It must be unique across registered notifiers.
 	ID() string
+	// Deliver delivers one notification to n.UserID. The caller decides who is notified
+	// (routing is brief D1's business, not the channel's); the notifier decides how the row
+	// reaches them. Delivery must be idempotent-friendly: the in-app channel updates the
+	// (user, run) row in place rather than stacking (interaction rule 3).
+	Deliver(ctx context.Context, n domain.Notification) error
 }
 
 // CredentialSource supplies the environment an agent run needs to authenticate — an OAuth token,

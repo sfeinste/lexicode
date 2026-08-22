@@ -28,8 +28,11 @@ import (
 const recentRunWindow = 7 * 24 * time.Hour
 
 // markerRe matches domain.Actor.Marker exactly. The format is load-bearing (D-9): change it
-// and past events stop being attributable.
-var markerRe = regexp.MustCompile(`<!-- lexicode:actor=agent:(\S+) run=(\S+) -->`)
+// and past events stop being attributable. The run capture is \S* — empty is legal — because
+// a post_comment trigger action fired by an event with no causing run writes a marker with an
+// empty run id (S28); the agent half still attributes, which is what actor suppression needs
+// to keep such a comment from re-triggering its own rule.
+var markerRe = regexp.MustCompile(`<!-- lexicode:actor=agent:(\S+) run=(\S*) -->`)
 
 // attribution is one resolved actor: the agent, and the causing run when known.
 type attribution struct {

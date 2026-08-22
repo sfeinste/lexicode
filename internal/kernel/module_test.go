@@ -27,6 +27,7 @@ type stubPort struct {
 	ports.AgentRuntime
 	ports.TriggerAction
 	ports.ContextProvider
+	ports.Notifier
 	id string
 }
 

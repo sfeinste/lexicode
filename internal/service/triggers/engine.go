@@ -484,9 +484,12 @@ func (e *Engine) descriptor(sourceID, kind string) *ports.EventDescriptor {
 	return nil
 }
 
-// runAgentIDs extracts the agents this trigger's run_agent actions would start — what actor
+// runAgentIDs extracts the agents this trigger would ACT AS — the agents its run_agent
+// actions would start, plus the acting agents of its post_comment actions (S28) — what actor
 // suppression compares the event's resolved actor against (D-9), and what layer 4's
-// loop-stopped run row is created for. Params may carry agent_id (the S28 schema) or
+// loop-stopped run row is created for. post_comment is included because its comment comes
+// back attributed to that agent (the D-9 marker), and a rule that re-fires on its own comment
+// is exactly the loop layer 1 exists to stop. Params may carry agent_id (the S28 schema) or
 // agent_name (the S15 suggested rules, written before agents existed to have IDs); names
 // resolve against the project's roster.
 func (e *Engine) runAgentIDs(ctx context.Context, tr domain.Trigger) []string {
@@ -498,7 +501,7 @@ func (e *Engine) runAgentIDs(ctx context.Context, tr domain.Trigger) []string {
 	var agents []domain.Agent
 	loaded := false
 	for _, ref := range refs {
-		if ref.ActionID != "run_agent" {
+		if ref.ActionID != "run_agent" && ref.ActionID != "post_comment" {
 			continue
 		}
 		var p struct {

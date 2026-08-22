@@ -144,7 +144,7 @@ func (s *Service) escalateOne(ctx context.Context, el domain.Elicitation) error 
 	if run.State.Terminal() {
 		return nil // the scheduler cancels its elicitations; a race here is harmless
 	}
-	userID, err := s.routeTo(ctx, run)
+	userID, err := s.RouteTo(ctx, run)
 	if err != nil {
 		return err
 	}
@@ -190,9 +190,11 @@ func (s *Service) escalateOne(ctx context.Context, el domain.Elicitation) error 
 	return nil
 }
 
-// routeTo resolves the delegating human (architecture §12): requested_by → ticket assignee
-// → project owner.
-func (s *Service) routeTo(ctx context.Context, run domain.Run) (string, error) {
+// RouteTo resolves the delegating human for a run (brief D1; architecture §12): requested_by
+// → ticket assignee → project owner. Exported since S28: the `notify` trigger action routes
+// with exactly this rule, and the actions module receives it as an injected seam
+// (cmd/lexicode wiring) rather than importing this service.
+func (s *Service) RouteTo(ctx context.Context, run domain.Run) (string, error) {
 	if run.RequestedByUserID != nil && *run.RequestedByUserID != "" {
 		return *run.RequestedByUserID, nil
 	}
@@ -207,6 +209,34 @@ func (s *Service) routeTo(ctx context.Context, run domain.Run) (string, error) {
 		return "", err
 	}
 	return p.OwnerID, nil
+}
+
+// DeliverInApp writes (or refreshes, in place — the Upsert's (user, run) unique row) one
+// notification and emits `notification.updated`. This is the in-app delivery the
+// module/notify Notifier port impl is injected with (S28): the module cannot import this
+// service — module → kernel/ports → domain is the dependency rule — so cmd/lexicode hands it
+// this function. ID, state and timestamps are defaulted here so callers supply only content
+// and routing.
+func (s *Service) DeliverInApp(ctx context.Context, n domain.Notification) error {
+	if n.UserID == "" {
+		return errors.New("notify: a notification needs a user to deliver to")
+	}
+	if n.ID == "" {
+		n.ID = domain.NewID()
+	}
+	now := domain.FormatTime(s.now())
+	if n.CreatedAt == "" {
+		n.CreatedAt = now
+	}
+	n.UpdatedAt = now
+	if n.State == "" {
+		n.State = domain.NotificationUnread
+	}
+	if err := s.st.Notifications().Upsert(ctx, &n); err != nil {
+		return err
+	}
+	s.emitUpdated(ctx, n)
+	return nil
 }
 
 // elicitationSummary is the notification body: the elicitation's level-0 activity title —

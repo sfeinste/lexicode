@@ -18,8 +18,8 @@ import (
 // Input is what stage 3 evaluates: the event, the trigger it matched, the loop-protection
 // subject key derived from the event descriptor's template ("pr:219" / "ticket:PAY-14" /
 // "repo"), the parsed normalized payload (for the skip-token scan), and the IDs of the agents
-// this trigger's run_agent actions would start (for actor suppression and the budget's
-// agent/day scope). The engine owns the derivation of all four.
+// this trigger would act as (for actor suppression and the budget's agent/day scope). The
+// engine owns the derivation of all four.
 type Input struct {
 	Event      domain.Event
 	Trigger    domain.Trigger
@@ -28,8 +28,10 @@ type Input struct {
 	// (pr.body, comment.body, review.body, pr.head_commit_message); nil is legal and means
 	// nothing to scan.
 	Payload map[string]any
-	// RunAgentIDs are the agents the trigger's run_agent actions would run, in action order.
-	// Empty means the trigger starts no runs: actor suppression, depth and the agent budget
+	// RunAgentIDs are the agents the trigger would act as, in action order: the agents its
+	// run_agent actions would run, plus the acting agents of its post_comment actions (S28)
+	// — a comment comes back attributed to its agent and must not re-fire its own rule.
+	// Empty means the trigger acts as nobody: actor suppression, depth and the agent budget
 	// scope have nothing to key on and those layers pass.
 	RunAgentIDs []string
 }

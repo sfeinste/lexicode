@@ -28,11 +28,13 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
+	actionsmod "github.com/spruce/lexicode/internal/module/actions"
 	claudecodemod "github.com/spruce/lexicode/internal/module/claudecode"
 	contextmod "github.com/spruce/lexicode/internal/module/context"
 	credentialsmod "github.com/spruce/lexicode/internal/module/credentials"
 	dockermod "github.com/spruce/lexicode/internal/module/docker"
 	githubmod "github.com/spruce/lexicode/internal/module/github"
+	notifymod "github.com/spruce/lexicode/internal/module/notify"
 	agentsvc "github.com/spruce/lexicode/internal/service/agents"
 	"github.com/spruce/lexicode/internal/service/board"
 	"github.com/spruce/lexicode/internal/service/bootstrap"
@@ -244,6 +246,32 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// The context-provider module (contracts §2.6): `project` + `ticket` now, wiki and
 	// repofiles with S34. The scheduler resolves them at enqueue for prompt assembly.
 	if err := k.RegisterModule(contextmod.New(contextmod.Options{Store: st})); err != nil {
+		return err
+	}
+	// The notify module (S28): the "inapp" Notifier port impl. Delivery is injected from the
+	// S24 notify service — the module may not import internal/service, so the seam inverts
+	// here, at the one wiring site.
+	if err := k.RegisterModule(notifymod.New(notifymod.Options{
+		Deliver: notifySvc.DeliverInApp,
+	})); err != nil {
+		return err
+	}
+	// The actions module (S28): the five TriggerActions behind the THEN column. The tickets
+	// funcs (create-into-triage, category move) and the S24 routing rule are the same seam
+	// inversion; everything kernel-owned the module reads from k at Init.
+	if err := k.RegisterModule(actionsmod.New(actionsmod.Options{
+		Tickets: actionsmod.TicketSeam{
+			CreateInTriage: func(ctx context.Context, in actionsmod.TriageCreate) (domain.Ticket, error) {
+				return ticketsSvc.CreateFromTrigger(ctx, tickets.TriggerCreateInput{
+					ProjectID: in.ProjectID, Title: in.Title, Description: in.Description,
+					LabelNames: in.LabelNames, Provenance: in.Provenance,
+					SourceTriggerID: in.TriggerID, SourceRunID: in.RunID,
+				})
+			},
+			MoveToCategory: ticketsSvc.TriggerMoveToCategory,
+		},
+		Notify: actionsmod.NotifySeam{RouteRun: notifySvc.RouteTo},
+	})); err != nil {
 		return err
 	}
 	// The credentials settings service checks health through the module's concrete sources —
