@@ -16,6 +16,7 @@ import (
 
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/audit"
+	"github.com/spruce/lexicode/internal/kernel/sched"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
@@ -28,9 +29,12 @@ type RunControl interface {
 
 // Options configures New.
 type Options struct {
-	Store  *store.Store
-	Audit  *audit.Writer
-	Sched  RunControl
+	Store *store.Store
+	Audit *audit.Writer
+	Sched RunControl
+	// Req is the run-request seam (D-14) behind POST /projects/{key}/runs — the ⌘J
+	// ask-an-agent free-floating run (S38). Nil disables the endpoint with a 503.
+	Req    sched.Requester
 	Logger *slog.Logger
 }
 
@@ -39,6 +43,7 @@ type Service struct {
 	st     *store.Store
 	audit  *audit.Writer
 	sched  RunControl
+	req    sched.Requester
 	logger *slog.Logger
 	now    func() string
 }
@@ -53,6 +58,7 @@ func New(opts Options) *Service {
 		st:     opts.Store,
 		audit:  opts.Audit,
 		sched:  opts.Sched,
+		req:    opts.Req,
 		logger: logger,
 		now:    domain.Now,
 	}

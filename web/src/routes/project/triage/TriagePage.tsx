@@ -13,6 +13,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
+import { EMPTY_STATES } from "../../emptyStates";
 import {
   ApiProblem,
   ticketsApi,
@@ -137,8 +138,8 @@ export function TriagePage() {
     return (
       <div className={styles.page}>
         <EmptyState
-          headline="Nothing to triage"
-          body="Tickets created by triggers and agents land here first."
+          headline={EMPTY_STATES.triage.headline}
+          body={EMPTY_STATES.triage.body}
         />
       </div>
     );

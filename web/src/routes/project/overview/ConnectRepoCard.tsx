@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { ApiProblem } from "../../../lib/api/client";
 import { useConnectRepo } from "../../../lib/api/repoQueries";
+import { EMPTY_STATES } from "../../emptyStates";
 import styles from "./overview.module.css";
 
 export function ConnectRepoCard({ projectKey }: { projectKey: string }) {
@@ -42,11 +43,8 @@ export function ConnectRepoCard({ projectKey }: { projectKey: string }) {
 
   return (
     <section className={styles.connectCard} aria-label="Connect a repository">
-      <h2 className={styles.connectHeadline}>Connect a repository to get started</h2>
-      <p className={styles.connectBody}>
-        We&apos;ll import your issues, docs, and agent instructions automatically — with a
-        preview and checkboxes, never silently.
-      </p>
+      <h2 className={styles.connectHeadline}>{EMPTY_STATES.newProject.headline}</h2>
+      <p className={styles.connectBody}>{EMPTY_STATES.newProject.body}</p>
       <form onSubmit={submit} className={styles.connectForm}>
         <div className={styles.connectFields}>
           <label className={styles.connectField}>
@@ -102,7 +100,7 @@ export function ConnectRepoCard({ projectKey }: { projectKey: string }) {
           </p>
         )}
         <button type="submit" className={styles.connectButton} disabled={connect.isPending}>
-          {connect.isPending ? "Verifying…" : "Connect GitHub repo"}
+          {connect.isPending ? "Verifying…" : EMPTY_STATES.newProject.primary}
         </button>
       </form>
     </section>

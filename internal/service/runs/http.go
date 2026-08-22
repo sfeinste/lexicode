@@ -11,6 +11,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/audit"
 	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/httpx"
+	"github.com/spruce/lexicode/internal/kernel/sched"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
@@ -25,6 +26,7 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	}
 
 	mux.Handle("GET /api/v1/projects/{key}/runs", member(s.handleList))
+	mux.Handle("POST /api/v1/projects/{key}/runs", member(s.handleCreate))
 	mux.Handle("GET /api/v1/runs/{id}", viaRun(s.handleGet))
 	mux.Handle("GET /api/v1/runs/{id}/activities", viaRun(s.handleActivities))
 	mux.Handle("GET /api/v1/runs/{id}/chain", viaRun(s.handleChain))
@@ -263,6 +265,90 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toRunBody(run))
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"runs": out})
+}
+
+// createRunBody is a POST /projects/{key}/runs request — the ⌘J ask-an-agent palette's
+// free-floating run (D-15, S38): an agent and a prompt, no ticket. Everything else about
+// the run (admission, prompt assembly, state) stays the scheduler's business (D-14).
+type createRunBody struct {
+	AgentID string `json:"agent_id"`
+	Prompt  string `json:"prompt"`
+}
+
+// handleCreate is POST /projects/{key}/runs: request a free-floating run of one agent with
+// a prompt. Returns 201 with the created run's id; the scheduler owns admission, so a 201
+// means "queued", not "running".
+func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
+	p, err := s.st.Projects().ByKey(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	body, ok := httpx.DecodeJSON[createRunBody](w, r)
+	if !ok {
+		return
+	}
+	if body.AgentID == "" {
+		httpx.WriteValidation(w, []httpx.FieldError{{Field: "agent_id",
+			Message: "An agent is required."}})
+		return
+	}
+	if strings.TrimSpace(body.Prompt) == "" {
+		httpx.WriteValidation(w, []httpx.FieldError{{Field: "prompt",
+			Message: "A prompt is required."}})
+		return
+	}
+	a, err := s.st.Agents().ByID(r.Context(), body.AgentID)
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.WriteValidation(w, []httpx.FieldError{{Field: "agent_id",
+			Message: "No such agent in this project."}})
+		return
+	}
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	if a.ProjectID != p.ID || a.ArchivedAt != nil {
+		httpx.WriteValidation(w, []httpx.FieldError{{Field: "agent_id",
+			Message: "No such agent in this project."}})
+		return
+	}
+	if !a.Enabled {
+		httpx.WriteValidation(w, []httpx.FieldError{{Field: "agent_id",
+			Message: "This agent is disabled."}})
+		return
+	}
+	if s.req == nil {
+		httpx.WriteProblem(w, http.StatusServiceUnavailable, "scheduler_unavailable",
+			"The scheduler is not running", "Runs cannot be requested right now.")
+		return
+	}
+	req := sched.RunRequest{
+		ProjectID:      p.ID,
+		AgentID:        a.ID,
+		Reason:         "ask an agent",
+		PromptOverride: body.Prompt,
+	}
+	if actor, ok := auth.ActorFrom(r.Context()); ok && actor.Kind == domain.ActorHuman {
+		req.RequestedByUserID = actor.ID
+	}
+	runID, reqErr := s.req.RequestRun(r.Context(), req)
+	note := "run requested"
+	if reqErr != nil {
+		note = "scheduler refused: " + reqErr.Error()
+	}
+	if aerr := s.audit.Write(r.Context(), "run.request",
+		audit.Target{Kind: "agent", ID: a.ID, ProjectID: p.ID, Note: note},
+		nil, req); aerr != nil {
+		s.writeError(w, aerr)
+		return
+	}
+	if reqErr != nil {
+		httpx.WriteProblem(w, http.StatusConflict, "run_refused",
+			"The run was refused", reqErr.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"run_id": runID})
 }
 
 // handleGet is GET /runs/{id}: the run plus its outputs, context items, steering messages

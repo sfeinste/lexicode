@@ -8,6 +8,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { EmptyState } from "../../components/EmptyState/EmptyState";
+import { EMPTY_STATES } from "../emptyStates";
 import type { NeedsYouRun, ProjectListItem } from "../../lib/api/client";
 import { useInboxQuery } from "../../lib/api/attentionQueries";
 import { useProjectsQuery } from "../../lib/api/projectQueries";
@@ -54,11 +55,11 @@ export function HomePage() {
         )}
         {projects.data && projects.data.projects.length === 0 && (
           <EmptyState
-            headline="No projects yet"
-            body="A project connects a repo, a board, and a roster of agents."
+            headline={EMPTY_STATES.noProjects.headline}
+            body={EMPTY_STATES.noProjects.body}
             primary={
               <button className={styles.cta} onClick={() => setCreating(true)}>
-                Create your first project
+                {EMPTY_STATES.noProjects.primary}
               </button>
             }
           />

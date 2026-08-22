@@ -7,6 +7,7 @@
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
+import { EMPTY_STATES } from "../../emptyStates";
 import { useAgentsQuery } from "../../../lib/api/agentQueries";
 import {
   useTriggerCatalogQuery,
@@ -46,11 +47,11 @@ export function TriggersPage() {
       </div>
       {list.length === 0 ? (
         <EmptyState
-          headline="No triggers yet"
-          body="Start an agent automatically when something happens in the repo. Rules read as prose: WHEN an event arrives, IF it matches, THEN act."
+          headline={EMPTY_STATES.triggers.headline}
+          body={EMPTY_STATES.triggers.body}
           primary={
             <Link to="/p/$key/triggers/$id" params={{ key, id: "new" }} className={styles.newButton}>
-              Create a trigger
+              {EMPTY_STATES.triggers.primary}
             </Link>
           }
         />

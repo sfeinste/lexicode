@@ -1,0 +1,144 @@
+/* The ⌘J palette — same shell as the ⌘K palette, different content (§6). */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.dialog {
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
+}
+
+.input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-2);
+  padding: 10px 12px;
+  font-size: var(--fs-body);
+}
+
+.input:focus {
+  border-color: var(--border);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--row-height);
+  padding: 0 8px;
+  border-radius: 4px;
+  color: var(--text);
+  text-align: left;
+  transition: background var(--ease-state);
+}
+
+.item[data-selected] {
+  background: var(--surface-3);
+}
+
+.agentDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.agentName {
+  font-weight: 600;
+}
+
+.agentRole {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.none {
+  padding: 12px 8px;
+  color: var(--text-3);
+}
+
+.pickedRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.changeAgent {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+.changeAgent:hover {
+  color: var(--text);
+}
+
+.prompt {
+  margin: 10px 12px 0;
+  resize: vertical;
+  min-height: 72px;
+}
+
+.error {
+  margin: 6px 12px 0;
+  color: var(--fail);
+  font-size: var(--fs-body);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+.run {
+  padding: 5px 14px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.run:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

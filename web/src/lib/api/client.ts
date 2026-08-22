@@ -101,6 +101,8 @@ export type RenameSecretRequest = components["schemas"]["RenameSecretRequest"];
 export type CredentialsStatus = components["schemas"]["CredentialsStatus"];
 export type CredentialSourceStatus = components["schemas"]["CredentialSourceStatus"];
 export type Run = components["schemas"]["Run"];
+export type CreateRunRequest = components["schemas"]["CreateRunRequest"];
+export type CreateRunResponse = components["schemas"]["CreateRunResponse"];
 export type RunState = components["schemas"]["RunState"];
 export type RunOutput = components["schemas"]["RunOutput"];
 export type RunContextItem = components["schemas"]["RunContextItem"];
@@ -581,6 +583,9 @@ export const contextApi = {
 export const runsApi = {
   list: (projectKey: string, signal?: AbortSignal) =>
     api<RunListResponse>("GET", `/projects/${encodeURIComponent(projectKey)}/runs`, { signal }),
+  /** S38: the ⌘J ask-an-agent palette's free-floating run (D-15) — an agent + a prompt, no ticket. */
+  create: (projectKey: string, body: CreateRunRequest) =>
+    api<CreateRunResponse>("POST", `/projects/${encodeURIComponent(projectKey)}/runs`, { body }),
   get: (id: string, signal?: AbortSignal) =>
     api<RunDetailResponse>("GET", `/runs/${encodeURIComponent(id)}`, { signal }),
   activities: (id: string, signal?: AbortSignal) =>

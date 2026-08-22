@@ -12,6 +12,7 @@ import { useMemo, useState } from "react";
 
 import { CostChip } from "../../../components/CostChip/CostChip";
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
+import { EMPTY_STATES } from "../../emptyStates";
 import { StatusDot } from "../../../components/StatusDot/StatusDot";
 import type { Run, RunState } from "../../../lib/api/client";
 import { useAgentsQuery } from "../../../lib/api/agentQueries";
@@ -245,25 +246,26 @@ export function RunsPage() {
         <p className={styles.errorText}>The run list failed to load.</p>
       ) : runs.length === 0 ? (
         <EmptyState
-          headline="No runs yet"
-          body="Delegate a ticket to an agent and its run appears here."
+          headline={EMPTY_STATES.runs.headline}
+          body={EMPTY_STATES.runs.body}
           primary={
             <Link to="/p/$key/board" params={{ key }} className={styles.primaryLink}>
-              Go to board
+              {EMPTY_STATES.runs.primary}
             </Link>
           }
         />
       ) : shown.length === 0 ? (
         <EmptyState
-          headline="No runs match these filters"
-          body="Every chip above is removable — clear them to see the project's runs."
+          headline={EMPTY_STATES.runsFiltered.headline}
+          body={EMPTY_STATES.runsFiltered.body}
           primary={
             <button type="button" className={styles.primaryLink} onClick={() => setView("all")}>
-              Clear filters
+              {EMPTY_STATES.runsFiltered.primary}
             </button>
           }
         />
       ) : (
+        <div className={styles.tableScroll}>
         <table className={styles.runTable}>
           <thead>
             <tr>
@@ -321,6 +323,7 @@ export function RunsPage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

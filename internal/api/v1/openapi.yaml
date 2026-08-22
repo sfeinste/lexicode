@@ -1838,6 +1838,31 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createRun
+      summary: >
+        Request a free-floating run (D-15, S38): an agent and a prompt, no ticket — the
+        ⌘J ask-an-agent palette. The scheduler owns admission (D-14), so 201 means
+        "queued", not "running". 409 `run_refused` when the scheduler declines.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRunRequest" }
+      responses:
+        "201":
+          description: The created run's id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateRunResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /runs/{id}:
     get:
       operationId: getRun
@@ -3830,6 +3855,21 @@ components:
       required: [body]
       properties:
         body: { type: string }
+    CreateRunRequest:
+      type: object
+      description: >
+        A free-floating run request (D-15, S38) — the ⌘J ask-an-agent palette. The prompt
+        becomes the assembled prompt's final "Task" section, exactly like a delegate
+        dialog's optional prompt.
+      required: [agent_id, prompt]
+      properties:
+        agent_id: { type: string }
+        prompt: { type: string }
+    CreateRunResponse:
+      type: object
+      required: [run_id]
+      properties:
+        run_id: { type: string }
     RunMessage:
       type: object
       description: One queued steering message; delivered_at is stamped on handoff.

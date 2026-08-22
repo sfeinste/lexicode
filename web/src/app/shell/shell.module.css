@@ -436,3 +436,20 @@
   white-space: nowrap;
   max-width: 100%;
 }
+
+/* ---- S38 §10: the chrome fits a phone — the inbox and answer flows live there ---------- */
+
+@media (max-width: 700px) {
+  .topbar {
+    gap: 8px;
+  }
+
+  /* The search affordance is a `/` shortcut hint; on a phone it costs the row. */
+  .search {
+    display: none;
+  }
+
+  .topbarRight {
+    flex: none;
+  }
+}

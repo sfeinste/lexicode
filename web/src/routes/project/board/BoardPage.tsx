@@ -27,9 +27,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { Link } from "@tanstack/react-router";
+
 import type { BoardSearch } from "../../../app/router";
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
 import { useAgentsQuery } from "../../../lib/api/agentQueries";
+import { useBootstrapPreviewQuery, useRepoStatusQuery } from "../../../lib/api/repoQueries";
+import { EMPTY_STATES, boardImportLabel } from "../../emptyStates";
 import {
   ApiProblem,
   authApi,
@@ -709,21 +713,7 @@ export function BoardPage() {
       <NeedsYouLane projectKey={key} runs={needsYouQuery.data ?? []} />
 
       {allTickets.length === 0 ? (
-        <EmptyState
-          headline="No tickets yet"
-          body="Import from GitHub Issues, or write one — press `C`."
-          primary={
-            // The spec's primary is the GitHub import (§8) — that flow lands with the forge
-            // stories; until then the one working CTA is promoted.
-            <button
-              type="button"
-              className={styles.newTicket}
-              onClick={() => setOverlay({ kind: "create" })}
-            >
-              New ticket
-            </button>
-          }
-        />
+        <BoardEmpty projectKey={key} onNewTicket={() => setOverlay({ kind: "create" })} />
       ) : layout === "board" ? (
         <div className={styles.board}>
           {groups.map((g) => (
@@ -1183,5 +1173,47 @@ function BoardPicker({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The §8 board empty state, with the detected-content variant: while the board is empty
+ * and a repo is connected, the bootstrap scan runs and the primary CTA becomes
+ * *"Import 12 open issues"*, leading to the S15 bootstrap checklist (import with a preview
+ * and checkboxes, never silently). Without a repo — or when the scan finds nothing new —
+ * the one working CTA, "New ticket", is promoted to primary.
+ */
+function BoardEmpty({
+  projectKey,
+  onNewTicket,
+}: {
+  projectKey: string;
+  onNewTicket: () => void;
+}) {
+  const repo = useRepoStatusQuery(projectKey);
+  const connected = repo.data?.connected === true;
+  const preview = useBootstrapPreviewQuery(projectKey, connected);
+  const openIssues = (preview.data?.issues ?? []).filter((i) => !i.already_imported).length;
+
+  const newTicket = (
+    <button type="button" className={styles.newTicket} onClick={onNewTicket}>
+      {EMPTY_STATES.board.secondary}
+    </button>
+  );
+  return (
+    <EmptyState
+      headline={EMPTY_STATES.board.headline}
+      body={EMPTY_STATES.board.body}
+      primary={
+        openIssues > 0 ? (
+          <Link to="/p/$key/bootstrap" params={{ key: projectKey }} className={styles.newTicket}>
+            {boardImportLabel(openIssues)}
+          </Link>
+        ) : (
+          newTicket
+        )
+      }
+      secondary={openIssues > 0 ? newTicket : undefined}
+    />
   );
 }

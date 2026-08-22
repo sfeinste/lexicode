@@ -19,12 +19,15 @@ export interface UIState {
   density: Density;
   paletteOpen: boolean;
   cheatsheetOpen: boolean;
+  /** The ⌘J ask-an-agent palette (S38). Session state, like the other overlays. */
+  askAgentOpen: boolean;
   toggleRail: () => void;
   setRailCollapsed: (collapsed: boolean) => void;
   setTheme: (theme: ThemePreference) => void;
   setDensity: (density: Density) => void;
   setPaletteOpen: (open: boolean) => void;
   setCheatsheetOpen: (open: boolean) => void;
+  setAskAgentOpen: (open: boolean) => void;
 }
 
 /** The localStorage key the persisted slice lives under. */
@@ -40,12 +43,14 @@ export function createUIStore() {
         density: "comfortable",
         paletteOpen: false,
         cheatsheetOpen: false,
+        askAgentOpen: false,
         toggleRail: () => set((s) => ({ railCollapsed: !s.railCollapsed })),
         setRailCollapsed: (railCollapsed) => set({ railCollapsed }),
         setTheme: (theme) => set({ theme }),
         setDensity: (density) => set({ density }),
         setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
         setCheatsheetOpen: (cheatsheetOpen) => set({ cheatsheetOpen }),
+        setAskAgentOpen: (askAgentOpen) => set({ askAgentOpen }),
       }),
       {
         name: UI_STORAGE_KEY,

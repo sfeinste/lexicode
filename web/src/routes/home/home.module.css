@@ -356,6 +356,7 @@
 
 .needsYouCard[data-expanded] {
   width: 420px;
+  max-width: calc(100vw - 32px);
   max-height: 60vh;
   overflow-y: auto;
 }

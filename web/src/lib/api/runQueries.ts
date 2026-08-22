@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   elicitationsApi,
   runsApi,
+  type CreateRunRequest,
   type RespondElicitationRequest,
 } from "./client";
 
@@ -44,6 +45,17 @@ export function useRunActivitiesQuery(id: string, enabled = true) {
     queryKey: runKeys.activities(id),
     queryFn: ({ signal }) => runsApi.activities(id, signal),
     enabled,
+  });
+}
+
+/** S38: the ⌘J ask-an-agent palette — request a free-floating run (D-15). */
+export function useCreateRun(projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateRunRequest) => runsApi.create(projectKey, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: runKeys.list(projectKey) });
+    },
   });
 }
 

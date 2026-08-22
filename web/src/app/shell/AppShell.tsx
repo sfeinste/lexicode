@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Navigate, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
+import { AskAgentPalette } from "../../components/AskAgentPalette/AskAgentPalette";
 import { CommandPalette } from "../../components/CommandPalette/CommandPalette";
 import { KeyboardCheatsheet } from "../../components/KeyboardCheatsheet/KeyboardCheatsheet";
 import { ApiProblem, authApi } from "../../lib/api/client";
@@ -148,6 +149,7 @@ export function AppShell() {
         </main>
       </div>
       <CommandPalette />
+      <AskAgentPalette projectKey={params.key} />
       <KeyboardCheatsheet />
     </div>
   );

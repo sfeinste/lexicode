@@ -168,7 +168,8 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		return err
 	}
 	runsSvc := runsvc.New(runsvc.Options{
-		Store: st, Audit: auditW, Sched: lateRunControl{s: &scheduler}, Logger: logger,
+		Store: st, Audit: auditW, Sched: lateRunControl{s: &scheduler},
+		Req: lateRequester{s: &scheduler}, Logger: logger,
 	})
 	runsSvc.Routes(mux, authSvc)
 	secretsSvc := secretsvc.New(secretsvc.Options{

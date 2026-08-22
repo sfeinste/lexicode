@@ -121,3 +121,38 @@
   cursor: pointer;
   background: transparent;
 }
+
+
+/* ---- S38 §10: the inbox must work on a phone (390px) ------------------------------------ */
+
+@media (max-width: 700px) {
+  .root {
+    padding: 12px;
+  }
+
+  .rowLine {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .flavor {
+    width: auto;
+  }
+
+  .ticket {
+    flex: 1 1 100%;
+    order: 3;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .age {
+    margin-left: auto;
+  }
+
+  .action,
+  .dismiss,
+  .secondary {
+    order: 4;
+  }
+}

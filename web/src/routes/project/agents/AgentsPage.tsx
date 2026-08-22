@@ -10,6 +10,7 @@ import { useState } from "react";
 import { ContextMeter } from "../../../components/ContextMeter/ContextMeter";
 import { CostChip } from "../../../components/CostChip/CostChip";
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
+import { EMPTY_STATES } from "../../emptyStates";
 import { ApiProblem, type Agent } from "../../../lib/api/client";
 import {
   useAgentsQuery,
@@ -103,11 +104,11 @@ export function AgentsPage() {
         {error !== null && <p className={styles.error}>{error}</p>}
         {createForm}
         <EmptyState
-          headline="No agents yet"
-          body="An agent is a name, a prompt, and a set of permissions."
+          headline={EMPTY_STATES.agents.headline}
+          body={EMPTY_STATES.agents.body}
           primary={
             <button type="button" onClick={() => setShowCreate(true)}>
-              Add an agent
+              {EMPTY_STATES.agents.primary}
             </button>
           }
           secondary={
@@ -116,7 +117,7 @@ export function AgentsPage() {
               disabled={starter.isPending}
               onClick={() => starter.mutate(undefined, { onError: onMutationError })}
             >
-              Use a starter roster
+              {EMPTY_STATES.agents.secondary}
             </button>
           }
         />

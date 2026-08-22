@@ -1095,7 +1095,8 @@ export interface paths {
         /** A project's runs, newest first (S22; the full list UI is S23). `status` accepts a comma-separated set of run states. `view=needs_you` (S24) returns the board lane's rows instead — the same query the home strip and /inbox render, scoped to one project, each row carrying the §4.3 flavor in words. */
         get: operations["listRuns"];
         put?: never;
-        post?: never;
+        /** Request a free-floating run (D-15, S38): an agent and a prompt, no ticket — the ⌘J ask-an-agent palette. The scheduler owns admission (D-14), so 201 means "queued", not "running". 409 `run_refused` when the scheduler declines. */
+        post: operations["createRun"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2532,6 +2533,14 @@ export interface components {
         };
         SteerRequest: {
             body: string;
+        };
+        /** @description A free-floating run request (D-15, S38) — the ⌘J ask-an-agent palette. The prompt becomes the assembled prompt's final "Task" section, exactly like a delegate dialog's optional prompt. */
+        CreateRunRequest: {
+            agent_id: string;
+            prompt: string;
+        };
+        CreateRunResponse: {
+            run_id: string;
         };
         /** @description One queued steering message; delivered_at is stamped on handoff. */
         RunMessage: {
@@ -5303,6 +5312,38 @@ export interface operations {
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    createRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRunRequest"];
+            };
+        };
+        responses: {
+            /** @description The created run's id. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateRunResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
         };
     };
     getRun: {

@@ -8,7 +8,8 @@ import { useState } from "react";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
-import { useWikiListQuery } from "../../../lib/api/wikiQueries";
+import { useWikiImportPreview, useWikiListQuery } from "../../../lib/api/wikiQueries";
+import { EMPTY_STATES, wikiImportLabel } from "../../emptyStates";
 import { ImportDialog } from "./ImportDialog";
 import { pagesWithTag, tagIndex } from "./tree";
 import { WikiScreen } from "./WikiScreen";
@@ -21,6 +22,13 @@ export function WikiIndexPage() {
   const pages = list.data?.pages ?? [];
   const tags = tagIndex(pages);
   const [importing, setImporting] = useState(false);
+  // §8's detected-content variant: while the wiki is empty, run the S35 detection so the
+  // CTA can say "Import AGENTS.md (detected)" when the scan finds one.
+  const empty = pages.length === 0 && !list.isPending;
+  const detect = useWikiImportPreview(key, empty && !importing);
+  const agentsMdDetected = (detect.data?.docs ?? []).some(
+    (d) => !d.already_imported && d.path.split("/").pop()?.toLowerCase() === "agents.md",
+  );
 
   return (
     <WikiScreen projectKey={key} hasSide={false}>
@@ -50,19 +58,21 @@ export function WikiIndexPage() {
         ) : pages.length === 0 && !list.isPending ? (
           <>
             <EmptyState
-              headline="Your project has no docs yet"
-              body="Docs here steer your agents, not just your teammates."
+              headline={EMPTY_STATES.wiki.headline}
+              body={EMPTY_STATES.wiki.body}
               primary={
                 <button
                   type="button"
                   className={styles.primaryBtn}
                   onClick={() => setImporting(true)}
                 >
-                  Import from repository
+                  {wikiImportLabel(agentsMdDetected)}
                 </button>
               }
               secondary={
-                <span className={styles.hint}>…or create one with “New page” in the tree.</span>
+                <span className={styles.hint}>
+                  …or use “{EMPTY_STATES.wiki.secondary}” in the tree.
+                </span>
               }
             />
             {importing && <ImportDialog projectKey={key} onClose={() => setImporting(false)} />}

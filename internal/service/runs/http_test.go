@@ -115,7 +115,7 @@ func newEnv(t *testing.T, pace time.Duration) *env {
 	}
 	t.Cleanup(func() { scheduler.Stop(context.Background()) })
 
-	runsSvc := runsvc.New(runsvc.Options{Store: st, Audit: auditW, Sched: scheduler, Logger: logger})
+	runsSvc := runsvc.New(runsvc.Options{Store: st, Audit: auditW, Sched: scheduler, Req: scheduler, Logger: logger})
 	runsSvc.Routes(mux, authSvc)
 
 	srv := httptest.NewServer(mux)
@@ -607,4 +607,45 @@ func TestNeedsYouIncludesOpenAgentPRs(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPRRow(0)
+}
+
+// S38: the ⌘J ask-an-agent palette's free-floating run — POST /projects/{key}/runs with an
+// agent and a prompt creates a run with no ticket (D-15); bad agents are 400s.
+func TestCreateFreeFloatingRun(t *testing.T) {
+	e := newEnv(t, 30*time.Millisecond)
+
+	status, body := e.doJSON("POST", "/api/v1/projects/PAY/runs",
+		fmt.Sprintf(`{"agent_id":%q,"prompt":"Survey the repo and report."}`, e.agent.ID))
+	if status != http.StatusCreated {
+		t.Fatalf("create run = %d: %v", status, body)
+	}
+	runID, _ := body["run_id"].(string)
+	if runID == "" {
+		t.Fatalf("no run_id in %v", body)
+	}
+	run, err := e.st.Runs().ByID(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.TicketID != nil {
+		t.Fatalf("free-floating run got ticket %v", *run.TicketID)
+	}
+	if run.AgentID != e.agent.ID || run.ProjectID != e.project.ID {
+		t.Fatalf("run wired wrong: %+v", run)
+	}
+	if run.RequestedByUserID == nil || *run.RequestedByUserID != e.userID {
+		t.Fatalf("requested_by should be the calling human, got %v", run.RequestedByUserID)
+	}
+
+	// Missing prompt and unknown agent are validation problems, not runs.
+	status, _ = e.doJSON("POST", "/api/v1/projects/PAY/runs",
+		fmt.Sprintf(`{"agent_id":%q,"prompt":"  "}`, e.agent.ID))
+	if status != http.StatusBadRequest {
+		t.Fatalf("blank prompt = %d, want 400", status)
+	}
+	status, _ = e.doJSON("POST", "/api/v1/projects/PAY/runs",
+		`{"agent_id":"nope","prompt":"hello"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("unknown agent = %d, want 400", status)
+	}
 }

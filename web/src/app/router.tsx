@@ -318,7 +318,9 @@ const projectSettingsSectionRoute = createRoute({
   component: ProjectSettingsPage,
 });
 
-const routeTree = rootRoute.addChildren([
+// Exported for the S38 axe suite: tests build their own router over the same tree with a
+// memory history, so every route's rendered state can be checked without a browser.
+export const routeTree = rootRoute.addChildren([
   setupRoute,
   loginRoute,
   inviteRoute,

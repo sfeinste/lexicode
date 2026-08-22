@@ -36,10 +36,13 @@ import {
   useRunsQuery,
 } from "../../../lib/api/runQueries";
 import { useRunChainQuery } from "../../../lib/api/triggerQueries";
+import { markMomentSeen, momentPending } from "../../../lib/activation";
 import { formatDuration, formatRelativeTime, formatTokenCount } from "../../../lib/format/format";
 import { formatDiffStat, isLargeDiff } from "../../../lib/format/prSize";
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
 import { useStreamTopics } from "../../../lib/sse/useStreamTopics";
+import { useMediaQuery } from "../../../lib/useMediaQuery";
+import { runAnnouncement, type AnnounceSnapshot } from "./announce";
 import { ActivityDetail } from "./renderers";
 import { InterventionBar } from "./Intervention";
 import styles from "./runs.module.css";
@@ -221,6 +224,50 @@ export function RunDetailPage() {
   const live = run !== undefined && !isTerminal(run.state);
   const now = useNow(live);
 
+  // §10 responsive: >=1400 all three panes; below, the context pane collapses to a header
+  // toggle (1100-1400), and the whole thing stacks vertically under 1100 (runs.module.css).
+  const threePane = useMediaQuery("(min-width: 1400px)", true);
+  const [contextOpen, setContextOpen] = useState(false);
+  const contextShown = threePane || contextOpen;
+
+  // §10 live region: announce run state transitions and step boundaries ONLY. The input is
+  // (state, step_count, current_step) — a streamed log line can never reach the announcer.
+  const [announced, setAnnounced] = useState("");
+  const lastSnapshot = useRef<AnnounceSnapshot | null>(null);
+  useEffect(() => {
+    if (run === undefined) return;
+    const next: AnnounceSnapshot = {
+      state: run.state,
+      stepCount: run.step_count,
+      currentStep: run.current_step,
+    };
+    const text = runAnnouncement(lastSnapshot.current, next);
+    lastSnapshot.current = next;
+    if (text !== null) setAnnounced(text);
+  }, [run?.state, run?.step_count, run?.current_step]); // eslint-disable-line react-hooks/exhaustive-deps -- snapshot fields only
+
+  // §8's two activation moments, each shown once per project (localStorage; activation.ts).
+  const completedRuns = (runsQuery.data?.runs ?? []).filter((r) => r.state === "completed");
+  const isFirstCompleted =
+    run !== undefined &&
+    run.state === "completed" &&
+    completedRuns.length === 1 &&
+    completedRuns[0].id === run.id;
+  const [showFirstCompleted] = useState(
+    () => momentPending("first-completed-run", key),
+  );
+  const firstCompletedMoment = isFirstCompleted && showFirstCompleted;
+  useEffect(() => {
+    if (firstCompletedMoment) markMomentSeen("first-completed-run", key);
+  }, [firstCompletedMoment, key]);
+
+  const isNeedsInput = run !== undefined && run.state === "needs_input";
+  const [showFirstNeedsInput] = useState(() => momentPending("first-needs-input", key));
+  const firstNeedsInputMoment = isNeedsInput && showFirstNeedsInput;
+  useEffect(() => {
+    if (firstNeedsInputMoment) markMomentSeen("first-needs-input", key);
+  }, [firstNeedsInputMoment, key]);
+
   // §7 acknowledgment SLA: a running run must emit its first thought within 10 seconds.
   const hasThought = activities.some((a) => a.type === "thought");
   const stalled =
@@ -268,12 +315,66 @@ export function RunDetailPage() {
         {run.state === "queued" && run.hold_reason !== "" && (
           <span className={styles.holdReason}>{run.hold_reason}</span>
         )}
+        {!threePane && (
+          <button
+            type="button"
+            className={styles.contextToggle}
+            aria-expanded={contextShown}
+            onClick={() => setContextOpen((v) => !v)}
+          >
+            Context {contextShown ? "▾" : "▸"}
+          </button>
+        )}
       </header>
+
+      {/* §10: state transitions and step boundaries only — never the log stream. */}
+      <div aria-live="polite" role="status" className={styles.srOnly}>
+        {announced}
+      </div>
+
+      {/* §8: the first completed run is the activation event — mark it, teach the next
+          action. Restrained: one card, shown exactly once per project. */}
+      {firstCompletedMoment && (
+        <section className={styles.momentCard} data-kind="completed" aria-label="First completed run">
+          <p className={styles.momentHead}>✓ Your first completed run.</p>
+          <p className={styles.momentBody}>
+            Next:{" "}
+            {(() => {
+              const pr = detailQuery.data.outputs.find((o) => o.kind === "pull_request");
+              const out = pr ?? detailQuery.data.outputs.find((o) => o.url !== "");
+              return out !== undefined && out.url !== "" ? (
+                <a href={out.url} target="_blank" rel="noreferrer">
+                  review the diff
+                </a>
+              ) : (
+                <>review the output below</>
+              );
+            })()}
+            , or turn the feedback into a{" "}
+            <Link to="/p/$key/wiki" params={{ key }}>
+              wiki page
+            </Link>{" "}
+            so the next run starts smarter.
+          </p>
+        </section>
+      )}
+
+      {/* §8: the first `needs input` teaches that agents are interactive — unmissable. */}
+      {firstNeedsInputMoment && (
+        <section className={styles.momentCard} data-kind="needs-input" aria-label="First question from an agent">
+          <p className={styles.momentHead}>▲ {agentName} is asking you a question.</p>
+          <p className={styles.momentBody}>
+            Agents aren&apos;t fire-and-forget: this run is paused until you answer, right
+            here in the step detail below. Your answer goes straight back into the running
+            session.
+          </p>
+        </section>
+      )}
 
       {/* S29: a loop-stopped run leads with the cycle it built — the §5.9 chain view. */}
       {run.state === "loop_stopped" && <LoopChainPanel projectKey={key} runId={run.id} />}
 
-      <div className={styles.panes}>
+      <div className={styles.panes} data-context={contextShown || undefined}>
         {/* Left — step timeline (virtualized) + the verbosity switch. */}
         <aside className={styles.timelinePane}>
           <VirtualList
@@ -330,13 +431,15 @@ export function RunDetailPage() {
           )}
         </main>
 
-        {/* Right — Context & cost. */}
-        <ContextPane
-          run={run}
-          projectKey={key}
-          context={detailQuery.data.context}
-          outputs={detailQuery.data.outputs}
-        />
+        {/* Right — Context & cost. Collapses to the header toggle below 1400 (§10). */}
+        {contextShown && (
+          <ContextPane
+            run={run}
+            projectKey={key}
+            context={detailQuery.data.context}
+            outputs={detailQuery.data.outputs}
+          />
+        )}
       </div>
 
       {/* The current-step line: the run's own mutable sentence while it works; the outcome
