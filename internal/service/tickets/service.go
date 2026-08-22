@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/audit"
@@ -47,6 +48,10 @@ type Service struct {
 	sched  sched.Requester
 	logger *slog.Logger
 	now    func() string
+
+	// The S31 triage ticker (triagequeue.go).
+	tickMu   sync.Mutex
+	tickDone chan struct{}
 }
 
 // Options configures New.

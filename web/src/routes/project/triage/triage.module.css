@@ -1,0 +1,282 @@
+/* The triage queue (UI spec §5.5): a single-column, keyboard-first list. */
+
+.page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 16px 20px;
+}
+
+.pageHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pageTitle {
+  font-size: var(--fs-section);
+  font-weight: 600;
+}
+
+.pageCount {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+}
+
+.hint {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.error {
+  color: var(--fail);
+  font-size: var(--fs-body);
+  margin-bottom: 8px;
+}
+
+.list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.row[data-selected] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.rowHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.rowKey {
+  font-size: var(--fs-mono);
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+.rowTitle {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowAge {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.provenance {
+  margin-top: 3px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.rowActions {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+
+.rowActions button {
+  padding: 2px 10px;
+  font-size: var(--fs-micro);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.rowActions button:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.rowActions kbd {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+  margin-right: 4px;
+}
+
+.sectionHead {
+  margin: 18px 0 8px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.snoozedRow {
+  composes: row;
+  opacity: 0.65;
+  background: var(--surface-2);
+}
+
+.wake {
+  margin-top: 3px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+/* ---- overlays (same chrome as the board's) -------------------------------------------- */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 35%);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 40;
+}
+
+.overlay {
+  width: 440px;
+  max-width: 90vw;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 25%);
+}
+
+.overlayTitle {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.overlayInput {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: var(--fs-body);
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.overlayInput:focus {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.overlayActions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.overlayActions button {
+  padding: 4px 12px;
+  font-size: var(--fs-body);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.overlayActions button[type="submit"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.overlayActions button:disabled {
+  opacity: 0.5;
+}
+
+.peekDescription {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.pickerList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.pickerList button {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  text-align: left;
+  padding: 5px 8px;
+  font-size: var(--fs-body);
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+}
+
+.pickerList button:hover,
+.pickerList li[data-active] button {
+  background: var(--surface-3);
+}
+
+.pickerEmpty {
+  padding: 8px;
+  font-size: var(--fs-body);
+  color: var(--text-3);
+}
+
+.menuList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+}
+
+.menuList button {
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  font-size: var(--fs-body);
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+}
+
+.menuList button:hover {
+  background: var(--surface-3);
+}

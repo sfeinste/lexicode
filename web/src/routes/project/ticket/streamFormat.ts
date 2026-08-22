@@ -26,6 +26,12 @@ interface KnownPayload {
   keys?: string[];
   count?: number;
   active_runs_cancelled?: number;
+  reason?: string;
+  provenance?: string;
+  ticket_key?: string;
+  of_ticket_key?: string;
+  until?: string;
+  until_activity?: boolean;
 }
 
 export function systemLine(entry: TicketStreamEntry, ctx: StreamContext): string {
@@ -65,6 +71,24 @@ export function systemLine(entry: TicketStreamEntry, ctx: StreamContext): string
       return `added label ${p.name ?? ctx.labelName("")}`;
     case "label_removed":
       return `removed label ${p.name ?? ""}`;
+    case "triage_accepted":
+      return `accepted from triage into ${ctx.columnName(p.column_id ?? "")}`;
+    case "merged_from":
+      return `merged from ${p.ticket_key ?? "a duplicate"} — ${p.provenance ?? ""}`;
+    case "triage_duplicate":
+      return `marked as a duplicate of ${p.of_ticket_key ?? "another ticket"} and archived`;
+    case "triage_declined":
+      return p.reason !== undefined && p.reason !== ""
+        ? `declined in triage: ${p.reason}`
+        : "declined in triage";
+    case "triage_snoozed":
+      return p.until_activity === true || p.until === undefined
+        ? "snoozed until new activity"
+        : `snoozed until ${new Date(p.until).toLocaleString()}`;
+    case "triage_woken":
+      return p.reason === "new_activity"
+        ? "woke from snooze — new activity"
+        : "woke from snooze — the snooze expired";
     case "archived":
       return "archived this ticket";
     case "unarchived":

@@ -59,6 +59,8 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("PUT /api/v1/tickets/{id}/labels/{label_id}", viaTicket(s.handleAttachLabel))
 	mux.Handle("DELETE /api/v1/tickets/{id}/labels/{label_id}", viaTicket(s.handleDetachLabel))
 
+	s.triageRoutes(mux, a)
+
 	mux.Handle("PATCH /api/v1/criteria/{id}", viaCriterion(s.handlePatchCriterion))
 	mux.Handle("DELETE /api/v1/criteria/{id}", viaCriterion(s.handleDeleteCriterion))
 	mux.Handle("PATCH /api/v1/labels/{id}", viaLabel(s.handlePatchLabel))

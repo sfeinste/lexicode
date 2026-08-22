@@ -127,7 +127,16 @@ export function applyStreamEvent(
       void qc.invalidateQueries({ queryKey: ["board", id] });
       void qc.invalidateQueries({ queryKey: ["columns", "list", id] });
       break;
+    // Triage events (S31): the queue and the tab badge read ["triage", key]; the verbs
+    // that change board visibility (accept) or archive tickets (duplicate, decline) also
+    // arrive as ticket.* events, so the board family needs no extra case here — but the
+    // wake events (snoozed → pending) are triage-only, so the queue must refetch on all.
     case "triage.created":
+    case "triage.accepted":
+    case "triage.duplicate":
+    case "triage.declined":
+    case "triage.snoozed":
+    case "triage.woken":
       void qc.invalidateQueries({ queryKey: ["triage", id] });
       break;
     case "trigger.fired":

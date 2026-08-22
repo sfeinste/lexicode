@@ -123,6 +123,12 @@ export type CatalogAction = components["schemas"]["CatalogAction"];
 export type ActionParamField = components["schemas"]["ActionParamField"];
 export type CatalogOperator = components["schemas"]["CatalogOperator"];
 export type RunChainResponse = components["schemas"]["RunChainResponse"];
+export type TriageState = components["schemas"]["TriageState"];
+export type TriageItem = components["schemas"]["TriageItem"];
+export type TriageListResponse = components["schemas"]["TriageListResponse"];
+export type TriageDuplicateRequest = components["schemas"]["TriageDuplicateRequest"];
+export type TriageDeclineRequest = components["schemas"]["TriageDeclineRequest"];
+export type TriageSnoozeRequest = components["schemas"]["TriageSnoozeRequest"];
 export type RunChainEntry = components["schemas"]["RunChainEntry"];
 
 export const API_BASE = "/api/v1";
@@ -352,6 +358,24 @@ export const ticketsApi = {
       "DELETE",
       `/tickets/${encodeURIComponent(id)}/labels/${encodeURIComponent(labelId)}`,
     ),
+};
+
+/**
+ * The S31 triage queue. Every verb returns the resolved (or snoozed) item; a verb on an
+ * already-resolved item is a 409 `triage_resolved` (another tab got there first).
+ */
+export const triageApi = {
+  list: (projectKey: string, signal?: AbortSignal) =>
+    api<TriageListResponse>("GET", `/projects/${encodeURIComponent(projectKey)}/triage`, {
+      signal,
+    }),
+  accept: (id: string) => api<TriageItem>("POST", `/triage/${encodeURIComponent(id)}/accept`),
+  duplicate: (id: string, body: TriageDuplicateRequest) =>
+    api<TriageItem>("POST", `/triage/${encodeURIComponent(id)}/duplicate`, { body }),
+  decline: (id: string, body: TriageDeclineRequest) =>
+    api<TriageItem>("POST", `/triage/${encodeURIComponent(id)}/decline`, { body }),
+  snooze: (id: string, body: TriageSnoozeRequest) =>
+    api<TriageItem>("POST", `/triage/${encodeURIComponent(id)}/snooze`, { body }),
 };
 
 export const criteriaApi = {

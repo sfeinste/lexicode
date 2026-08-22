@@ -159,6 +159,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		Store: st, Audit: auditW, Bus: b, Sched: lateRequester{s: &scheduler}, Logger: logger,
 	})
 	ticketsSvc.Routes(mux, authSvc)
+	// The S31 snoozed-until-activity waker subscribes before the bus starts, like every
+	// subscriber: an event whose subject matches a snoozed ticket flips it back to pending.
+	if err := ticketsSvc.SubscribeTriageWake(b); err != nil {
+		return err
+	}
 	runsSvc := runsvc.New(runsvc.Options{
 		Store: st, Audit: auditW, Sched: lateRunControl{s: &scheduler}, Logger: logger,
 	})
@@ -373,6 +378,9 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	}
 	notifySvc.Start(ctx)
 	defer notifySvc.Wait()
+	// The S31 triage ticker: time-snoozed items past snooze_until wake back to pending.
+	ticketsSvc.StartTriageTicker(ctx)
+	defer ticketsSvc.WaitTriageTicker()
 
 	srv := &http.Server{
 		Handler:           newHandler(mux, authSvc),

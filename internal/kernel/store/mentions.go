@@ -94,3 +94,14 @@ func (r *MentionsRepo) ForTarget(ctx context.Context, toKind, toID string) ([]do
 	}
 	return out, rows.Err()
 }
+
+// RedirectTarget re-points every mention aimed at one target to another — the S31 duplicate
+// merge: links to the archived duplicate follow the survivor. Returns how many rows moved.
+func (r *MentionsRepo) RedirectTarget(ctx context.Context, toKind, fromID, toID string) (int64, error) {
+	res, err := r.h.w.ExecContext(ctx, `
+		UPDATE mentions SET to_id = ? WHERE to_kind = ? AND to_id = ?`, toID, toKind, fromID)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return res.RowsAffected()
+}

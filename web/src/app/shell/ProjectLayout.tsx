@@ -8,12 +8,13 @@ import { Link, Outlet, useParams } from "@tanstack/react-router";
 
 import { TabBadge } from "../../components/TabBadge/TabBadge";
 import { useProjectQuery } from "../../lib/api/projectQueries";
+import { useTriageQuery } from "../../lib/api/triageQueries";
 import styles from "./shell.module.css";
 
 const TABS: Array<{ label: string; to: string; exact?: boolean; count?: number }> = [
   { label: "Overview", to: "/p/$key", exact: true },
   { label: "Board", to: "/p/$key/board" },
-  { label: "Triage", to: "/p/$key/triage", count: undefined /* untriaged (S16) */ },
+  { label: "Triage", to: "/p/$key/triage", count: undefined /* filled below: untriaged */ },
   { label: "Wiki", to: "/p/$key/wiki" },
   { label: "Runs", to: "/p/$key/runs", count: undefined /* needs-attention (S21) */ },
   { label: "Agents", to: "/p/$key/agents" },
@@ -23,6 +24,10 @@ const TABS: Array<{ label: string; to: string; exact?: boolean; count?: number }
 export function ProjectLayout() {
   const { key } = useParams({ from: "/shell/p/$key" });
   const project = useProjectQuery(key);
+  // The triage badge (S31): `pending_count` only — actionable items, never snoozed
+  // (UI spec §2.1); TabBadge suppresses the zero.
+  const triage = useTriageQuery(key);
+  const triagePending = triage.data?.pending_count;
 
   return (
     <div className={styles.project}>
@@ -51,7 +56,7 @@ export function ProjectLayout() {
             activeProps={{ "data-active": "" }}
           >
             {tab.label}
-            <TabBadge count={tab.count} />
+            <TabBadge count={tab.label === "Triage" ? triagePending : tab.count} />
           </Link>
         ))}
         <Link

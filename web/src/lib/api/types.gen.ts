@@ -670,6 +670,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{key}/triage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The S31 triage queue: a project's unresolved triage items — `pending` first, then `snoozed`, each oldest first — with their tickets and the verbatim provenance line every row renders. `pending_count` is the triage tab badge: actionable items only, snoozed items never count (UI spec §2.1). */
+        get: operations["listTriage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an item `accepted`. The ticket does not move — it was created into the project's first backlog-category column (S28) and accepting simply ends the §10.7 board exclusion: the next board query shows it there. A verb on an already-resolved item is a 409 `triage_resolved`. */
+        post: operations["acceptTriage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/{id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an item `duplicate`, merging its ticket into `of_ticket_id` (the survivor). Transfers to the survivor: the duplicate's labels (deduplicated), its acceptance criteria (appended after the survivor's own, checked state kept), every mention that pointed at the duplicate (redirected), and a stream note carrying the duplicate's key and its full provenance line — one ticket ends up with both provenances. The duplicate ticket is archived with the merge recorded in its stream. Not transferred: the duplicate's stream history, description, priority, assignee, delegate. The survivor must be an unarchived ticket of the same project and not itself awaiting triage. */
+        post: operations["duplicateTriage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/{id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an item `declined`: the ticket is archived (canceled, D-15 soft delete) and the optional reason lands on the item and in the ticket stream. */
+        post: operations["declineTriage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/{id}/snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Park an item — NOT a resolution; the ticket stays off the board (§10.7). `until` an RFC3339 instant = time-based, woken by a server ticker when it passes; `until` null (or absent) = until new activity, woken when an event's subject matches the ticket: the event's subject IS the ticket, or its subject number equals the ticket's linked PR number, or its subject branch equals the ticket's branch. */
+        post: operations["snoozeTriage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/permission-rules": {
         parameters: {
             query?: never;
@@ -1751,6 +1836,48 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /** @enum {string} */
+        TriageState: "pending" | "accepted" | "duplicate" | "declined" | "snoozed";
+        /** @description One triage row (data model §4): the gate between automated ticket creation and the board. `provenance` is the verbatim human sentence the queue renders — "Created by trigger `CI failed → file a ticket` from run #482". `snooze_until` null while state is `snoozed` means "until new activity". */
+        TriageItem: {
+            id: string;
+            ticket_id: string;
+            provenance: string;
+            source_trigger_id: string | null;
+            source_run_id: string | null;
+            state: components["schemas"]["TriageState"];
+            duplicate_of: string | null;
+            reason: string;
+            /** Format: date-time */
+            snooze_until: string | null;
+            resolved_by: string | null;
+            /** Format: date-time */
+            resolved_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            ticket: components["schemas"]["Ticket"];
+        };
+        TriageListResponse: {
+            /** @description Unresolved items — pending first, then snoozed, each oldest first. */
+            items: components["schemas"]["TriageItem"][];
+            /** @description The tab badge — actionable (pending) items only, never snoozed. */
+            pending_count: number;
+            snoozed_count: number;
+        };
+        TriageDuplicateRequest: {
+            /** @description The surviving ticket this one duplicates. */
+            of_ticket_id: string;
+        };
+        TriageDeclineRequest: {
+            reason?: string;
+        };
+        TriageSnoozeRequest: {
+            /**
+             * Format: date-time
+             * @description RFC3339 wake time; null or absent = until new activity.
+             */
+            until?: string | null;
+        };
         TicketListResponse: {
             tickets: components["schemas"]["Ticket"][];
         };
@@ -2094,7 +2221,7 @@ export interface components {
          * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "triage.accepted" | "triage.duplicate" | "triage.declined" | "triage.snoozed" | "triage.woken" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;
@@ -3896,6 +4023,150 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    listTriage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queue. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriageListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    acceptTriage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The resolved item with its (now board-visible) ticket. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriageItem"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    duplicateTriage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriageDuplicateRequest"];
+            };
+        };
+        responses: {
+            /** @description The resolved item; its ticket is the archived duplicate. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriageItem"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    declineTriage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriageDeclineRequest"];
+            };
+        };
+        responses: {
+            /** @description The resolved item with its archived ticket. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriageItem"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    snoozeTriage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriageSnoozeRequest"];
+            };
+        };
+        responses: {
+            /** @description The snoozed item. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriageItem"];
+                };
+            };
+            400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

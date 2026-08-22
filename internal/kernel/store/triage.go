@@ -23,6 +23,12 @@ func (t *Tx) Triage() *TriageRepo { return &TriageRepo{h: t.handle()} }
 const triageCols = `id, ticket_id, provenance, source_trigger_id, source_run_id, state,
 	duplicate_of, reason, snooze_until, resolved_by, resolved_at, created_at`
 
+// triageColsPrefixed is triageCols qualified with the `ti` alias, for queries that join
+// tickets (whose id/created_at would otherwise be ambiguous).
+const triageColsPrefixed = `ti.id, ti.ticket_id, ti.provenance, ti.source_trigger_id,
+	ti.source_run_id, ti.state, ti.duplicate_of, ti.reason, ti.snooze_until,
+	ti.resolved_by, ti.resolved_at, ti.created_at`
+
 // Create inserts a triage item. A second item for the same ticket surfaces as ErrUnique.
 func (r *TriageRepo) Create(ctx context.Context, it *domain.TriageItem) error {
 	_, err := r.h.w.ExecContext(ctx, `
@@ -59,4 +65,109 @@ func scanTriageItem(row rowScanner) (domain.TriageItem, error) {
 	it.ResolvedBy = strPtr(resolvedBy)
 	it.ResolvedAt = strPtr(resolvedAt)
 	return it, nil
+}
+
+// ByID returns one triage item, or ErrNotFound.
+func (r *TriageRepo) ByID(ctx context.Context, id string) (domain.TriageItem, error) {
+	return scanTriageItem(r.h.r.QueryRowContext(ctx,
+		`SELECT `+triageCols+` FROM triage_items WHERE id = ?`, id))
+}
+
+// Update rewrites a triage item's mutable columns: state, duplicate_of, reason,
+// snooze_until and the resolution stamp. Provenance and the source references are
+// immutable history — an UPDATE never touches them.
+func (r *TriageRepo) Update(ctx context.Context, it *domain.TriageItem) error {
+	res, err := r.h.w.ExecContext(ctx, `
+		UPDATE triage_items
+		SET state = ?, duplicate_of = ?, reason = ?, snooze_until = ?,
+		    resolved_by = ?, resolved_at = ?
+		WHERE id = ?`,
+		string(it.State), nullStr(it.DuplicateOf), it.Reason, nullStr(it.SnoozeUntil),
+		nullStr(it.ResolvedBy), nullStr(it.ResolvedAt), it.ID)
+	if err != nil {
+		return mapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UnresolvedForProject returns a project's unresolved triage items — the S31 queue:
+// `pending` first, then `snoozed`, each oldest first. Items whose ticket was archived out
+// from under them are excluded; there is nothing left to triage.
+func (r *TriageRepo) UnresolvedForProject(ctx context.Context, projectID string) ([]domain.TriageItem, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+triageColsPrefixed+` FROM triage_items ti
+		JOIN tickets t ON t.id = ti.ticket_id
+		WHERE t.project_id = ? AND t.archived_at IS NULL
+		  AND ti.state IN ('pending','snoozed')
+		ORDER BY CASE ti.state WHEN 'pending' THEN 0 ELSE 1 END, ti.created_at, ti.id`,
+		projectID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectTriageItems(rows)
+}
+
+// CountPending returns how many `pending` items a project has — the triage tab badge.
+// Snoozed items are deliberately excluded: the badge counts actionable work only (UI spec
+// §2.1), and a snoozed item is parked by explicit choice.
+func (r *TriageRepo) CountPending(ctx context.Context, projectID string) (int64, error) {
+	var n int64
+	err := r.h.r.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM triage_items ti
+		JOIN tickets t ON t.id = ti.ticket_id
+		WHERE t.project_id = ? AND t.archived_at IS NULL AND ti.state = 'pending'`,
+		projectID).Scan(&n)
+	return n, mapErr(err)
+}
+
+// SnoozedDue returns every time-snoozed item whose snooze_until has passed (RFC3339 UTC
+// strings compare lexicographically) — the ticker's scan, across all projects.
+func (r *TriageRepo) SnoozedDue(ctx context.Context, now string) ([]domain.TriageItem, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+triageColsPrefixed+` FROM triage_items ti
+		JOIN tickets t ON t.id = ti.ticket_id
+		WHERE t.archived_at IS NULL AND ti.state = 'snoozed'
+		  AND ti.snooze_until IS NOT NULL AND ti.snooze_until <= ?
+		ORDER BY ti.snooze_until, ti.id`, now)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectTriageItems(rows)
+}
+
+// SnoozedUntilActivity returns a project's snoozed-until-activity items (state `snoozed`,
+// snooze_until NULL) — the wake subscriber's candidates for one incoming event.
+func (r *TriageRepo) SnoozedUntilActivity(ctx context.Context, projectID string) ([]domain.TriageItem, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+triageColsPrefixed+` FROM triage_items ti
+		JOIN tickets t ON t.id = ti.ticket_id
+		WHERE t.project_id = ? AND t.archived_at IS NULL
+		  AND ti.state = 'snoozed' AND ti.snooze_until IS NULL
+		ORDER BY ti.created_at, ti.id`, projectID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectTriageItems(rows)
+}
+
+func collectTriageItems(rows *sql.Rows) ([]domain.TriageItem, error) {
+	var out []domain.TriageItem
+	for rows.Next() {
+		it, err := scanTriageItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, mapErr(rows.Err())
 }
