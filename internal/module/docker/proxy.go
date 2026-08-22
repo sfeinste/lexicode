@@ -95,6 +95,12 @@ type Proxy struct {
 	byRun   map[string]*registration
 	recent  map[decisionKey]*decisionState
 
+	// mcp, when set, serves /mcp/* requests directly (story S21). The proxy listener is the
+	// one host socket every container can already reach — through the relay on the internal
+	// network, at host.docker.internal on the bridge — so the MCP endpoint rides it instead
+	// of poking a second hole. Guarded by mu; set at the wiring site before Start.
+	mcp http.Handler
+
 	srv *http.Server
 	ln  net.Listener
 }
@@ -261,10 +267,56 @@ func (p *Proxy) ProxyEnv(runID string) (map[string]string, bool) {
 	}, true
 }
 
+// SetMCPHandler mounts the S21 MCP endpoint on this listener (see the mcp field). Call it
+// from the wiring site before Start; nil unmounts.
+func (p *Proxy) SetMCPHandler(h http.Handler) {
+	p.mu.Lock()
+	p.mcp = h
+	p.mu.Unlock()
+}
+
+// mcpHosts are the names under which containers address this process itself: the relay's
+// container name (internal-network runs dial it directly, and proxy-env clients send it
+// absolute-form) and the Docker host alias (bridge runs). An absolute-form request for one
+// of these hosts with an /mcp/ path is OURS — served, never dialed upstream. Anything else
+// with an /mcp/ path stays a normal proxied request (some unrelated site may serve /mcp/).
+var mcpHosts = map[string]bool{
+	relayContainerName:     true,
+	"host.docker.internal": true,
+	"localhost":            true,
+	"127.0.0.1":            true,
+}
+
+// serveMCPIfOurs recognises and serves an MCP request (story S21): origin-form /mcp/* —
+// what a container sends when it dials the relay (or this listener) directly — and
+// absolute-form /mcp/* addressed to one of mcpHosts — what an HTTP_PROXY-honouring client
+// sends through the same relay. MCP requests authenticate by the run token in the path, not
+// by Proxy-Authorization, so this dispatch runs before the 407 gate.
+func (p *Proxy) serveMCPIfOurs(w http.ResponseWriter, r *http.Request) bool {
+	p.mu.Lock()
+	mcp := p.mcp
+	p.mu.Unlock()
+	if mcp == nil || r.Method == http.MethodConnect || !strings.HasPrefix(r.URL.Path, "/mcp/") {
+		return false
+	}
+	if r.URL.IsAbs() {
+		host, _ := splitAuthority(r.URL.Host, "80")
+		if !mcpHosts[normalizeHost(host)] {
+			return false
+		}
+	}
+	mcp.ServeHTTP(w, r)
+	return true
+}
+
 // ServeHTTP authenticates, evaluates policy, logs the decision, then tunnels (CONNECT) or
 // forwards (absolute-form). Order matters: an unauthenticated caller learns nothing but 407 —
-// no policy evaluation, no dialing, no decision row.
+// no policy evaluation, no dialing, no decision row. The one thing served before the 407
+// gate is the MCP endpoint, which carries its own credential in its path.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if p.serveMCPIfOurs(w, r) {
+		return
+	}
 	reg := p.authenticate(r)
 	if reg == nil {
 		w.Header().Set("Proxy-Authenticate", `Basic realm="lexicode"`)

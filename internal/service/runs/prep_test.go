@@ -378,6 +378,36 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// The MCP origin follows the network mode (S21): proxied runs dial the relay by name;
+// open runs dial the host alias, at the port the wiring supplies via MCPBaseURL.
+func TestMCPEndpointFollowsNetworkMode(t *testing.T) {
+	for _, tc := range []struct {
+		policy, baseURL, want string
+	}{
+		{"none", "", "http://lexicode-egress:3128/mcp/tok-s21"},
+		{"allowlist", "", "http://lexicode-egress:3128/mcp/tok-s21"},
+		{"allowlist", "http://host.docker.internal:7718", "http://lexicode-egress:3128/mcp/tok-s21"},
+		{"open", "http://host.docker.internal:7718", "http://host.docker.internal:7718/mcp/tok-s21"},
+		{"open", "", "http://host.docker.internal/mcp/tok-s21"},
+	} {
+		t.Run(tc.policy+"/"+tc.baseURL, func(t *testing.T) {
+			e := newPrepEnv(t)
+			policy := tc.policy
+			e.in.Repo.NetworkPolicy = &policy
+			e.in.RunToken = "tok-s21"
+			b := e.builder()
+			b.MCPBaseURL = tc.baseURL
+			p, err := b.Build(context.Background(), e.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(p.Spec.Files[mcpConfigPath]); !strings.Contains(got, `"url": "`+tc.want+`"`) {
+				t.Errorf("mcp.json url: want %s, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------- env assembly -----
 
 func TestEnvAssembly(t *testing.T) {
@@ -499,9 +529,11 @@ func TestFilesMaterialized(t *testing.T) {
 			t.Errorf("file %s missing or empty", path)
 		}
 	}
+	// This env's policy resolves to allowlist (proxied), so the MCP origin is the relay
+	// (S21 reachability; internal/service/mcp/doc.go).
 	mcp := string(files[mcpConfigPath])
-	if !strings.Contains(mcp, "http://host.docker.internal/mcp/"+PlaceholderRunToken) {
-		t.Errorf("mcp.json lacks the placeholder endpoint:\n%s", mcp)
+	if !strings.Contains(mcp, "http://lexicode-egress:3128/mcp/"+PlaceholderRunToken) {
+		t.Errorf("mcp.json lacks the relay endpoint:\n%s", mcp)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(files[mcpConfigPath], &doc); err != nil {

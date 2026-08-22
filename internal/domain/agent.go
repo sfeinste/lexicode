@@ -54,3 +54,17 @@ type Agent struct {
 	CreatedAt           string
 	UpdatedAt           string
 }
+
+// AgentPermissionRule is a row of agent_permission_rules: what "always allow" writes
+// (interaction rule 8). A rule matches request_approval calls by tool + pattern and
+// short-circuits before autonomy is consulted (contracts §3.3).
+type AgentPermissionRule struct {
+	ID               string
+	AgentID          string
+	Tool             string             // 'Bash'
+	Pattern          string             // 'npm test:*'
+	Decision         PermissionDecision // allow | deny | ask
+	CreatedFromRunID *string
+	CreatedBy        *string
+	CreatedAt        string
+}

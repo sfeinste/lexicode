@@ -90,6 +90,24 @@ func (r *WikiRepo) ForProject(ctx context.Context, projectID string) ([]domain.W
 	return out, rows.Err()
 }
 
+// BySlug returns the project's page with this slug, or ErrNotFound. Slugs are unique per
+// project (schema); proposals therefore carry their own distinct slugs.
+func (r *WikiRepo) BySlug(ctx context.Context, projectID, slug string) (domain.WikiPage, error) {
+	return scanWikiPage(r.h.r.QueryRowContext(ctx,
+		`SELECT `+wikiCols+` FROM wiki_pages WHERE project_id = ? AND slug = ?`,
+		projectID, slug))
+}
+
+// LatestVersion returns the highest version number recorded for a page, 0 when the page has
+// no version rows yet. The S21 proposal flow snapshots it as proposed_base_version so the
+// S35 accept can run its three-way check.
+func (r *WikiRepo) LatestVersion(ctx context.Context, pageID string) (int64, error) {
+	var v int64
+	err := r.h.r.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 0) FROM wiki_versions WHERE page_id = ?`, pageID).Scan(&v)
+	return v, mapErr(err)
+}
+
 // ImportedPaths returns the set of repo paths already seeded as wiki pages
 // (imported_from → page slug), the idempotency basis for a re-scan (S15).
 func (r *WikiRepo) ImportedPaths(ctx context.Context, projectID string) (map[string]string, error) {

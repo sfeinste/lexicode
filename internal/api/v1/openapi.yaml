@@ -1114,6 +1114,61 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /agents/{id}/permission-rules:
+    get:
+      operationId: listPermissionRules
+      summary: >
+        The agent's permission rules — what "always allow" writes (interaction rule 8).
+        Evaluated by the MCP server before autonomy, in creation order, first match wins.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The agent's rules, creation order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PermissionRuleList" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /agents/{id}/permission-rules/{rule_id}:
+    delete:
+      operationId: deletePermissionRule
+      summary: Remove one permission rule.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: rule_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /elicitations/{id}/respond:
+    post:
+      operationId: respondElicitation
+      summary: >
+        Answer a blocked run: answer a question, or approve / deny / approve-with-edits /
+        remember an approval. `remember` writes exactly one agent permission rule
+        (interaction rule 8) and then answers allow. Unblocks the waiting MCP tool call and
+        returns the run to `running`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RespondElicitationRequest" }
+      responses:
+        "200":
+          description: The resolved elicitation (and the remembered rule id, if one was written).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RespondElicitationResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /workspace/settings:
     get:
       operationId: getWorkspaceSettings
@@ -1350,6 +1405,72 @@ components:
       properties:
         field: { type: string }
         message: { type: string }
+    PermissionRule:
+      type: object
+      required: [id, agent_id, tool, pattern, decision, created_at]
+      properties:
+        id: { type: string }
+        agent_id: { type: string }
+        tool: { type: string }
+        pattern: { type: string }
+        decision: { type: string, enum: [allow, deny, ask] }
+        created_from_run_id: { type: string }
+        created_by: { type: string }
+        created_at: { type: string }
+    PermissionRuleList:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items: { $ref: "#/components/schemas/PermissionRule" }
+    Elicitation:
+      type: object
+      description: >
+        One blocking question or approval a run asked. `request` is the tool's payload —
+        for approvals, enriched with the six card fields (action, scope, impact, reason,
+        alternatives, recovery).
+      required: [id, run_id, kind, state, request, created_at]
+      properties:
+        id: { type: string }
+        run_id: { type: string }
+        kind: { type: string, enum: [question, approval] }
+        state: { type: string, enum: [pending, answered, denied, expired, canceled] }
+        request: {}
+        response: {}
+        responded_by: { type: string }
+        responded_at: { type: string }
+        created_at: { type: string }
+    RespondElicitationRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [answer, approve, deny, approve_with_edits, remember]
+        answers:
+          type: object
+          description: Question answers — question text to selected option labels.
+          additionalProperties:
+            type: array
+            items: { type: string }
+        text: { type: string, description: Freeform answer to a question. }
+        updated_input:
+          type: object
+          description: approve_with_edits — the edited tool input the agent proceeds with.
+          additionalProperties: true
+        message: { type: string, description: Deny message the agent will read. }
+        pattern:
+          type: string
+          description: remember — the rule pattern; derived from the request when omitted.
+    RespondElicitationResponse:
+      type: object
+      required: [elicitation]
+      properties:
+        elicitation: { $ref: "#/components/schemas/Elicitation" }
+        rule_id:
+          type: string
+          description: The permission rule `remember` wrote, when it did.
     User:
       type: object
       required: [id, email, display_name, role, avatar_color, created_at]

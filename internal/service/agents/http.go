@@ -43,6 +43,11 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("GET /api/v1/agents/{id}/directives", viaAgent(s.handleListDirectives))
 	mux.Handle("GET /api/v1/agents/{id}/directives/{version}", viaAgent(s.handleDirectiveVersion))
 	mux.Handle("POST /api/v1/agents/{id}/directive/estimate", viaAgent(s.handleEstimate))
+
+	// Permission rules (S21, interaction rule 8): what "always allow" writes is visible and
+	// deletable here — never a hidden mute.
+	mux.Handle("GET /api/v1/agents/{id}/permission-rules", viaAgent(s.handleListRules))
+	mux.Handle("DELETE /api/v1/agents/{id}/permission-rules/{rule_id}", viaAgent(s.handleDeleteRule))
 }
 
 // requireMember is RequireProjectMember for the /agents/{id} routes, whose path carries no

@@ -40,17 +40,28 @@ const (
 	commitHookPath     = ".lexicode/hooks/commit-msg"
 )
 
-// PlaceholderRunToken is written into .lexicode/mcp.json until the MCP server (S21) mints
-// real per-run tokens. It is obviously fake on purpose.
+// PlaceholderRunToken is written into .lexicode/mcp.json when the caller supplies no token —
+// pre-S22 callers only; the scheduler mints real tokens via the MCP server (S21). It is
+// obviously fake on purpose.
 const PlaceholderRunToken = "pending-s21-run-token"
 
-// defaultMCPBaseURL is where the orchestrator's MCP endpoint lives as seen from a container.
-// Containers on the internal network cannot reach the host directly (S18); they reach it
-// through the authenticated egress proxy — HTTP_PROXY is set for none/allowlist runs, and the
-// relay forwards absolute-form/CONNECT to host.docker.internal. S21 finalizes the port and
-// registers the host with the proxy policy; the URL shape is decided here so mcp.json is
-// stable.
-const defaultMCPBaseURL = "http://host.docker.internal"
+// The MCP endpoint's origin as seen from a container (S21's reachability decision; the full
+// story is internal/service/mcp/doc.go). The endpoint is served on the S18 egress-proxy
+// listener, so:
+//
+//   - none/allowlist runs, which live on the internal network and cannot reach the host at
+//     all, dial the relay container by name — every byte it forwards lands on that listener,
+//     and the proxy serves /mcp/* itself instead of dialing upstream. The two constants
+//     mirror module/docker's relayContainerName/relayPort; the packages must not import each
+//     other (service → module is a forbidden edge), so, like the OAuth env-var name in this
+//     file, the string IS the protocol.
+//   - open runs ride the default bridge and dial host.docker.internal:<proxy port> — the
+//     same listener from the other side. The port is config, so the wiring site (S22)
+//     supplies Builder.MCPBaseURL; the portless default below keeps fixture tests honest.
+const (
+	egressMCPBaseURL  = "http://lexicode-egress:3128"
+	defaultMCPBaseURL = "http://host.docker.internal"
+)
 
 // Builder assembles SandboxSpecs. Every dependency is a narrow function so the S22 scheduler,
 // the docker-tagged tests and the unit tests wire exactly what they mean.
@@ -72,7 +83,10 @@ type Builder struct {
 	// store's Runs().BranchInUse, optionally composed with a remote check. Nil skips
 	// collision checking.
 	BranchTaken func(ctx context.Context, projectID, branch string) (bool, error)
-	// MCPBaseURL overrides the MCP endpoint origin; empty means defaultMCPBaseURL.
+	// MCPBaseURL is the MCP endpoint origin for `open` runs (the bridge network):
+	// "http://host.docker.internal:<proxy port>", supplied by the wiring site because the
+	// port is config. Empty means defaultMCPBaseURL. Proxied runs (none/allowlist) ignore
+	// it — their origin is the egress relay, which is fixed (see egressMCPBaseURL).
 	MCPBaseURL string
 }
 
@@ -236,9 +250,14 @@ func (b *Builder) Build(ctx context.Context, in PrepInput) (Prep, error) {
 	if runToken == "" {
 		runToken = PlaceholderRunToken
 	}
-	mcpBase := b.MCPBaseURL
-	if mcpBase == "" {
-		mcpBase = defaultMCPBaseURL
+	// The MCP origin depends on which network the container will be on (see the constants'
+	// comment): proxied runs dial the relay, open runs dial the host alias.
+	mcpBase := egressMCPBaseURL
+	if mode == ports.NetworkOpen || mode == "" {
+		mcpBase = b.MCPBaseURL
+		if mcpBase == "" {
+			mcpBase = defaultMCPBaseURL
+		}
 	}
 	trailer := "Lexicode-Run: " + in.Run.ID
 	files := map[string][]byte{

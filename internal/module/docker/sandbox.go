@@ -209,7 +209,11 @@ func (s *Sandbox) createAndStart(ctx context.Context, spec ports.SandboxSpec, im
 		ReadonlyRootfs: true,
 		Tmpfs:          map[string]string{"/tmp": "rw,exec,nosuid,size=1g"},
 		NetworkMode:    networkMode,
-		Binds:          s.extraBinds,
+		// host-gateway makes host.docker.internal resolve on native Linux too (D-12: open
+		// runs reach the MCP endpoint at host.docker.internal:<proxy port>). Harmless on the
+		// internal network, where the route out does not exist anyway.
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
+		Binds:      s.extraBinds,
 		Resources: container.Resources{
 			NanoCPUs:  int64(spec.Limits.CPUs * 1e9),
 			Memory:    spec.Limits.MemoryBytes,

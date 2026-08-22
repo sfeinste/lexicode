@@ -653,6 +653,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/permission-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The agent's permission rules — what "always allow" writes (interaction rule 8). Evaluated by the MCP server before autonomy, in creation order, first match wins. */
+        get: operations["listPermissionRules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/permission-rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one permission rule. */
+        delete: operations["deletePermissionRule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/elicitations/{id}/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer a blocked run: answer a question, or approve / deny / approve-with-edits / remember an approval. `remember` writes exactly one agent permission rule (interaction rule 8) and then answers allow. Unblocks the waiting MCP tool call and returns the run to `running`. */
+        post: operations["respondElicitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspace/settings": {
         parameters: {
             query?: never;
@@ -808,6 +859,57 @@ export interface components {
         FieldError: {
             field: string;
             message: string;
+        };
+        PermissionRule: {
+            id: string;
+            agent_id: string;
+            tool: string;
+            pattern: string;
+            /** @enum {string} */
+            decision: "allow" | "deny" | "ask";
+            created_from_run_id?: string;
+            created_by?: string;
+            created_at: string;
+        };
+        PermissionRuleList: {
+            rules: components["schemas"]["PermissionRule"][];
+        };
+        /** @description One blocking question or approval a run asked. `request` is the tool's payload — for approvals, enriched with the six card fields (action, scope, impact, reason, alternatives, recovery). */
+        Elicitation: {
+            id: string;
+            run_id: string;
+            /** @enum {string} */
+            kind: "question" | "approval";
+            /** @enum {string} */
+            state: "pending" | "answered" | "denied" | "expired" | "canceled";
+            request: unknown;
+            response?: unknown;
+            responded_by?: string;
+            responded_at?: string;
+            created_at: string;
+        };
+        RespondElicitationRequest: {
+            /** @enum {string} */
+            action: "answer" | "approve" | "deny" | "approve_with_edits" | "remember";
+            /** @description Question answers — question text to selected option labels. */
+            answers?: {
+                [key: string]: string[];
+            };
+            /** @description Freeform answer to a question. */
+            text?: string;
+            /** @description approve_with_edits — the edited tool input the agent proceeds with. */
+            updated_input?: {
+                [key: string]: unknown;
+            };
+            /** @description Deny message the agent will read. */
+            message?: string;
+            /** @description remember — the rule pattern; derived from the request when omitted. */
+            pattern?: string;
+        };
+        RespondElicitationResponse: {
+            elicitation: components["schemas"]["Elicitation"];
+            /** @description The permission rule `remember` wrote, when it did. */
+            rule_id?: string;
         };
         User: {
             id: string;
@@ -3054,6 +3156,86 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    listPermissionRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The agent's rules, creation order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionRuleList"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    deletePermissionRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    respondElicitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RespondElicitationRequest"];
+            };
+        };
+        responses: {
+            /** @description The resolved elicitation (and the remembered rule id, if one was written). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespondElicitationResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

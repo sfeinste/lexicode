@@ -142,6 +142,25 @@ func scanRun(row rowScanner) (domain.Run, error) {
 	return run, nil
 }
 
+// SetCurrentStep updates the mutable one-liner (runs.current_step) the `set_step` MCP tool
+// writes. current_step is presentation, not lifecycle: it is deliberately outside the
+// "only the scheduler writes runs.state" rule. ErrNotFound for an unknown run.
+func (r *RunsRepo) SetCurrentStep(ctx context.Context, id, step string) error {
+	res, err := r.h.w.ExecContext(ctx,
+		`UPDATE runs SET current_step = ? WHERE id = ?`, step, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // AgentRunStats is the roster-card aggregate for one agent, computed from the runs table.
 // "Since" fields count runs queued at or after the caller's window start (the roster uses a
 // rolling seven days); Ended/Succeeded cover the agent's whole history, so the success rate

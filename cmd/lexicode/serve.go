@@ -20,6 +20,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/httpx"
+	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/sched"
 	"github.com/spruce/lexicode/internal/kernel/secrets"
 	"github.com/spruce/lexicode/internal/kernel/store"
@@ -33,6 +34,7 @@ import (
 	"github.com/spruce/lexicode/internal/service/board"
 	"github.com/spruce/lexicode/internal/service/bootstrap"
 	credsvc "github.com/spruce/lexicode/internal/service/credentials"
+	mcpsvc "github.com/spruce/lexicode/internal/service/mcp"
 	"github.com/spruce/lexicode/internal/service/projects"
 	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
 	"github.com/spruce/lexicode/internal/service/tickets"
@@ -154,6 +156,14 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	secretsSvc.Routes(mux, authSvc)
 	agentsSvc := agentsvc.New(agentsvc.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
 	agentsSvc.Routes(mux, authSvc)
+	// The Lexicode MCP server (S21, D-12): elicitations, approvals, step reporting, wiki
+	// proposals and criterion checks, blocking on humans. SetRunState stays nil until the
+	// S22 scheduler exists — no real runs can start before it, and the seam logs rather than
+	// guesses at the state machine. The MCP endpoint is mounted twice (see mcp doc.go): here
+	// on the main mux, and below on the egress-proxy listener for containers.
+	mcpSvc := mcpsvc.New(mcpsvc.Options{Store: st, Bus: b, Audit: auditW, Logger: logger})
+	mcpSvc.Routes(mux, authSvc)
+	mux.Handle("/mcp/{token}", mcpSvc.Handler())
 
 	// Modules (architecture §3.1); each is one line here. actions, context and notify
 	// arrive with the stories that build them. testkit is never wired here — it ships as a
@@ -166,9 +176,15 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	if err := k.RegisterModule(dockerMod); err != nil {
 		return err
 	}
-	// The Respond seam stays nil until the S21 MCP server registers itself through
-	// claudecodeMod.Runtime(): elicitation answers travel as the MCP tool's result.
-	claudecodeMod := claudecodemod.New(claudecodemod.Options{})
+	// The Respond seam routes Handle.Respond into the MCP server, which holds the blocking
+	// tool call: answers travel back as the MCP tool's result, never stdin (contracts §3.4).
+	claudecodeMod := claudecodemod.New(claudecodemod.Options{
+		Respond: func(ctx context.Context, runID, elicitationID string, r ports.Response) error {
+			_ = runID // the elicitation row carries its run; the id is authoritative
+			_, err := mcpSvc.Resolve(ctx, elicitationID, r, nil)
+			return err
+		},
+	})
 	if err := k.RegisterModule(claudecodeMod); err != nil {
 		return err
 	}
@@ -198,6 +214,14 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// Init all → (migrate, story S03) → Start all → serve → Stop all in reverse.
 	if err := k.Init(); err != nil {
 		return err
+	}
+
+	// Containers reach the MCP endpoint through the egress-proxy listener (S21 reachability;
+	// internal/service/mcp/doc.go). The proxy exists only after the docker module's Init and
+	// only when a proxy port is configured; without it, host-side MCP still serves on the
+	// main mux.
+	if proxy := dockerMod.Proxy(); proxy != nil {
+		proxy.SetMCPHandler(mcpSvc.Handler())
 	}
 	// Modules stop after everything else this function does, in reverse registration order, with
 	// their own deadline (kernel.StopTimeout). A deferred call is what makes that true on the
