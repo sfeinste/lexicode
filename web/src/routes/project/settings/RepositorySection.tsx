@@ -1,8 +1,8 @@
 /*
  * Project settings → Repository (S15 slice of UI spec §5.11): the connection facts, the
  * "Re-scan repository" entry back into the bootstrap checklist, reconnect (rotate the token
- * by reconnecting with a new PAT) and disconnect. Branch template, setup script, secrets and
- * network policy join this pane with their owning stories.
+ * by reconnecting with a new PAT) and disconnect, then the network policy (S18) and the setup
+ * script — the shell provisioning runs before the agent starts.
  */
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
@@ -10,6 +10,7 @@ import { useState } from "react";
 import { useDisconnectRepo, useRepoStatusQuery } from "../../../lib/api/repoQueries";
 import { ConnectRepoCard } from "../overview/ConnectRepoCard";
 import { NetworkSection } from "./NetworkSection";
+import { SetupScriptSection } from "./SetupScriptSection";
 import styles from "./settings.module.css";
 
 export function RepositorySection({ projectKey }: { projectKey: string }) {
@@ -126,6 +127,8 @@ export function RepositorySection({ projectKey }: { projectKey: string }) {
           )}
 
           <NetworkSection projectKey={projectKey} repo={repo} />
+
+          <SetupScriptSection projectKey={projectKey} repo={repo} />
         </div>
       )}
     </section>

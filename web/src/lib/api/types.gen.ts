@@ -297,7 +297,8 @@ export interface paths {
         delete: operations["disconnectRepo"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update the repo settings that are neither the connection nor the network stance: setup_script and branch_template. An absent field is left unchanged. The setup script runs in the workspace during provisioning on every run, after the clone and before the agent starts; its output becomes a step in the run's provisioning checklist, a non-zero exit fails the run with that output in the failure message, and an empty script is skipped entirely. branch_template null reverts to inheriting the workspace default. */
+        patch: operations["updateRepoSettings"];
         trace?: never;
     };
     "/projects/{key}/repo/token": {
@@ -1679,6 +1680,10 @@ export interface components {
             connected_at: string | null;
             last_synced_at: string | null;
             has_token: boolean;
+            /** @description Shell run in the workspace during provisioning on every run, after the clone and before the agent starts. Empty means no script — the step is skipped entirely. */
+            setup_script: string;
+            /** @description The project's branch-template override. Null inherits the workspace default. */
+            branch_template: string | null;
             /**
              * @description The project's network policy override (S18, D-10). Null inherits the workspace default.
              * @enum {string|null}
@@ -1691,6 +1696,11 @@ export interface components {
              * @enum {string}
              */
             workspace_network_policy: "none" | "allowlist" | "open";
+        };
+        /** @description Both fields are optional; an absent field is left unchanged. setup_script null or "" clears the script (there is nothing to inherit — a repo either has one or does not). branch_template null reverts to inheriting the workspace default. */
+        UpdateRepoSettingsRequest: {
+            setup_script?: string | null;
+            branch_template?: string | null;
         };
         /** @description Both fields are optional; an absent field is left unchanged. network_policy null reverts to inheriting the workspace default. Allowlist entries are bare domains, optionally with a `*.` wildcard prefix — never URLs. */
         UpdateRepoNetworkRequest: {
@@ -3455,6 +3465,36 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    updateRepoSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRepoSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description The repo with its updated settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repo"];
+                };
+            };
+            400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

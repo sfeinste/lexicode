@@ -62,6 +62,7 @@ export type Repo = components["schemas"]["Repo"];
 export type RepoStatus = components["schemas"]["RepoStatus"];
 export type ConnectRepoRequest = components["schemas"]["ConnectRepoRequest"];
 export type UpdateRepoNetworkRequest = components["schemas"]["UpdateRepoNetworkRequest"];
+export type UpdateRepoSettingsRequest = components["schemas"]["UpdateRepoSettingsRequest"];
 export type BootstrapPreview = components["schemas"]["BootstrapPreview"];
 export type IssueCandidate = components["schemas"]["IssueCandidate"];
 export type DocCandidate = components["schemas"]["DocCandidate"];
@@ -488,6 +489,9 @@ export const repoApi = {
     api<void>("DELETE", `/projects/${encodeURIComponent(projectKey)}/repo`),
   updateNetwork: (projectKey: string, body: UpdateRepoNetworkRequest) =>
     api<Repo>("PATCH", `/projects/${encodeURIComponent(projectKey)}/repo/network`, { body }),
+  /** Setup script and branch template — the repo settings that are not the connection. */
+  updateSettings: (projectKey: string, body: UpdateRepoSettingsRequest) =>
+    api<Repo>("PATCH", `/projects/${encodeURIComponent(projectKey)}/repo`, { body }),
   /** Rotate the stored token (S37): verified against the repo before the old one is replaced. */
   rotateToken: (projectKey: string, token: string) =>
     api<Repo>("POST", `/projects/${encodeURIComponent(projectKey)}/repo/token`, {
