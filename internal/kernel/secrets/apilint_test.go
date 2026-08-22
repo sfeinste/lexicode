@@ -59,6 +59,12 @@ func TestNoAPIHandlerTouchesSecretValues(t *testing.T) {
 		// calls it at run completion, no HTTP handler reaches the file, and the token never
 		// appears in a response body.
 		filepath.Join("service", "runs", "propen.go"): true,
+		// S39: the review submitter is the same pattern once more — the service layer
+		// resolves the repo token and passes it down to forge.SubmitReview, which is the
+		// only thing it does with it. It is reached from the MCP server's submit_review
+		// tool (a container-facing endpoint that never echoes the value), not from an API
+		// handler, and no response body carries the token.
+		filepath.Join("service", "runs", "review.go"): true,
 	}
 	forbiddenWords := []string{"ciphertext", "plaintext", "nonce"}
 

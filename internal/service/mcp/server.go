@@ -44,6 +44,9 @@ type Options struct {
 	// SetRunState is the run-state seam (see RunStateSetter). Nil logs and continues —
 	// pre-S22 wiring, where no real runs exist.
 	SetRunState RunStateSetter
+	// SubmitReview is the forge seam behind the submit_review tool (see ReviewSubmitFn).
+	// Nil makes the tool report that review submission is not wired in this process.
+	SubmitReview ReviewSubmitFn
 	// WaitCeiling overrides the blocked-call ceiling; zero derives it from the run's
 	// agent (MaxWallClockSeconds), falling back to defaultWaitCeiling.
 	WaitCeiling time.Duration
@@ -55,13 +58,14 @@ type Options struct {
 // New; mount MCP with Handler() (main mux and the egress-proxy listener) and the human-side
 // routes with Routes().
 type Server struct {
-	st          *store.Store
-	bus         *bus.Bus
-	audit       *audit.Writer
-	logger      *slog.Logger
-	setState    RunStateSetter
-	waitCeiling time.Duration
-	now         func() time.Time
+	st           *store.Store
+	bus          *bus.Bus
+	audit        *audit.Writer
+	logger       *slog.Logger
+	setState     RunStateSetter
+	submitReview ReviewSubmitFn
+	waitCeiling  time.Duration
+	now          func() time.Time
 
 	mu      sync.Mutex
 	byToken map[string]string // token → run ID
@@ -80,16 +84,17 @@ func New(opts Options) *Server {
 		now = time.Now
 	}
 	return &Server{
-		st:          opts.Store,
-		bus:         opts.Bus,
-		audit:       opts.Audit,
-		logger:      logger,
-		setState:    opts.SetRunState,
-		waitCeiling: opts.WaitCeiling,
-		now:         now,
-		byToken:     map[string]string{},
-		byRun:       map[string]string{},
-		waiters:     map[string][]chan ports.Response{},
+		st:           opts.Store,
+		bus:          opts.Bus,
+		audit:        opts.Audit,
+		logger:       logger,
+		setState:     opts.SetRunState,
+		submitReview: opts.SubmitReview,
+		waitCeiling:  opts.WaitCeiling,
+		now:          now,
+		byToken:      map[string]string{},
+		byRun:        map[string]string{},
+		waiters:      map[string][]chan ports.Response{},
 	}
 }
 

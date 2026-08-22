@@ -58,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdServe(cmdArgs, stdout, stderr)
 	case "migrate":
 		err = cmdMigrate(cmdArgs, stdout, stderr)
+	case "doctor":
+		err = cmdDoctor(cmdArgs, stdout, stderr)
 	case "version":
 		err = cmdVersion(cmdArgs, stdout, stderr)
 	case "help":
@@ -98,6 +100,7 @@ Usage:
 
 Commands:
   serve      run the HTTP server and the orchestrator
+  doctor     check Docker, credentials, ports and disk, and print the fix for each failure
   migrate    apply pending database migrations and exit
   version    print the version and exit
 

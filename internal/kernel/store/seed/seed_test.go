@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/spruce/lexicode/internal/domain"
+	"github.com/spruce/lexicode/internal/kernel/auth"
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 )
@@ -155,5 +156,78 @@ func TestSeedRefusesNonEmpty(t *testing.T) {
 	projects, err := s.Projects().List(ctx)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("after failed re-seed: %d projects, err=%v; want 1, nil", len(projects), err)
+	}
+}
+
+// TestDemoWorkspaceIsPopulatedAndSignable is the S39 bar for `serve --demo`: every surface a
+// new user opens has something in it, and the fixture users can actually sign in.
+func TestDemoWorkspaceIsPopulatedAndSignable(t *testing.T) {
+	ctx := context.Background()
+	s, d := seeded(t)
+
+	owner, err := s.Users().ByEmail(ctx, seed.DemoOwnerEmail)
+	if err != nil {
+		t.Fatalf("demo owner: %v", err)
+	}
+	okPassword, err := auth.VerifyPassword(owner.PasswordHash, seed.DemoPassword)
+	if err != nil || !okPassword {
+		t.Fatalf("the demo owner cannot sign in with the documented password: %v, %v", okPassword, err)
+	}
+
+	pages, err := s.Wiki().ForProject(ctx, d.Project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var live, proposed int
+	for _, p := range pages {
+		switch p.State {
+		case domain.WikiLive:
+			live++
+		case domain.WikiProposed:
+			proposed++
+		}
+	}
+	if live < 2 || proposed < 1 {
+		t.Errorf("wiki: %d live, %d proposed; want at least 2 live and 1 proposal", live, proposed)
+	}
+
+	triggers, err := s.Triggers().ForProject(ctx, d.Project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(triggers) == 0 {
+		t.Error("no trigger seeded; the trigger surfaces would be empty")
+	}
+
+	unread, err := s.Notifications().UnreadCount(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unread == 0 {
+		t.Error("no unread notification seeded; the inbox would be empty")
+	}
+
+	var outputs int
+	for _, r := range d.Runs {
+		list, err := s.RunOutputs().ForRun(ctx, r.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outputs += len(list)
+	}
+	if outputs == 0 {
+		t.Error("no run outputs seeded; every run detail would say it produced nothing")
+	}
+
+	var criteria int
+	for _, tk := range d.Tickets {
+		list, err := s.Criteria().ForTicket(ctx, tk.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		criteria += len(list)
+	}
+	if criteria == 0 {
+		t.Error("no acceptance criteria seeded")
 	}
 }

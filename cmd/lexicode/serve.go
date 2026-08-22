@@ -116,10 +116,15 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		}
 		if !empty {
 			fmt.Fprintln(stdout, "--demo: database is not empty; leaving it untouched")
-		} else if _, err := seed.Apply(ctx, st); err != nil {
+		} else if data, err := seed.Apply(ctx, st); err != nil {
 			return err
 		} else {
-			fmt.Fprintln(stdout, "--demo: seeded demo workspace")
+			fmt.Fprintf(stdout, "--demo: seeded demo workspace — project %s (%s), "+
+				"%d tickets, %d agents, %d runs, %d wiki pages, %d trigger\n",
+				data.Project.Key, data.Project.Name, len(data.Tickets), len(data.Agents),
+				len(data.Runs), len(data.WikiPages), len(data.Triggers))
+			fmt.Fprintf(stdout, "--demo: sign in as %s or %s with the password %q\n",
+				seed.DemoOwnerEmail, seed.DemoMemberEmail, seed.DemoPassword)
 		}
 	}
 
@@ -194,6 +199,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 			}
 			return scheduler.SetRunState(ctx, runID, state, reason)
 		},
+		// S39: submit_review's forge write. Same division of labour as PR opening — the
+		// agent produces the findings, the orchestrator performs the write, so the
+		// submit_reviews grant and the D-9 marker stay in the adapter.
+		SubmitReview: (&runsvc.ReviewSubmitter{
+			Store: st, Secrets: sec, Forge: k.Forge, Logger: logger,
+		}).SubmitForRun,
 	})
 	mcpSvc.Routes(mux, authSvc)
 	mux.Handle("/mcp/{token}", mcpSvc.Handler())

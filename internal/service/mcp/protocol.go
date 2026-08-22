@@ -173,6 +173,8 @@ func (s *Server) callTool(r *http.Request, runID string, params json.RawMessage)
 		result, toolErr = s.toolCheckCriterion(r.Context(), run, p.Arguments)
 	case "request_approval":
 		result, toolErr = s.toolRequestApproval(r.Context(), run, p.Arguments)
+	case "submit_review":
+		result, toolErr = s.toolSubmitReview(r.Context(), run, p.Arguments)
 	default:
 		return toolError("unknown tool: " + p.Name), nil
 	}
@@ -207,7 +209,8 @@ func writeRPC(w http.ResponseWriter, resp rpcResponse) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// toolDescriptors is the tools/list result: the five tools of contracts §3.3, schemas
+// toolDescriptors is the tools/list result: the five tools of contracts §3.3 plus
+// submit_review (S39, the caller ports.ForgeProvider.SubmitReview was missing), schemas
 // verbatim from the contract's shapes.
 func toolDescriptors() []map[string]any {
 	obj := func(props map[string]any, required ...string) map[string]any {
@@ -274,6 +277,32 @@ func toolDescriptors() []map[string]any {
 			"inputSchema": obj(map[string]any{
 				"criterion_id": str, "met": boolean, "note": str,
 			}, "criterion_id", "met"),
+		},
+		{
+			"name": "submit_review",
+			"description": "Submit a review on a pull request with severity-tagged findings. " +
+				"Severities: blocker, major, minor, nit. `event` defaults to request_changes " +
+				"when any blocker or major finding is present and comment otherwise. " +
+				"Agents cannot approve — approval is reserved for humans. " +
+				"pr_number defaults to the pull request whose event started this run.",
+			"inputSchema": obj(map[string]any{
+				"pr_number": num,
+				"event": map[string]any{
+					"type": "string",
+					"enum": []string{"comment", "request_changes"},
+				},
+				"summary": str,
+				"findings": map[string]any{
+					"type": "array",
+					"items": obj(map[string]any{
+						"severity": map[string]any{
+							"type": "string",
+							"enum": []string{"blocker", "major", "minor", "nit"},
+						},
+						"title": str, "detail": str, "file": str, "line": num,
+					}, "severity", "title"),
+				},
+			}),
 		},
 		{
 			"name": "request_approval",

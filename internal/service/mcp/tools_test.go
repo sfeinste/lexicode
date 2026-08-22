@@ -273,13 +273,14 @@ func TestProtocolBasics(t *testing.T) {
 	for _, tl := range tools {
 		names[tl.(map[string]any)["name"].(string)] = true
 	}
-	for _, want := range []string{"ask_human", "set_step", "propose_wiki_page", "check_criterion", "request_approval"} {
+	for _, want := range []string{"ask_human", "set_step", "propose_wiki_page", "check_criterion",
+		"request_approval", "submit_review"} {
 		if !names[want] {
 			t.Fatalf("tools/list lacks %s: %v", want, names)
 		}
 	}
-	if len(tools) != 5 {
-		t.Fatalf("tools/list has %d tools, want 5", len(tools))
+	if len(tools) != 6 {
+		t.Fatalf("tools/list has %d tools, want 6", len(tools))
 	}
 
 	// GET (server-initiated stream) is 405; DELETE (session end) is a 200 no-op.

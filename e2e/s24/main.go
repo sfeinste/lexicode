@@ -3,9 +3,9 @@
 // external services faked at their network edges:
 //
 //   - GitHub is a local server implementing the REST endpoints the forge adapter calls plus
-//     git smart-HTTP via `git http-backend` (fakegithub.go), reached through
-//     --github-base-url. The container clones from and pushes to it; the orchestrator opens
-//     the PR on it through the real forge adapter.
+//     git smart-HTTP via `git http-backend` (e2e/harness, shared with the S39 acceptance),
+//     reached through --github-base-url. The container clones from and pushes to it; the
+//     orchestrator opens the PR on it through the real forge adapter.
 //   - `claude` is a scripted bash stand-in (fakeclaude.go) baked into a derived agent image
 //     (FROM the built-in base image) at /usr/local/bin/claude; repos.image_ref points the
 //     runtime at it. It speaks real stream-json and calls the real MCP server.
@@ -25,16 +25,10 @@
 package main
 
 import (
-	"bytes"
-	"database/sql"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net"
 	"net/http"
-	"net/http/cookiejar"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -43,7 +37,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/spruce/lexicode/e2e/harness"
 )
 
 const (
@@ -70,7 +64,7 @@ func main() {
 }
 
 func run(mode string, port, proxyPort, ghPort int) error {
-	repoRoot, err := findRepoRoot()
+	repoRoot, err := harness.FindRepoRoot()
 	if err != nil {
 		return err
 	}
@@ -80,22 +74,24 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	}
 	log.Printf("work dir: %s", work)
 
-	hostIP, err := detectHostIP()
+	hostIP, err := harness.DetectHostIP()
 	if err != nil {
 		return err
 	}
 	log.Printf("host IP (reachable from host and containers): %s", hostIP)
 
 	// -- fake GitHub: REST + git smart-HTTP over one listener on all interfaces ----------
-	gh := &fakeGitHub{root: filepath.Join(work, "git"), owner: "acme", repo: "payments", branch: "main"}
-	if err := os.MkdirAll(filepath.Join(gh.root, gh.owner), 0o755); err != nil {
+	gh := &harness.GitHub{
+		Root: filepath.Join(work, "git"), Owner: "acme", Name: "payments", Branch: "main",
+	}
+	if err := os.MkdirAll(filepath.Join(gh.Root, gh.Owner), 0o755); err != nil {
 		return err
 	}
-	if err := gh.initBareRepo(work); err != nil {
+	if err := gh.InitBareRepo(work); err != nil {
 		return err
 	}
 	ghAddr := fmt.Sprintf("0.0.0.0:%d", ghPort)
-	ghSrv := &http.Server{Addr: ghAddr, Handler: gh.handler(), ReadHeaderTimeout: 10 * time.Second}
+	ghSrv := &http.Server{Addr: ghAddr, Handler: gh.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := ghSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("fake github: %v", err)
@@ -106,7 +102,7 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	log.Printf("fake GitHub (REST + git http-backend): %s", ghBase)
 
 	// -- agent image: base (built-in tag) + the fake claude baked in ---------------------
-	if err := ensureImages(repoRoot); err != nil {
+	if err := harness.BuildAgentImage(repoRoot, derivedImage, fakeClaude); err != nil {
 		return err
 	}
 
@@ -128,8 +124,8 @@ func run(mode string, port, proxyPort, ghPort int) error {
 		"LEXICODE_OPEN_BROWSER=false",
 		"CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-e2e-fixture-token",
 	)
-	serve.Stdout = prefixWriter("lexicode| ")
-	serve.Stderr = prefixWriter("lexicode| ")
+	serve.Stdout = harness.PrefixWriter("lexicode| ")
+	serve.Stderr = harness.PrefixWriter("lexicode| ")
 	if err := serve.Start(); err != nil {
 		return err
 	}
@@ -139,11 +135,11 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	}()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	c, err := newClient(base)
+	c, err := harness.NewClient(base)
 	if err != nil {
 		return err
 	}
-	if err := waitFor("server up", 30*time.Second, func() (bool, error) {
+	if err := harness.WaitFor("server up", 30*time.Second, func() (bool, error) {
 		resp, err := http.Get(base + "/api/v1/auth/me") //nolint:noctx // fixture poll
 		if err != nil {
 			return false, nil
@@ -156,18 +152,18 @@ func run(mode string, port, proxyPort, ghPort int) error {
 
 	// -- setup → project → repo → agent → ticket (all through the real API) --------------
 	log.Printf("== setup and project ==")
-	if _, err := c.do("POST", "/api/v1/auth/setup", map[string]any{
+	if _, err := c.Do("POST", "/api/v1/auth/setup", map[string]any{
 		"email": userEmail, "display_name": "E2E", "password": userPassword,
 	}, 201); err != nil {
 		return err
 	}
-	if _, err := c.do("POST", "/api/v1/projects", map[string]any{
+	if _, err := c.Do("POST", "/api/v1/projects", map[string]any{
 		"key": "PAY", "name": "Payments",
 	}, 201); err != nil {
 		return err
 	}
-	if _, err := c.do("POST", "/api/v1/projects/PAY/repo", map[string]any{
-		"owner": gh.owner, "name": gh.repo, "token": repoToken,
+	if _, err := c.Do("POST", "/api/v1/projects/PAY/repo", map[string]any{
+		"owner": gh.Owner, "name": gh.Name, "token": repoToken,
 	}, 200, 201); err != nil {
 		return err
 	}
@@ -177,7 +173,7 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	// field in the S37 polish pass): written straight to the store, documented in the
 	// report. network 'open' keeps the fixture on the bridge network where both the fake
 	// GitHub and the MCP endpoint are reachable without the egress proxy in the path.
-	if err := setRepoSettings(filepath.Join(dataDir, "lexicode.db"), derivedImage); err != nil {
+	if err := harness.SetRepoSettings(filepath.Join(dataDir, "lexicode.db"), "PAY", derivedImage); err != nil {
 		return err
 	}
 	log.Printf("repos row: image_ref=%s network_policy=open", derivedImage)
@@ -186,7 +182,7 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	if mode == "hold" {
 		autonomy = "approve_each" // so request_approval parks for the walkthrough
 	}
-	agent, err := c.do("POST", "/api/v1/projects/PAY/agents", map[string]any{
+	agent, err := c.Do("POST", "/api/v1/projects/PAY/agents", map[string]any{
 		"name": "Dev", "role": "Implements tickets", "model": "claude-sonnet-5",
 		"effort": "medium", "autonomy": autonomy,
 		"directive": "You are Dev. Implement the ticket and push your branch.",
@@ -195,7 +191,7 @@ func run(mode string, port, proxyPort, ghPort int) error {
 		return err
 	}
 	agentID := agent["id"].(string)
-	if _, err := c.do("PATCH", "/api/v1/agents/"+agentID, map[string]any{
+	if _, err := c.Do("PATCH", "/api/v1/agents/"+agentID, map[string]any{
 		"permissions": map[string]bool{
 			"read_files": true, "edit_files": true, "run_commands": true,
 			"push_branches": true, "open_prs": true,
@@ -204,7 +200,7 @@ func run(mode string, port, proxyPort, ghPort int) error {
 		return err
 	}
 
-	ticket, err := c.do("POST", "/api/v1/projects/PAY/tickets", map[string]any{
+	ticket, err := c.Do("POST", "/api/v1/projects/PAY/tickets", map[string]any{
 		"title":       "Add idempotency keys to the charge API",
 		"description": "Duplicate webhooks double-charge. Add idempotency keys.",
 	}, 201)
@@ -216,7 +212,7 @@ func run(mode string, port, proxyPort, ghPort int) error {
 		"Replayed webhooks do not double-charge",
 		"Keys expire after 24h",
 	} {
-		if _, err := c.do("POST", "/api/v1/tickets/"+ticketID+"/criteria",
+		if _, err := c.Do("POST", "/api/v1/tickets/"+ticketID+"/criteria",
 			map[string]any{"text": criterion}, 200, 201); err != nil {
 			return err
 		}
@@ -229,7 +225,7 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	if mode == "hold" {
 		prompt = "E2E-MODE: interactive"
 	}
-	del, err := c.do("POST", "/api/v1/tickets/"+ticketID+"/delegate",
+	del, err := c.Do("POST", "/api/v1/tickets/"+ticketID+"/delegate",
 		map[string]any{"agent_id": agentID, "prompt": prompt}, 201)
 	if err != nil {
 		return err
@@ -252,8 +248,8 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	}
 
 	// -- provisioning checklist (interaction rule 7: a checklist, never a spinner) -------
-	if err := waitFor("provisioning checklist activities", 5*time.Minute, func() (bool, error) {
-		acts, err := c.activities(runID)
+	if err := harness.WaitFor("provisioning checklist activities", 5*time.Minute, func() (bool, error) {
+		acts, err := c.Activities(runID)
 		if err != nil {
 			return false, err
 		}
@@ -270,8 +266,8 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	log.Printf("provisioning checklist recorded (container ✓, clone ✓)")
 
 	// -- ask_human parks the run ---------------------------------------------------------
-	if err := waitFor("run parked needs_input", 5*time.Minute, func() (bool, error) {
-		return c.runState(runID) == "needs_input", nil
+	if err := harness.WaitFor("run parked needs_input", 5*time.Minute, func() (bool, error) {
+		return c.RunState(runID) == "needs_input", nil
 	}); err != nil {
 		return err
 	}
@@ -279,8 +275,8 @@ func run(mode string, port, proxyPort, ghPort int) error {
 
 	// -- escalation: unanswered >60s → notification for the delegating human -------------
 	log.Printf("waiting for the 60s escalation notification (interaction rule 11)…")
-	if err := waitFor("escalation notification", 3*time.Minute, func() (bool, error) {
-		body, err := c.do("GET", "/api/v1/notifications", nil, 200)
+	if err := harness.WaitFor("escalation notification", 3*time.Minute, func() (bool, error) {
+		body, err := c.Do("GET", "/api/v1/notifications", nil, 200)
 		if err != nil {
 			return false, err
 		}
@@ -289,17 +285,17 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	}); err != nil {
 		return err
 	}
-	notif, _ := c.do("GET", "/api/v1/notifications", nil, 200)
-	log.Printf("escalation notification arrived: %s", compact(notif["notifications"]))
+	notif, _ := c.Do("GET", "/api/v1/notifications", nil, 200)
+	log.Printf("escalation notification arrived: %s", harness.Compact(notif["notifications"]))
 
 	// The needs-you surfaces show the row, flavor in words.
-	needs, err := c.do("GET", "/api/v1/projects/PAY/runs?view=needs_you", nil, 200)
+	needs, err := c.Do("GET", "/api/v1/projects/PAY/runs?view=needs_you", nil, 200)
 	if err != nil {
 		return err
 	}
 	rows, _ := needs["runs"].([]any)
 	if len(rows) != 1 {
-		return fmt.Errorf("needs_you rows = %s, want exactly the parked run", compact(needs))
+		return fmt.Errorf("needs_you rows = %s, want exactly the parked run", harness.Compact(needs))
 	}
 	if flavor := rows[0].(map[string]any)["flavor"]; flavor != "question" {
 		return fmt.Errorf("needs_you flavor = %v, want question", flavor)
@@ -307,11 +303,11 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	log.Printf("needs-you view: 1 row, flavor=question")
 
 	// -- answer from the API (the run detail's UI posts exactly this) --------------------
-	elID, err := c.pendingElicitation(runID)
+	elID, err := c.PendingElicitation(runID)
 	if err != nil {
 		return err
 	}
-	if _, err := c.do("POST", "/api/v1/elicitations/"+elID+"/respond", map[string]any{
+	if _, err := c.Do("POST", "/api/v1/elicitations/"+elID+"/respond", map[string]any{
 		"action":  "answer",
 		"answers": map[string][]string{"Which storage should the idempotency keys use?": {"Postgres"}},
 	}, 200); err != nil {
@@ -320,16 +316,16 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	log.Printf("question answered (Postgres); run resumes")
 
 	// -- completion: pushed branch, opened PR, ticket in review, cost recorded -----------
-	if err := waitFor("run completed", 5*time.Minute, func() (bool, error) {
-		st := c.runState(runID)
+	if err := harness.WaitFor("run completed", 5*time.Minute, func() (bool, error) {
+		st := c.RunState(runID)
 		if st == "failed" || st == "timed_out" || st == "canceled" {
-			return false, fmt.Errorf("run ended %s: %s", st, compact(c.lastRun))
+			return false, fmt.Errorf("run ended %s: %s", st, harness.Compact(c.LastRun))
 		}
 		return st == "completed", nil
 	}); err != nil {
 		return err
 	}
-	runRow, err := c.do("GET", "/api/v1/runs/"+runID, nil, 200)
+	runRow, err := c.Do("GET", "/api/v1/runs/"+runID, nil, 200)
 	if err != nil {
 		return err
 	}
@@ -337,16 +333,16 @@ func run(mode string, port, proxyPort, ghPort int) error {
 	branch, _ := runBody["branch"].(string)
 	cost, _ := runBody["cost_cents"].(float64)
 	if cost <= 0 {
-		return fmt.Errorf("run completed without a cost figure: %s", compact(runBody))
+		return fmt.Errorf("run completed without a cost figure: %s", harness.Compact(runBody))
 	}
 	log.Printf("run completed: branch=%s cost=%d¢", branch, int(cost))
 
-	if !gh.branchExists(branch) {
-		return fmt.Errorf("branch %q not on the fake remote; branches:\n%s", branch, gh.branches())
+	if !gh.BranchExists(branch) {
+		return fmt.Errorf("branch %q not on the fake remote; branches:\n%s", branch, gh.Branches())
 	}
-	log.Printf("pushed branch exists on the fake remote:\n%s", gh.branches())
+	log.Printf("pushed branch exists on the fake remote:\n%s", gh.Branches())
 
-	prs := gh.openPRs()
+	prs := gh.PullRequests()
 	if len(prs) != 1 {
 		return fmt.Errorf("fake GitHub has %d PRs, want 1", len(prs))
 	}
@@ -366,10 +362,10 @@ func run(mode string, port, proxyPort, ghPort int) error {
 		}
 	}
 	if !prOutput {
-		return fmt.Errorf("run outputs lack a pull_request row: %s", compact(runRow["outputs"]))
+		return fmt.Errorf("run outputs lack a pull_request row: %s", harness.Compact(runRow["outputs"]))
 	}
 
-	cat, err := c.ticketColumnCategory(ticketID)
+	cat, err := c.TicketColumnCategory("PAY", ticketID)
 	if err != nil {
 		return err
 	}
@@ -380,14 +376,14 @@ func run(mode string, port, proxyPort, ghPort int) error {
 
 	// -- second run, stopped midway: the branch still exists (§10.5) ---------------------
 	log.Printf("== second run, stopped midway ==")
-	del2, err := c.do("POST", "/api/v1/tickets/"+ticketID+"/delegate",
+	del2, err := c.Do("POST", "/api/v1/tickets/"+ticketID+"/delegate",
 		map[string]any{"agent_id": agentID, "prompt": "E2E-MODE: stall"}, 201)
 	if err != nil {
 		return err
 	}
 	run2 := del2["run_id"].(string)
-	if err := waitFor("second run mid-work", 5*time.Minute, func() (bool, error) {
-		row, err := c.do("GET", "/api/v1/runs/"+run2, nil, 200)
+	if err := harness.WaitFor("second run mid-work", 5*time.Minute, func() (bool, error) {
+		row, err := c.Do("GET", "/api/v1/runs/"+run2, nil, 200)
 		if err != nil {
 			return false, err
 		}
@@ -397,16 +393,16 @@ func run(mode string, port, proxyPort, ghPort int) error {
 		return err
 	}
 	log.Printf("second run is mid-work; stopping it")
-	if _, err := c.do("POST", "/api/v1/runs/"+run2+"/stop",
+	if _, err := c.Do("POST", "/api/v1/runs/"+run2+"/stop",
 		map[string]any{"reason": "stopped midway by the e2e"}, 200); err != nil {
 		return err
 	}
-	if err := waitFor("second run canceled", 2*time.Minute, func() (bool, error) {
-		return c.runState(run2) == "canceled", nil
+	if err := harness.WaitFor("second run canceled", 2*time.Minute, func() (bool, error) {
+		return c.RunState(run2) == "canceled", nil
 	}); err != nil {
 		return err
 	}
-	row2, err := c.do("GET", "/api/v1/runs/"+run2, nil, 200)
+	row2, err := c.Do("GET", "/api/v1/runs/"+run2, nil, 200)
 	if err != nil {
 		return err
 	}
@@ -418,318 +414,13 @@ func run(mode string, port, proxyPort, ghPort int) error {
 		}
 	}
 	if !partial {
-		return fmt.Errorf("stopped run has no partial_work output: %s", compact(row2["outputs"]))
+		return fmt.Errorf("stopped run has no partial_work output: %s", harness.Compact(row2["outputs"]))
 	}
-	if !gh.branchExists(branch2) {
+	if !gh.BranchExists(branch2) {
 		return fmt.Errorf("stopped run's branch %q not on the fake remote; branches:\n%s",
-			branch2, gh.branches())
+			branch2, gh.Branches())
 	}
 	log.Printf("stopped run: canceled, partial_work recorded, branch %q preserved on the remote:\n%s",
-		branch2, gh.branches())
+		branch2, gh.Branches())
 	return nil
-}
-
-// ---------------------------------------------------------------- api client -----
-
-type client struct {
-	base    string
-	http    *http.Client
-	lastRun map[string]any
-}
-
-func newClient(base string) (*client, error) {
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, err
-	}
-	return &client{base: base, http: &http.Client{Jar: jar, Timeout: 30 * time.Second}}, nil
-}
-
-func (c *client) do(method, path string, body any, wantStatus ...int) (map[string]any, error) {
-	var rd io.Reader
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		rd = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequest(method, c.base+path, rd) //nolint:noctx // fixture driver
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
-	okStatus := false
-	for _, want := range wantStatus {
-		if resp.StatusCode == want {
-			okStatus = true
-		}
-	}
-	if !okStatus {
-		return nil, fmt.Errorf("%s %s = %d, want %v: %s", method, path, resp.StatusCode, wantStatus, raw)
-	}
-	out := map[string]any{}
-	if len(bytes.TrimSpace(raw)) > 0 {
-		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil, fmt.Errorf("%s %s: not JSON: %s", method, path, raw)
-		}
-	}
-	return out, nil
-}
-
-func (c *client) runState(id string) string {
-	row, err := c.do("GET", "/api/v1/runs/"+id, nil, 200)
-	if err != nil {
-		return ""
-	}
-	r, _ := row["run"].(map[string]any)
-	c.lastRun = r
-	st, _ := r["state"].(string)
-	return st
-}
-
-type activityRow struct {
-	Type  string `json:"type"`
-	Title string `json:"title"`
-	OK    *bool  `json:"ok"`
-}
-
-func (c *client) activities(runID string) ([]activityRow, error) {
-	body, err := c.do("GET", "/api/v1/runs/"+runID+"/activities", nil, 200)
-	if err != nil {
-		return nil, err
-	}
-	raw, err := json.Marshal(body["activities"])
-	if err != nil {
-		return nil, err
-	}
-	var out []activityRow
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *client) pendingElicitation(runID string) (string, error) {
-	row, err := c.do("GET", "/api/v1/runs/"+runID, nil, 200)
-	if err != nil {
-		return "", err
-	}
-	els, _ := row["elicitations"].([]any)
-	for _, e := range els {
-		el := e.(map[string]any)
-		if el["state"] == "pending" {
-			return el["id"].(string), nil
-		}
-	}
-	return "", fmt.Errorf("no pending elicitation on run %s: %s", runID, compact(els))
-}
-
-func (c *client) ticketColumnCategory(ticketID string) (string, error) {
-	tk, err := c.do("GET", "/api/v1/tickets/"+ticketID, nil, 200)
-	if err != nil {
-		return "", err
-	}
-	columnID, _ := tk["column_id"].(string)
-	cols, err := c.do("GET", "/api/v1/projects/PAY/columns", nil, 200)
-	if err != nil {
-		return "", err
-	}
-	for _, colAny := range cols["columns"].([]any) {
-		col := colAny.(map[string]any)
-		if col["id"] == columnID {
-			cat, _ := col["category"].(string)
-			return cat, nil
-		}
-	}
-	return "", fmt.Errorf("ticket column %q not in the column list", columnID)
-}
-
-// ---------------------------------------------------------------- fixtures -----
-
-// setRepoSettings writes image_ref and network_policy straight to the repos row. The server
-// is running; SQLite WAL plus busy_timeout make a second-process write safe.
-func setRepoSettings(dbPath, imageRef string) error {
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = db.Close() }()
-	res, err := db.Exec(
-		`UPDATE repos SET image_ref = ?, network_policy = 'open'
-		 WHERE project_id = (SELECT id FROM projects WHERE key = 'PAY')`, imageRef)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return fmt.Errorf("repos settings update touched %d rows, want 1", n)
-	}
-	return nil
-}
-
-// ensureImages makes sure the built-in agent base image exists (building it from the
-// embedded Dockerfile's source if not) and bakes the fake claude into the derived image.
-func ensureImages(repoRoot string) error {
-	dockerfilePath := filepath.Join(repoRoot, "internal", "module", "docker", "Dockerfile")
-	raw, err := os.ReadFile(dockerfilePath)
-	if err != nil {
-		return err
-	}
-	baseTag := "lexicode/agent-base:" + sha256Hex(raw)[:12]
-
-	if !imageExists(baseTag) {
-		log.Printf("building the agent base image %s (first run can take minutes)…", baseTag)
-		cmd := exec.Command("docker", "build", "-t", baseTag,
-			"-f", dockerfilePath, filepath.Dir(dockerfilePath))
-		cmd.Stdout = prefixWriter("docker| ")
-		cmd.Stderr = prefixWriter("docker| ")
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("building base image: %w", err)
-		}
-	} else {
-		log.Printf("agent base image %s present", baseTag)
-	}
-
-	ctxDir, err := os.MkdirTemp("", "s24-image-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(ctxDir) }()
-	if err := os.WriteFile(filepath.Join(ctxDir, "claude"), []byte(fakeClaude), 0o755); err != nil { //nolint:gosec // an executable fixture script
-		return err
-	}
-	dockerfile := "FROM " + baseTag + "\nCOPY --chmod=0755 claude /usr/local/bin/claude\n"
-	if err := os.WriteFile(filepath.Join(ctxDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil { //nolint:gosec // fixture
-		return err
-	}
-	cmd := exec.Command("docker", "build", "-t", derivedImage, ctxDir)
-	cmd.Stdout = prefixWriter("docker| ")
-	cmd.Stderr = prefixWriter("docker| ")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("building derived image: %w", err)
-	}
-	log.Printf("derived agent image %s built (fake claude at /usr/local/bin/claude)", derivedImage)
-	return nil
-}
-
-func imageExists(tag string) bool {
-	return exec.Command("docker", "image", "inspect", tag).Run() == nil
-}
-
-// ---------------------------------------------------------------- helpers -----
-
-func findRepoRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("go.mod not found above %s; run from inside the repo", dir)
-		}
-		dir = parent
-	}
-}
-
-// detectHostIP finds a non-loopback IPv4 the Docker VM can dial — the fake GitHub must be
-// reachable both from this process (forge API calls) and from inside containers (git).
-func detectHostIP() (string, error) {
-	for _, iface := range []string{"en0", "en1"} {
-		out, err := exec.Command("ipconfig", "getifaddr", iface).Output()
-		if err == nil && len(bytes.TrimSpace(out)) > 0 {
-			return string(bytes.TrimSpace(out)), nil
-		}
-	}
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "", err
-	}
-	for _, addr := range addrs {
-		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
-			if v4 := ipNet.IP.To4(); v4 != nil {
-				return v4.String(), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no non-loopback IPv4 address found; containers could not reach the fake GitHub")
-}
-
-func waitFor(what string, timeout time.Duration, cond func() (bool, error)) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		ok, err := cond()
-		if err != nil {
-			return fmt.Errorf("waiting for %s: %w", what, err)
-		}
-		if ok {
-			return nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return fmt.Errorf("timed out waiting for %s", what)
-}
-
-func compact(v any) string {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprint(v)
-	}
-	return string(raw)
-}
-
-func sha256Hex(b []byte) string {
-	sum := sha256Sum(b)
-	const hexdigits = "0123456789abcdef"
-	out := make([]byte, 0, len(sum)*2)
-	for _, c := range sum {
-		out = append(out, hexdigits[c>>4], hexdigits[c&0xf])
-	}
-	return string(out)
-}
-
-// prefixWriter returns a writer that prefixes every line — subprocess output stays
-// readable inside the harness log.
-func prefixWriter(prefix string) io.Writer {
-	pr, pw := io.Pipe()
-	go func() {
-		buf := make([]byte, 4096)
-		line := []byte{}
-		for {
-			n, err := pr.Read(buf)
-			if n > 0 {
-				line = append(line, buf[:n]...)
-				for {
-					i := bytes.IndexByte(line, '\n')
-					if i < 0 {
-						break
-					}
-					fmt.Printf("%s%s\n", prefix, line[:i])
-					line = line[i+1:]
-				}
-			}
-			if err != nil {
-				if len(line) > 0 {
-					fmt.Printf("%s%s\n", prefix, line)
-				}
-				return
-			}
-		}
-	}()
-	return pw
 }

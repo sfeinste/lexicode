@@ -88,8 +88,11 @@ dev: web/node_modules ## Run the Go server and the Vite dev server together
 	(cd web && $(NPM) run dev) & \
 	wait
 
+# SHA256 is spelled differently on the two platforms this is built from.
+SHA256 := $(shell command -v sha256sum >/dev/null 2>&1 && echo "sha256sum" || echo "shasum -a 256")
+
 .PHONY: release
-release: web ## Cross-compile darwin/linux x amd64/arm64 into dist/
+release: web ## Cross-compile darwin/linux x amd64/arm64 into dist/, with SHA256 checksums
 	@rm -rf $(DIST)
 	@mkdir -p $(DIST)
 	@for platform in $(PLATFORMS); do \
@@ -99,7 +102,10 @@ release: web ## Cross-compile darwin/linux x amd64/arm64 into dist/
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
 			$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $$out $(PKG); \
 	done
+	@cp scripts/install.sh $(DIST)/install.sh
+	@cd $(DIST) && $(SHA256) $(BINARY)_* > SHA256SUMS
 	@echo "built $(VERSION) for: $(PLATFORMS)"
+	@echo "checksums: $(DIST)/SHA256SUMS"
 
 .PHONY: clean
 clean: ## Remove build output

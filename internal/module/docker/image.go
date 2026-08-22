@@ -78,6 +78,13 @@ func (s *Sandbox) ensureImage(ctx context.Context, custom string, sink ports.Pro
 	return tag, nil
 }
 
+// HasImage reports whether an image reference is present in the local daemon. Exported for
+// `lexicode doctor` (S39), which answers "is the agent image built yet?" without provisioning
+// anything.
+func (s *Sandbox) HasImage(ctx context.Context, ref string) (bool, error) {
+	return s.imageExists(ctx, ref)
+}
+
 func (s *Sandbox) imageExists(ctx context.Context, ref string) (bool, error) {
 	args := filters.NewArgs(filters.Arg("reference", ref))
 	list, err := s.cli.ImageList(ctx, image.ListOptions{Filters: args})

@@ -49,9 +49,11 @@ type env struct {
 	st     *store.Store
 	mcp    *mcp.Server
 	states *stateRecorder
-	srv    *httptest.Server
-	owner  *http.Client
-	userID string
+	// reviews records what submit_review handed the forge seam (S39).
+	reviews *reviewRecorder
+	srv     *httptest.Server
+	owner   *http.Client
+	userID  string
 }
 
 func newEnv(t *testing.T) *env { return newEnvWithCeiling(t, 30*time.Second) }
@@ -81,10 +83,12 @@ func newEnvWithCeiling(t *testing.T, ceiling time.Duration) *env {
 	t.Cleanup(func() { _ = b.Stop(context.Background()) })
 
 	rec := &stateRecorder{}
+	reviews := &reviewRecorder{}
 	mcpSvc := mcp.New(mcp.Options{
 		Store: st, Bus: b, Audit: auditW, Logger: logger,
-		SetRunState: rec.set,
-		WaitCeiling: ceiling,
+		SetRunState:  rec.set,
+		SubmitReview: reviews.submit,
+		WaitCeiling:  ceiling,
 	})
 	mcpSvc.Routes(mux, authSvc)
 	mux.Handle("/mcp/{token}", mcpSvc.Handler())
@@ -92,7 +96,7 @@ func newEnvWithCeiling(t *testing.T, ceiling time.Duration) *env {
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	e := &env{t: t, st: st, mcp: mcpSvc, states: rec, srv: srv}
+	e := &env{t: t, st: st, mcp: mcpSvc, states: rec, reviews: reviews, srv: srv}
 	e.owner = e.setupOwner()
 	return e
 }
