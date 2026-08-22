@@ -35,6 +35,10 @@ type RunRequest struct {
 	CauseEventID string
 	// ParentRunID chains a run onto the run that caused it (loop-guard depth, S27).
 	ParentRunID string
+	// ChangedPaths is the set of file paths the causing event touched — known for
+	// PR-triggered runs, empty otherwise (contracts §2.6). The wiki context provider's
+	// `paths`-scoped pages match their globs against these at resolution (S34).
+	ChangedPaths []string
 	// SubjectKey is the loop-protection subject the guard derived ("pr:219"); empty lets the
 	// scheduler fall back to the ticket-derived key. Stored on the run at enqueue so the
 	// guard's debounce and cancel-in-progress probes are one indexed query (S27).

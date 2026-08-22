@@ -422,6 +422,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/context-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The dry context resolve (contracts §2.6, Dry=true) — "what every run of this agent sees" (architecture §11). Same resolver, same providers, same priority order as a real enqueue; the request simply has no ticket, changed paths or task summary, so the ticket provider yields nothing and the wiki `paths`/`auto` scopes match nothing. `total_tokens` counts injected items only — repo files are listed, never injected (D-11), so they appear in the stack at zero prompt cost. */
+        get: operations["getAgentContextPreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{key}/columns": {
         parameters: {
             query?: never;
@@ -782,6 +799,23 @@ export interface paths {
         };
         /** FTS5 search over titles, bodies and tags — the wiki's primary navigation (`/` focuses it; UI spec §5.6). Best match first. Snippets wrap match regions in the control markers U+0001/U+0002; the client renders its own highlight — the server never ships HTML. User input is quoted term-by-term (metacharacters are safe), the last term matching as a prefix so results appear while typing. */
         get: operations["searchWiki"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/wiki/context-budget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The numbers behind the ContextMeter (S34): every live always-scoped page with its token estimate, their total, and the project's effective context threshold (its own context_threshold_tokens, or the inherited workspace default). `over` is the amber state — the always-on pages alone exceed the budget; runs still proceed, with a warning on their transcripts. */
+        get: operations["getWikiContextBudget"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2200,6 +2234,25 @@ export interface components {
             position: number;
             injected: boolean;
         };
+        /** @description The agent detail's dry context resolve — the same RunContextItem shape the run detail's Context panel renders (one resolver, three surfaces). total_tokens sums injected items only. */
+        ContextPreviewResponse: {
+            items: components["schemas"]["RunContextItem"][];
+            total_tokens: number;
+        };
+        /** @description One live always-scoped page and its stored token estimate. */
+        ContextBudgetPage: {
+            id: string;
+            slug: string;
+            title: string;
+            tokens: number;
+        };
+        /** @description The context budget of one project: the always-on total against the effective threshold (project override, else workspace default), per page. */
+        ContextBudgetResponse: {
+            threshold_tokens: number;
+            always_tokens: number;
+            over: boolean;
+            pages: components["schemas"]["ContextBudgetPage"][];
+        };
         /** @description One step of a run's transcript, keyed (run_id, seq). */
         RunActivity: {
             seq: number;
@@ -3490,6 +3543,31 @@ export interface operations {
             404: components["responses"]["Problem"];
         };
     };
+    getAgentContextPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The resolved stack with per-item reasons and the injected total. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextPreviewResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
     listColumns: {
         parameters: {
             query?: never;
@@ -4386,6 +4464,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WikiSearchResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    getWikiContextBudget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The budget breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextBudgetResponse"];
                 };
             };
             401: components["responses"]["Problem"];

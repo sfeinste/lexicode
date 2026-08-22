@@ -17,6 +17,7 @@
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ContextMeter } from "../../../components/ContextMeter/ContextMeter";
 import { CostChip } from "../../../components/CostChip/CostChip";
 import { LoopChain } from "../../../components/LoopChain/LoopChain";
 import { StatusDot } from "../../../components/StatusDot/StatusDot";
@@ -27,6 +28,7 @@ import type {
   RunOutput,
 } from "../../../lib/api/client";
 import { useAgentsQuery } from "../../../lib/api/agentQueries";
+import { useContextBudgetQuery } from "../../../lib/api/contextQueries";
 import {
   useRunActivitiesQuery,
   useRunDetailQuery,
@@ -329,6 +331,7 @@ export function RunDetailPage() {
         {/* Right — Context & cost. */}
         <ContextPane
           run={run}
+          projectKey={key}
           context={detailQuery.data.context}
           outputs={detailQuery.data.outputs}
         />
@@ -449,22 +452,33 @@ function TimelineRowView({
   );
 }
 
-/** The right pane: run_context_items with each reason verbatim (§11), the token split, the
- * cost with the hover breakdown, and the run's outputs. */
+/** The right pane: run_context_items with each reason verbatim (§11), the shared
+ * ContextMeter (S34 — same component as the wiki tree and the Agents tab), the token
+ * split, the cost with the hover breakdown, and the run's outputs. */
 function ContextPane({
   run,
+  projectKey,
   context,
   outputs,
 }: {
   run: Run;
+  projectKey: string;
   context: RunContextItem[];
   outputs: RunOutput[];
 }) {
+  const budget = useContextBudgetQuery(projectKey);
   const pr = outputs.find((o) => o.kind === "pull_request");
   const branch = outputs.find((o) => o.kind === "branch") ?? outputs.find((o) => o.kind === "partial_work");
   return (
     <aside className={styles.contextPane} aria-label="Context and cost">
       <h2 className={styles.paneTitle}>Loaded context</h2>
+      {budget.data !== undefined && (
+        <ContextMeter
+          alwaysTokens={budget.data.always_tokens}
+          thresholdTokens={budget.data.threshold_tokens}
+          pageCount={budget.data.pages.length}
+        />
+      )}
       {context.length === 0 ? (
         <p className={styles.muted}>Nothing beyond the ticket itself.</p>
       ) : (

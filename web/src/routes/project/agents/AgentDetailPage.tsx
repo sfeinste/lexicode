@@ -117,7 +117,7 @@ export function AgentDetailPage() {
         <PermissionRulesSection agentID={agent.id} />
         <AutonomySection autonomy={agent.autonomy} onChange={(autonomy) => patch({ autonomy })} />
         <LimitsSection agent={agent} onPatch={patch} />
-        <ContextPreviewSection />
+        <ContextPreviewSection agentId={agent.id} />
       </div>
     </div>
   );

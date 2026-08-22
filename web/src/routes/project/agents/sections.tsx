@@ -25,6 +25,8 @@ import {
   type AgentPermissions,
   type Directive,
 } from "../../../lib/api/client";
+import { useAgentContextPreviewQuery } from "../../../lib/api/contextQueries";
+import { formatTokenCount } from "../../../lib/format/format";
 import styles from "./agents.module.css";
 import {
   AUTONOMY_STOPS,
@@ -534,14 +536,49 @@ export function LimitsSection({
 
 // ---- Context preview --------------------------------------------------------------------
 
-export function ContextPreviewSection() {
+/**
+ * "What every run of this agent sees" (S34, architecture §11): the scheduler's resolver in
+ * dry mode — same code path as a real enqueue, so the stack and its token counts agree with
+ * the run detail's Context panel token-for-token. Dry means no ticket: the ticket provider
+ * yields nothing, and wiki pages scoped to paths or keywords join per run, not here.
+ */
+export function ContextPreviewSection({ agentId }: { agentId: string }) {
+  const preview = useAgentContextPreviewQuery(agentId);
   return (
     <section className={styles.section} aria-label="Context preview" data-section="context-preview">
       <h2>Context preview</h2>
-      <p className={styles.placeholderCard}>
-        &ldquo;What every run of this agent sees.&rdquo; Context preview arrives with the
-        context resolver (S34).
+      <p className={styles.sectionHint}>
+        What every run of this agent sees. Ticket content and path/keyword-scoped wiki pages
+        join per run.
       </p>
+      {preview.isPending && <p className={styles.placeholderCard}>Resolving…</p>}
+      {preview.isError && (
+        <p className={styles.placeholderCard}>The context preview failed to load.</p>
+      )}
+      {preview.data !== undefined && (
+        <>
+          {preview.data.items.length === 0 ? (
+            <p className={styles.placeholderCard}>
+              Nothing yet — project guidance and always-on wiki pages appear here.
+            </p>
+          ) : (
+            <ul className={styles.contextPreviewList}>
+              {preview.data.items.map((it) => (
+                <li key={`${it.provider}:${it.source_ref}`} className={styles.contextPreviewItem}>
+                  <span className={styles.contextPreviewTitle}>{it.title}</span>
+                  <span className={styles.contextPreviewReason}>{it.reason}</span>
+                  <span className={styles.contextPreviewMeta}>
+                    {it.injected ? "injected" : "listed"} · {formatTokenCount(it.tokens)} tok
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className={styles.contextPreviewTotal}>
+            Total: ~{formatTokenCount(preview.data.total_tokens)} tokens on every run
+          </div>
+        </>
+      )}
     </section>
   );
 }

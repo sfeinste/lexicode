@@ -6,21 +6,23 @@
  * (fractional positions — the drop writes a midpoint), and shows a ScopeBadge per node;
  * agent proposals render dashed with a PROPOSED chip (review lands in S35).
  *
- * The context budget strip is the client-side count of always-on pages and their token
- * estimates; the S34 resolver adds the project threshold and the amber state.
+ * The context budget meter is the shared ContextMeter (S34): always-on tokens against the
+ * project's effective threshold from GET /wiki/context-budget, amber when over. The page
+ * count comes from the tree payload already in hand.
  */
 import { Fragment, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
+import { ContextMeter } from "../../../components/ContextMeter/ContextMeter";
 import { ScopeBadge } from "../../../components/ScopeBadge/ScopeBadge";
 import { ApiProblem, type WikiPage } from "../../../lib/api/client";
+import { useContextBudgetQuery } from "../../../lib/api/contextQueries";
 import {
   useCreateWikiPage,
   useUpdateWikiPage,
   useWikiListQuery,
   useWikiSearchQuery,
 } from "../../../lib/api/wikiQueries";
-import { formatTokenCount } from "../../../lib/format/format";
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
 import { renderSnippet } from "./snippet";
 import { buildTree, dropPosition } from "./tree";
@@ -63,9 +65,9 @@ export function WikiScreen({
     [],
   );
 
-  // ---- context budget strip: "Always-on: 3 pages · ~2.4k tokens" ----------------------
+  // ---- context budget meter (S34): server numbers; the tree supplies the page count ----
+  const budget = useContextBudgetQuery(projectKey);
   const alwaysPages = pages.filter((p) => p.agent_scope === "always" && p.state === "live");
-  const alwaysTokens = alwaysPages.reduce((sum, p) => sum + p.token_estimate, 0);
 
   // ---- drag reorder (within one parent) -----------------------------------------------
   const update = useUpdateWikiPage(projectKey);
@@ -196,8 +198,11 @@ export function WikiScreen({
           }}
         />
         <div className={styles.budgetStrip}>
-          Always-on: {alwaysPages.length} {alwaysPages.length === 1 ? "page" : "pages"} · ~
-          {formatTokenCount(alwaysTokens)} tokens
+          <ContextMeter
+            alwaysTokens={budget.data?.always_tokens ?? alwaysPages.reduce((sum, p) => sum + p.token_estimate, 0)}
+            thresholdTokens={budget.data?.threshold_tokens ?? 0}
+            pageCount={alwaysPages.length}
+          />
         </div>
         <ul className={styles.tree}>
           {tree.map((node, i) => (

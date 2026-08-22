@@ -7,6 +7,7 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { ContextMeter } from "../../../components/ContextMeter/ContextMeter";
 import { CostChip } from "../../../components/CostChip/CostChip";
 import { EmptyState } from "../../../components/EmptyState/EmptyState";
 import { ApiProblem, type Agent } from "../../../lib/api/client";
@@ -16,6 +17,7 @@ import {
   useStarterRoster,
   useUpdateAgent,
 } from "../../../lib/api/agentQueries";
+import { useContextBudgetQuery } from "../../../lib/api/contextQueries";
 import styles from "./agents.module.css";
 import { AUTONOMY_STOPS } from "./constants";
 
@@ -24,6 +26,7 @@ const AUTONOMY_NAMES = Object.fromEntries(AUTONOMY_STOPS.map((s) => [s.value, s.
 export function AgentsPage() {
   const { key } = useParams({ from: "/shell/p/$key/agents/" });
   const roster = useAgentsQuery(key);
+  const budget = useContextBudgetQuery(key);
   const starter = useStarterRoster(key);
   const create = useCreateAgent(key);
   const update = useUpdateAgent(key);
@@ -131,6 +134,15 @@ export function AgentsPage() {
           </button>
         </div>
       </div>
+      {budget.data !== undefined && (
+        <div className={styles.budgetMeter}>
+          <ContextMeter
+            alwaysTokens={budget.data.always_tokens}
+            thresholdTokens={budget.data.threshold_tokens}
+            pageCount={budget.data.pages.length}
+          />
+        </div>
+      )}
       {error !== null && <p className={styles.error}>{error}</p>}
       {createForm}
       <div className={styles.grid}>

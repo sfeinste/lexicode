@@ -95,6 +95,9 @@ export type Run = components["schemas"]["Run"];
 export type RunState = components["schemas"]["RunState"];
 export type RunOutput = components["schemas"]["RunOutput"];
 export type RunContextItem = components["schemas"]["RunContextItem"];
+export type ContextPreviewResponse = components["schemas"]["ContextPreviewResponse"];
+export type ContextBudgetResponse = components["schemas"]["ContextBudgetResponse"];
+export type ContextBudgetPage = components["schemas"]["ContextBudgetPage"];
 export type RunActivity = components["schemas"]["RunActivity"];
 export type RunListResponse = components["schemas"]["RunListResponse"];
 export type RunDetailResponse = components["schemas"]["RunDetailResponse"];
@@ -500,6 +503,25 @@ export const wikiApi = {
     api<WikiSearchResponse>(
       "GET",
       `/projects/${encodeURIComponent(projectKey)}/wiki/search?q=${encodeURIComponent(q)}`,
+      { signal },
+    ),
+};
+
+/**
+ * Context resolution (S34): the agent detail's dry preview and the wiki budget meter —
+ * read-only views over the one resolver.
+ */
+export const contextApi = {
+  budget: (projectKey: string, signal?: AbortSignal) =>
+    api<ContextBudgetResponse>(
+      "GET",
+      `/projects/${encodeURIComponent(projectKey)}/wiki/context-budget`,
+      { signal },
+    ),
+  agentPreview: (agentId: string, signal?: AbortSignal) =>
+    api<ContextPreviewResponse>(
+      "GET",
+      `/agents/${encodeURIComponent(agentId)}/context-preview`,
       { signal },
     ),
 };

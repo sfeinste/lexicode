@@ -656,6 +656,27 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /agents/{id}/context-preview:
+    get:
+      operationId: getAgentContextPreview
+      summary: >
+        The dry context resolve (contracts §2.6, Dry=true) — "what every run of this agent
+        sees" (architecture §11). Same resolver, same providers, same priority order as a
+        real enqueue; the request simply has no ticket, changed paths or task summary, so
+        the ticket provider yields nothing and the wiki `paths`/`auto` scopes match nothing.
+        `total_tokens` counts injected items only — repo files are listed, never injected
+        (D-11), so they appear in the stack at zero prompt cost.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The resolved stack with per-item reasons and the injected total.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContextPreviewResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /projects/{key}/columns:
     get:
       operationId: listColumns
@@ -1322,6 +1343,26 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WikiSearchResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/wiki/context-budget:
+    get:
+      operationId: getWikiContextBudget
+      summary: >
+        The numbers behind the ContextMeter (S34): every live always-scoped page with its
+        token estimate, their total, and the project's effective context threshold (its own
+        context_threshold_tokens, or the inherited workspace default). `over` is the amber
+        state — the always-on pages alone exceed the budget; runs still proceed, with a
+        warning on their transcripts.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The budget breakdown.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContextBudgetResponse" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
@@ -3320,6 +3361,40 @@ components:
         tokens: { type: integer }
         position: { type: integer }
         injected: { type: boolean }
+    ContextPreviewResponse:
+      type: object
+      description: >
+        The agent detail's dry context resolve — the same RunContextItem shape the run
+        detail's Context panel renders (one resolver, three surfaces). total_tokens sums
+        injected items only.
+      required: [items, total_tokens]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RunContextItem" }
+        total_tokens: { type: integer }
+    ContextBudgetPage:
+      type: object
+      description: One live always-scoped page and its stored token estimate.
+      required: [id, slug, title, tokens]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        tokens: { type: integer }
+    ContextBudgetResponse:
+      type: object
+      description: >
+        The context budget of one project: the always-on total against the effective
+        threshold (project override, else workspace default), per page.
+      required: [threshold_tokens, always_tokens, over, pages]
+      properties:
+        threshold_tokens: { type: integer }
+        always_tokens: { type: integer }
+        over: { type: boolean }
+        pages:
+          type: array
+          items: { $ref: "#/components/schemas/ContextBudgetPage" }
     RunActivity:
       type: object
       description: One step of a run's transcript, keyed (run_id, seq).

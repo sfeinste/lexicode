@@ -123,3 +123,14 @@ func (l lateLoopStopper) EnqueueLoopStopped(ctx context.Context, req guard.LoopS
 	}
 	return (*l.s).EnqueueLoopStopped(ctx, req)
 }
+
+// lateResolver is the same late-binding trick for the contextres service's dry context
+// preview (S34): PreviewContext runs the scheduler's resolver — one code path with enqueue.
+type lateResolver struct{ s **sched.Scheduler }
+
+func (l lateResolver) PreviewContext(ctx context.Context, projectID, agentID string) ([]domain.RunContextItem, error) {
+	if *l.s == nil {
+		return nil, sched.ErrNotImplemented
+	}
+	return (*l.s).PreviewContext(ctx, projectID, agentID)
+}

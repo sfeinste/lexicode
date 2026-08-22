@@ -39,6 +39,7 @@ import (
 	agentsvc "github.com/spruce/lexicode/internal/service/agents"
 	"github.com/spruce/lexicode/internal/service/board"
 	"github.com/spruce/lexicode/internal/service/bootstrap"
+	"github.com/spruce/lexicode/internal/service/contextres"
 	credsvc "github.com/spruce/lexicode/internal/service/credentials"
 	mcpsvc "github.com/spruce/lexicode/internal/service/mcp"
 	notifysvc "github.com/spruce/lexicode/internal/service/notify"
@@ -200,6 +201,16 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	// endpoints the inbox badge reads. The ticker starts alongside the bus, below.
 	notifySvc := notifysvc.New(notifysvc.Options{Store: st, Bus: b, Logger: logger})
 	notifySvc.Routes(mux, authSvc)
+	// The context-resolution surfaces (S34, architecture §11): the agent detail's dry
+	// preview and the wiki context-budget endpoint, plus the daily verified_until demotion
+	// job (boot + every 24h; started below with the other tickers). The resolver itself is
+	// the scheduler's — reached through the same late-bound pointer as every other
+	// scheduler seam, so the preview and a real enqueue share one code path.
+	contextresSvc := contextres.New(contextres.Options{
+		Store: st, Resolver: lateResolver{s: &scheduler}, Audit: auditW, Bus: b,
+		Notify: notifySvc.DeliverInApp, Logger: logger,
+	})
+	contextresSvc.Routes(mux, authSvc)
 	// The trigger CRUD surface (S26). Validation resolves event catalogs and registered
 	// actions through the kernel registries lazily, at request time — the modules register
 	// during k.Init below.
@@ -258,9 +269,13 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	if err := k.RegisterModule(credsMod); err != nil {
 		return err
 	}
-	// The context-provider module (contracts §2.6): `project` + `ticket` now, wiki and
-	// repofiles with S34. The scheduler resolves them at enqueue for prompt assembly.
-	if err := k.RegisterModule(contextmod.New(contextmod.Options{Store: st})); err != nil {
+	// The context-provider module (contracts §2.6): all four of architecture §11's
+	// providers. The scheduler resolves them at enqueue for prompt assembly; repofiles
+	// enumerates instruction files through the github adapter's DocLister methods, the
+	// same seam bootstrap doc detection uses (there is no checkout at resolve time).
+	if err := k.RegisterModule(contextmod.New(contextmod.Options{
+		Store: st, Secrets: sec, Docs: ghMod.Forge(), Logger: logger,
+	})); err != nil {
 		return err
 	}
 	// The notify module (S28): the "inapp" Notifier port impl. Delivery is injected from the
@@ -388,6 +403,9 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	}
 	notifySvc.Start(ctx)
 	defer notifySvc.Wait()
+	// The S34 verified_until demotion job: on boot and every 24h.
+	contextresSvc.Start(ctx)
+	defer contextresSvc.Wait()
 	// The S31 triage ticker: time-snoozed items past snooze_until wake back to pending.
 	ticketsSvc.StartTriageTicker(ctx)
 	defer ticketsSvc.WaitTriageTicker()

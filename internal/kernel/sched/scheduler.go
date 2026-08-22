@@ -417,6 +417,11 @@ func (s *Scheduler) Enqueue(ctx context.Context, req RunRequest) (domain.Run, er
 		return domain.Run{}, err
 	}
 
+	// Context budget (architecture §11 step 3): when the always-scoped wiki items alone
+	// exceed the project's threshold, the run still proceeds — a warning lands on the
+	// transcript and the context meter reads amber client-side over the same numbers.
+	s.warnContextBudget(ctx, run, items)
+
 	// Cancel-in-progress (S27, architecture §9 layer 3): the guard elected a still-active
 	// run for the same (trigger, subject); now that the new run and its seq exist, cancel
 	// the old one with a reason naming its replacement, and retro-mark its firing

@@ -77,14 +77,15 @@ func (stubSpecs) Build(_ context.Context, in sched.SpecInput) (sched.SpecResult,
 }
 
 type env struct {
-	t      *testing.T
-	st     *store.Store
-	bus    *bus.Bus
-	sb     *testkit.Sandbox
-	rt     *testkit.Scripted
-	mcp    *mcpsvc.Server
-	mcpSrv *httptest.Server
-	sch    *sched.Scheduler
+	t         *testing.T
+	st        *store.Store
+	bus       *bus.Bus
+	providers []ports.ContextProvider
+	sb        *testkit.Sandbox
+	rt        *testkit.Scripted
+	mcp       *mcpsvc.Server
+	mcpSrv    *httptest.Server
+	sch       *sched.Scheduler
 
 	ownerID string
 }
@@ -94,6 +95,9 @@ type options struct {
 	fixture  string
 	pace     time.Duration
 	exitCode int
+	// providers overrides the context-provider set (default: ticket + project). The S34
+	// context tests wire all four.
+	providers []ports.ContextProvider
 }
 
 func newEnv(t *testing.T, o options) *env {
@@ -124,6 +128,7 @@ func newEnv(t *testing.T, o options) *env {
 
 	e.sb = testkit.NewSandbox(testkit.Script{})
 	e.rt = &testkit.Scripted{Fixture: []byte(o.fixture), Pace: o.pace, ExitCode: o.exitCode}
+	e.providers = o.providers
 
 	var schedRef *sched.Scheduler
 	e.mcp = mcpsvc.New(mcpsvc.Options{
@@ -172,6 +177,9 @@ func newScheduler(t *testing.T, e *env, auditW *audit.Writer, logger *slog.Logge
 		Runtime: func(string) (ports.AgentRuntime, error) { return e.rt, nil },
 		Tickets: ticketsSvc,
 		Providers: func() []ports.ContextProvider {
+			if e.providers != nil {
+				return e.providers
+			}
 			return []ports.ContextProvider{
 				contextmod.NewTicketProvider(e.st), // deliberately out of order; the scheduler sorts
 				contextmod.NewProjectProvider(e.st),

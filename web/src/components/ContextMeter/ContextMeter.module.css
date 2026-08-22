@@ -1,0 +1,42 @@
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 2px;
+}
+
+.label {
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+.track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 120ms ease;
+}
+
+/* Amber past the threshold (architecture §11): the run proceeds; the meter flags. */
+.meter[data-over] .label {
+  color: var(--needs-you);
+}
+
+.meter[data-over] .fill {
+  background: var(--needs-you);
+}
+
+.advice {
+  margin: 2px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--needs-you);
+  line-height: 1.35;
+}

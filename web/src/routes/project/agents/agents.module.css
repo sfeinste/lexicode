@@ -431,3 +431,60 @@
   font-size: var(--fs-body);
   cursor: pointer;
 }
+
+/* S34: the shared ContextMeter on the roster — every agent pays the always-on cost. */
+.budgetMeter {
+  max-width: 360px;
+  margin-bottom: 10px;
+}
+
+/* S34: the resolved context stack — source, reason (verbatim, §11), tokens. */
+.contextPreviewList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.contextPreviewItem {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-body);
+}
+
+.contextPreviewItem:last-child {
+  border-bottom: none;
+}
+
+.contextPreviewTitle {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextPreviewReason {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.contextPreviewMeta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.contextPreviewTotal {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}

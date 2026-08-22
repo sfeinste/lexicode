@@ -184,6 +184,32 @@ func (r *WikiRepo) ForProject(ctx context.Context, projectID string) ([]domain.W
 	return out, rows.Err()
 }
 
+// ExpiredAlways returns, across every project, the live `always`-scoped pages whose
+// verified_until date is strictly before today (YYYY-MM-DD) — the daily demotion job's
+// worklist (architecture §11: verified_until enforcement). "Verified until 2026-11-01"
+// holds through that day, matching the S33 client-side red-date rule.
+func (r *WikiRepo) ExpiredAlways(ctx context.Context, today string) ([]domain.WikiPage, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+wikiCols+` FROM wiki_pages
+		WHERE agent_scope = 'always' AND state = 'live' AND archived_at IS NULL
+		  AND verified_until IS NOT NULL AND verified_until < ?
+		ORDER BY project_id, position, id`, today)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.WikiPage
+	for rows.Next() {
+		p, err := scanWikiPage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // BySlug returns the project's page with this slug, or ErrNotFound. Slugs are unique per
 // project (schema); proposals therefore carry their own distinct slugs.
 func (r *WikiRepo) BySlug(ctx context.Context, projectID, slug string) (domain.WikiPage, error) {

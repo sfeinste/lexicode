@@ -1,19 +1,31 @@
-// module.go registers the V1 context providers (architecture §3.1, contracts §2.6). S22
-// ships `project` (priority 10) and `ticket` (priority 30) — the two prompt assembly cannot
-// run without; `wiki` (20) and `repofiles` (40) join with S34.
+// module.go registers the V1 context providers (architecture §3.1, contracts §2.6): all
+// four of architecture §11's table — `project` (10) · `wiki` (20) · `ticket` (30) ·
+// `repofiles` (40).
 package contextmod
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/spruce/lexicode/internal/kernel"
+	"github.com/spruce/lexicode/internal/kernel/secrets"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
 // Options configures New.
 type Options struct {
-	// Store is where the providers read projects, tickets and acceptance criteria. Required.
+	// Store is where the providers read projects, wiki pages, tickets and acceptance
+	// criteria. Required.
 	Store *store.Store
+	// Secrets reads the repo token the repofiles provider enumerates with. Nil disables
+	// the enumeration (the provider yields nothing).
+	Secrets *secrets.Store
+	// Docs is the forge doc-detection seam (bootstrap.DocLister's twin, declared in this
+	// package) the repofiles provider lists instruction files through. Nil disables the
+	// enumeration.
+	Docs DocLister
+	// Logger receives repofiles' non-fatal enumeration warnings. Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // Module is the context-provider module.
@@ -32,7 +44,14 @@ func (m *Module) Init(k *kernel.Kernel) error {
 	if err := k.RegisterContextProvider(NewProjectProvider(m.opts.Store)); err != nil {
 		return err
 	}
-	return k.RegisterContextProvider(NewTicketProvider(m.opts.Store))
+	if err := k.RegisterContextProvider(NewWikiProvider(m.opts.Store)); err != nil {
+		return err
+	}
+	if err := k.RegisterContextProvider(NewTicketProvider(m.opts.Store)); err != nil {
+		return err
+	}
+	return k.RegisterContextProvider(
+		NewRepoFilesProvider(m.opts.Store, m.opts.Secrets, m.opts.Docs, m.opts.Logger))
 }
 
 // Start implements kernel.Module: nothing runs in the background.
