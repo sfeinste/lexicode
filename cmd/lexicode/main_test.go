@@ -188,7 +188,8 @@ func newTestServer(t *testing.T) string {
 // "setup_required", and after setup the cookie unlocks the list. Since S14 the github module is
 // wired in; with no repository connected it has nothing to verify at boot, so it reports ready.
 // Since S17 the docker module is wired in; its state depends on whether a daemon is reachable
-// on the machine running the test. The rest arrive with the stories that build them.
+// on the machine running the test. Since S20 the claude-code runtime module is wired in.
+// The rest arrive with the stories that build them.
 func TestSystemModulesIsServed(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -248,15 +249,19 @@ func TestSystemModulesIsServed(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("body %s is not the modules shape: %v", body, err)
 	}
-	if len(got.Modules) != 3 || got.Modules[0].Name != "github" ||
-		got.Modules[1].Name != "docker" || got.Modules[2].Name != "credentials" {
-		t.Fatalf("modules = %s, want github, docker, credentials in registration order", body)
+	if len(got.Modules) != 4 || got.Modules[0].Name != "github" ||
+		got.Modules[1].Name != "docker" || got.Modules[2].Name != "claude-code" ||
+		got.Modules[3].Name != "credentials" {
+		t.Fatalf("modules = %s, want github, docker, claude-code, credentials in registration order", body)
 	}
 	if got.Modules[0].State != "ready" {
 		t.Errorf("github state = %q, want ready", got.Modules[0].State)
 	}
 	if got.Modules[2].State != "ready" {
-		t.Errorf("credentials state = %q, want ready", got.Modules[2].State)
+		t.Errorf("claude-code state = %q, want ready", got.Modules[2].State)
+	}
+	if got.Modules[3].State != "ready" {
+		t.Errorf("credentials state = %q, want ready", got.Modules[3].State)
 	}
 	// docker's state depends on the machine: ready where a daemon is reachable, degraded
 	// where it is not (the whole point of the degraded state — boot must not require Docker).

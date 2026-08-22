@@ -16,15 +16,7 @@ type EventSource interface {
 
 // Sandbox lives in sandbox.go (contracts §2.3, transcribed in story S17).
 
-// AgentRuntime is an agent CLI or SDK that can be launched inside a sandbox instance and streams
-// its work back as activities.
-//
-// Method set: contracts §2.4, transcribed in story S20.
-type AgentRuntime interface {
-	// ID is the stable identifier, e.g. "claude-code". It must be unique across registered
-	// runtimes.
-	ID() string
-}
+// AgentRuntime lives in runtime.go (contracts §2.4, transcribed in story S20).
 
 // TriggerAction is one THEN verb of the trigger engine: run_agent, create_ticket, move_ticket,
 // post_comment, notify (architecture §8).

@@ -25,6 +25,7 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
+	claudecodemod "github.com/spruce/lexicode/internal/module/claudecode"
 	credentialsmod "github.com/spruce/lexicode/internal/module/credentials"
 	dockermod "github.com/spruce/lexicode/internal/module/docker"
 	githubmod "github.com/spruce/lexicode/internal/module/github"
@@ -154,14 +155,21 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	agentsSvc := agentsvc.New(agentsvc.Options{Store: st, Audit: auditW, Bus: b, Logger: logger})
 	agentsSvc.Routes(mux, authSvc)
 
-	// Modules (architecture §3.1); each is one line here. claudecode, actions, context and
-	// notify arrive with the stories that build them.
+	// Modules (architecture §3.1); each is one line here. actions, context and notify
+	// arrive with the stories that build them. testkit is never wired here — it ships as a
+	// plain package that only tests import.
 	ghMod := githubmod.New(githubmod.Options{BaseURL: cfg.GitHubBaseURL})
 	if err := k.RegisterModule(ghMod); err != nil {
 		return err
 	}
 	dockerMod := dockermod.New(dockermod.Options{Host: cfg.DockerHost, ProxyPort: cfg.ProxyPort})
 	if err := k.RegisterModule(dockerMod); err != nil {
+		return err
+	}
+	// The Respond seam stays nil until the S21 MCP server registers itself through
+	// claudecodeMod.Runtime(): elicitation answers travel as the MCP tool's result.
+	claudecodeMod := claudecodemod.New(claudecodemod.Options{})
+	if err := k.RegisterModule(claudecodeMod); err != nil {
 		return err
 	}
 	credsMod := credentialsmod.New(credentialsmod.Options{Secrets: sec})

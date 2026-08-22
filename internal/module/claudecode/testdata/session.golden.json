@@ -1,0 +1,299 @@
+[
+  {
+    "RunID": "run-golden",
+    "Seq": 1,
+    "Type": "system",
+    "Level": 2,
+    "ToolName": "",
+    "GroupKey": "",
+    "Title": "session started",
+    "Payload": {
+      "cwd": "/workspace",
+      "model": "claude-sonnet-4-5",
+      "session_id": "sess_01",
+      "tools": [
+        "Read",
+        "Edit",
+        "Write",
+        "Bash",
+        "Grep",
+        "Glob",
+        "TodoWrite",
+        "Task",
+        "WebFetch",
+        "mcp__lexicode__set_step"
+      ]
+    },
+    "OK": null,
+    "Attempt": 1,
+    "DurationMS": null,
+    "QueuedMS": null,
+    "ModelMS": null,
+    "ToolMS": null,
+    "CostCents": 0,
+    "TokensIn": 0,
+    "TokensOut": 0,
+    "CreatedAt": "2026-01-02T15:04:05.200Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 2,
+    "Type": "thought",
+    "Level": 1,
+    "ToolName": "",
+    "GroupKey": "",
+    "Title": "I'll start by reading the charge API handler to understand the current retry flow.",
+    "Payload": {
+      "text": "I'll start by reading the charge API handler to understand the current retry flow.\nThen I'll patch it."
+    },
+    "OK": null,
+    "Attempt": 1,
+    "DurationMS": null,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": null,
+    "CostCents": 0,
+    "TokensIn": 12,
+    "TokensOut": 45,
+    "CreatedAt": "2026-01-02T15:04:05.300Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 3,
+    "Type": "action",
+    "Level": 1,
+    "ToolName": "Read",
+    "GroupKey": "Read",
+    "Title": "Read src/api/charge.ts",
+    "Payload": {
+      "lines": 4,
+      "path": "src/api/charge.ts"
+    },
+    "OK": true,
+    "Attempt": 1,
+    "DurationMS": 100,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": 100,
+    "CostCents": 0,
+    "TokensIn": 0,
+    "TokensOut": 0,
+    "CreatedAt": "2026-01-02T15:04:05.500Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 4,
+    "Type": "action",
+    "Level": 1,
+    "ToolName": "Edit",
+    "GroupKey": "Edit",
+    "Title": "Edit src/api/charge.ts",
+    "Payload": {
+      "hunks": [
+        {
+          "header": "@@ -2 +2 @@",
+          "lines": [
+            "-  const retries = 0;",
+            "-  return doCharge(req);",
+            "+  const retries = 3;",
+            "+  return doChargeWithRetry(req, retries);"
+          ]
+        }
+      ],
+      "path": "src/api/charge.ts"
+    },
+    "OK": true,
+    "Attempt": 1,
+    "DurationMS": 100,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": 100,
+    "CostCents": 0,
+    "TokensIn": 10,
+    "TokensOut": 30,
+    "CreatedAt": "2026-01-02T15:04:05.700Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 5,
+    "Type": "action",
+    "Level": 1,
+    "ToolName": "Bash",
+    "GroupKey": "Bash",
+    "Title": "$ npm test",
+    "Payload": {
+      "argv": [
+        "/bin/sh",
+        "-c",
+        "npm test"
+      ],
+      "exit": 1,
+      "stderr": "FAIL src/api/charge.test.ts\n  2 tests failed\nExit code 1",
+      "stdout": "",
+      "truncated": false
+    },
+    "OK": false,
+    "Attempt": 1,
+    "DurationMS": 100,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": 100,
+    "CostCents": 0,
+    "TokensIn": 8,
+    "TokensOut": 25,
+    "CreatedAt": "2026-01-02T15:04:05.900Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 6,
+    "Type": "action",
+    "Level": 1,
+    "ToolName": "TodoWrite",
+    "GroupKey": "TodoWrite",
+    "Title": "Plan updated (2 items)",
+    "Payload": {
+      "items": [
+        {
+          "content": "Fix failing charge tests",
+          "status": "in_progress",
+          "activeForm": "Fixing failing charge tests"
+        },
+        {
+          "content": "Re-run the suite",
+          "status": "pending",
+          "activeForm": "Re-running the suite"
+        }
+      ]
+    },
+    "OK": true,
+    "Attempt": 1,
+    "DurationMS": 100,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": 100,
+    "CostCents": 0,
+    "TokensIn": 6,
+    "TokensOut": 20,
+    "CreatedAt": "2026-01-02T15:04:06.100Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 7,
+    "Type": "action",
+    "Level": 1,
+    "ToolName": "WebFetch",
+    "GroupKey": "WebFetch",
+    "Title": "WebFetch prompt=How long do idempotency keys live? url=https://docs.stripe.com/idempotency",
+    "Payload": {
+      "raw": {
+        "url": "https://docs.stripe.com/idempotency",
+        "prompt": "How long do idempotency keys live?"
+      },
+      "result": "Idempotency keys expire after 24 hours."
+    },
+    "OK": true,
+    "Attempt": 1,
+    "DurationMS": 100,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": 100,
+    "CostCents": 0,
+    "TokensIn": 5,
+    "TokensOut": 15,
+    "CreatedAt": "2026-01-02T15:04:06.300Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 8,
+    "Type": "system",
+    "Level": 2,
+    "ToolName": "",
+    "GroupKey": "",
+    "Title": "unparsed runtime output",
+    "Payload": {
+      "line": "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_06\",\"type\":\"message\",\"role\":\"assistant\",\"cont"
+    },
+    "OK": null,
+    "Attempt": 1,
+    "DurationMS": null,
+    "QueuedMS": null,
+    "ModelMS": null,
+    "ToolMS": null,
+    "CostCents": 0,
+    "TokensIn": 0,
+    "TokensOut": 0,
+    "CreatedAt": "2026-01-02T15:04:06.400Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 9,
+    "Type": "action",
+    "Level": 1,
+    "ToolName": "Grep",
+    "GroupKey": "Grep",
+    "Title": "Search \"idempotency\" in src/**",
+    "Payload": {
+      "matches": 2,
+      "pattern": "idempotency"
+    },
+    "OK": true,
+    "Attempt": 1,
+    "DurationMS": 100,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": 100,
+    "CostCents": 0,
+    "TokensIn": 7,
+    "TokensOut": 18,
+    "CreatedAt": "2026-01-02T15:04:06.600Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 10,
+    "Type": "action",
+    "Level": 1,
+    "ToolName": "mcp__lexicode__set_step",
+    "GroupKey": "mcp__lexicode__set_step",
+    "Title": "lexicode: set_step index=2 step=fixing the failing tests total=4",
+    "Payload": {
+      "raw": {
+        "step": "fixing the failing tests",
+        "index": 2,
+        "total": 4
+      },
+      "result": "ok"
+    },
+    "OK": true,
+    "Attempt": 1,
+    "DurationMS": 100,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": 100,
+    "CostCents": 0,
+    "TokensIn": 4,
+    "TokensOut": 12,
+    "CreatedAt": "2026-01-02T15:04:06.800Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 11,
+    "Type": "response",
+    "Level": 0,
+    "ToolName": "",
+    "GroupKey": "",
+    "Title": "Fixed the retry handling in src/api/charge.ts and updated both failing tests.",
+    "Payload": {
+      "text": "Fixed the retry handling in src/api/charge.ts and updated both failing tests."
+    },
+    "OK": null,
+    "Attempt": 1,
+    "DurationMS": null,
+    "QueuedMS": null,
+    "ModelMS": null,
+    "ToolMS": null,
+    "CostCents": 21,
+    "TokensIn": 0,
+    "TokensOut": 0,
+    "CreatedAt": "2026-01-02T15:04:06.900Z"
+  }
+]

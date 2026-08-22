@@ -47,6 +47,43 @@ type Run struct {
 	AcknowledgedAt     *string
 }
 
+// UsageDelta is one increment of a run's token/cost rollup, reported by the runtime adapter
+// as its stream provides usage (contracts §2.4). Fields mirror the runs usage columns; costs
+// are integer cents.
+type UsageDelta struct {
+	TokensIn         int64
+	TokensOut        int64
+	TokensCacheRead  int64
+	TokensCacheWrite int64
+	CostCents        int64
+}
+
+// Add returns the field-wise sum of two deltas.
+func (u UsageDelta) Add(v UsageDelta) UsageDelta {
+	return UsageDelta{
+		TokensIn:         u.TokensIn + v.TokensIn,
+		TokensOut:        u.TokensOut + v.TokensOut,
+		TokensCacheRead:  u.TokensCacheRead + v.TokensCacheRead,
+		TokensCacheWrite: u.TokensCacheWrite + v.TokensCacheWrite,
+		CostCents:        u.CostCents + v.CostCents,
+	}
+}
+
+// Elicitation is a row of elicitations — one blocking question or approval a run asked a
+// human, durable across restarts by design (architecture §10.6).
+type Elicitation struct {
+	ID          string
+	RunID       string
+	ActivitySeq int64
+	Kind        ElicitationKind
+	Request     json.RawMessage
+	State       ElicitationState
+	Response    json.RawMessage
+	RespondedBy *string
+	RespondedAt *string
+	CreatedAt   string
+}
+
 // RunOutput is a row of run_outputs — one artifact a run produced: a branch, a PR, a comment,
 // a review, a wiki proposal, a ticket, or preserved partial work. The forge adapter records one
 // for every successful write (contracts §2.2).

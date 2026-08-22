@@ -23,6 +23,7 @@ type stubPort struct {
 	ports.ForgeProvider
 	ports.Sandbox
 	ports.CredentialSource
+	ports.AgentRuntime
 	id string
 }
 
