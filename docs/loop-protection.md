@@ -27,6 +27,11 @@ the rule that wrote it. It works because every write Lexicode makes on your beha
 invisible marker naming the agent and the run, so a comment, review or pull request is
 attributable when the poller reads it back. Recorded as `no_action`.
 
+One kind of event is exempt: **check suites**. CI runs on the agent's own branch, so a check
+suite is attributed to that agent — but it is a machine's verdict about the agent's work, not
+the agent acting, and suppressing it would make "CI failed → run Dev" impossible to build. See
+[the one built-in exemption](#the-one-built-in-exemption) below.
+
 **2 — debounce.** A second firing of the same rule on the same subject within the window is
 absorbed by the run that is already going. Default 90 seconds. It is a database probe, not a
 timer, so it survives a restart. Recorded as `debounced`, linked to the run that absorbed it.
@@ -98,13 +103,18 @@ Per rule, in the trigger editor's loop-protection panel:
 Turn a layer off by setting it `false` or `0`. A malformed stored config falls back to the
 defaults whole — protection does not switch off because a row got corrupted.
 
-### When you have to turn one off
+### The one built-in exemption
 
-One case comes up in practice. **"CI failed → run Dev to fix it"** does not fire with actor
-suppression on: CI runs on the agent's own branch, so the poller attributes the check-suite
-event to that agent, and layer 1 correctly refuses to re-run the agent its own event names.
-The fix is to set `actor_suppression: false` on that one rule — the depth counter and the budget
-still bound it, and they are the layers that matter for a CI-repair loop.
+**Check-suite events are never actor-suppressed.** CI runs on the agent's own branch, so the
+poller attributes the check-suite event to that agent — and without this exemption, layer 1
+would suppress the very rule the brief's step 6 describes, **"CI failed → run Dev to fix it"**,
+on every branch Dev owns.
+
+A check suite is not the agent acting; it is a machine's verdict *about* the agent's work,
+arriving after the run has ended. So layer 1 skips it, and only layer 1: debounce, the depth
+counter and the budget all still apply, and they are the layers that matter for a CI-repair
+loop. You do not need to turn actor suppression off for a CI rule — and you should not, because
+that would also unguard the pushes and reviews such a rule can otherwise see.
 
 ## Reading the rule's health
 

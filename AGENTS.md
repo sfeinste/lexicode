@@ -3,7 +3,7 @@
 The work queue is `plan/04-implementation-plan.md`. Read `plan/README.md` first — its six rules bind you.
 
 ## Toolchain (already installed; do not re-derive)
-- Go 1.27 at `/opt/homebrew/bin/go`; `go.mod` declares `go 1.23` (the supported floor).
+- Go 1.27 at `/opt/homebrew/bin/go`; `go.mod` declares `go 1.25.0` (the supported floor).
 - Node v24.11.1, npm 11.6.2, Docker 29.7.2, `golangci-lint` v2.
 - Module path: `github.com/spruce/lexicode`.
 

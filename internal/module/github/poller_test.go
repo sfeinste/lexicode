@@ -69,6 +69,7 @@ type snapshotGH struct {
 	issueComments  []ghComment
 	suites         []ghSuite
 	commitEmails   map[string]string // head sha → author email
+	commitMessages map[string]string // head sha → full commit message (trailers included)
 }
 
 func (g *snapshotGH) lock() func() { g.mu.Lock(); return g.mu.Unlock }
@@ -206,10 +207,14 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+base+"/commits/{sha}", func(w http.ResponseWriter, r *http.Request) {
 		defer g.lock()()
 		email := g.commitEmails[r.PathValue("sha")]
+		message := g.commitMessages[r.PathValue("sha")]
+		if message == "" {
+			message = "commit"
+		}
 		writeAny(w, map[string]any{
 			"sha": r.PathValue("sha"),
 			"commit": map[string]any{
-				"message":   "commit",
+				"message":   message,
 				"author":    map[string]any{"email": email},
 				"committer": map[string]any{"email": email},
 			},
@@ -253,7 +258,10 @@ func newPollHarness(t *testing.T) *pollHarness {
 
 	ph := &pollHarness{
 		harness: h, t: t, st: st,
-		gh:    &snapshotGH{commitEmails: map[string]string{}},
+		gh: &snapshotGH{
+			commitEmails:   map[string]string{},
+			commitMessages: map[string]string{},
+		},
 		clock: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
 	}
 	ph.gh.install(h.mux)
@@ -272,6 +280,11 @@ func newPollHarness(t *testing.T) *pollHarness {
 	p.now = func() time.Time { return ph.clock }
 	p.creds = func(context.Context, domain.Repo) (ports.Creds, error) { return testCreds, nil }
 	p.emit = func(ctx context.Context, e domain.Event) error {
+		// The bus assigns the id on its own copy, so stamp it here — the collected events are
+		// what the chain tests link runs to.
+		if e.ID == "" {
+			e.ID = domain.NewID()
+		}
 		err := ph.bus.Publish(ctx, e)
 		if errors.Is(err, bus.ErrDuplicate) {
 			return nil
@@ -352,6 +365,76 @@ func (ph *pollHarness) run(state domain.RunState, branch string, endedAt *time.T
 		ph.t.Fatal(err)
 	}
 	return run
+}
+
+// mkAgent inserts a second (third, …) agent row for the multi-agent chain tests.
+func (ph *pollHarness) mkAgent(name string) domain.Agent {
+	ph.t.Helper()
+	now := domain.Now()
+	a := domain.Agent{
+		ID: domain.NewID(), ProjectID: ph.project.ID, Name: name, Role: "reviewer",
+		Color: "#888888", RuntimeID: "claude-code", Model: "fake", Effort: "medium",
+		Autonomy: domain.AutonomyAuto, GitAuthorName: name,
+		GitAuthorEmail: strings.ToLower(name) + "@agents.lexicode.local", ConcurrencyCap: 1,
+		MaxWallClockSeconds: 300, MaxSteps: 50, Enabled: true,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := ph.st.Agents().Create(context.Background(), &a); err != nil {
+		ph.t.Fatal(err)
+	}
+	return a
+}
+
+// trigger inserts a trigger row (the loop guard reads the project and the ledger by its IDs).
+func (ph *pollHarness) trigger(name, event, loopConfig string) domain.Trigger {
+	ph.t.Helper()
+	now := domain.Now()
+	tr := domain.Trigger{
+		ID: domain.NewID(), ProjectID: ph.project.ID, Name: name, Enabled: true,
+		SourceID: pollSourceID, Event: event,
+		ActivityTypes: json.RawMessage(`[]`), Filters: json.RawMessage(`{}`),
+		Conditions: json.RawMessage(`{"all":[]}`), Actions: json.RawMessage(`[]`),
+		LoopConfig: json.RawMessage(loopConfig), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := ph.st.Triggers().Create(context.Background(), &tr); err != nil {
+		ph.t.Fatal(err)
+	}
+	return tr
+}
+
+// chainRun inserts the run row the scheduler would insert for a proceeding verdict: the
+// subject key, the guard's computed depth, and the cause event that links it into the chain.
+func (ph *pollHarness) chainRun(agentID, subjectKey, causeEventID string, depth int64) domain.Run {
+	ph.t.Helper()
+	ctx := context.Background()
+	seq, err := ph.st.Runs().NextSeq(ctx, ph.project.ID)
+	if err != nil {
+		ph.t.Fatal(err)
+	}
+	cause := causeEventID
+	run := domain.Run{
+		ID: domain.NewID(), Seq: seq, ProjectID: ph.project.ID, AgentID: agentID,
+		State: domain.RunCompleted, Autonomy: domain.AutonomyAuto, Model: "fake",
+		Effort: "medium", Prompt: "p", RuntimeID: "claude-code", SandboxID: "docker",
+		SubjectKey: subjectKey, Depth: depth, CauseEventID: &cause, QueuedAt: domain.Now(),
+	}
+	if err := ph.st.Runs().Create(ctx, &run); err != nil {
+		ph.t.Fatal(err)
+	}
+	return run
+}
+
+// lastEvent returns the most recent collected event of a kind and activity type.
+func (ph *pollHarness) lastEvent(kind, activity string) domain.Event {
+	ph.t.Helper()
+	events := ph.collected()
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind == kind && events[i].ActivityType == activity {
+			return events[i]
+		}
+	}
+	ph.t.Fatalf("no %s/%s event among %v", kind, activity, eventKinds(events))
+	return domain.Event{}
 }
 
 func (ph *pollHarness) tick() {
@@ -658,6 +741,92 @@ func TestPollerActorAttribution(t *testing.T) {
 	first := events[0]
 	if first.ActivityType != "opened" || first.ActorKind != domain.ActorExternal {
 		t.Fatalf("human PR opened actor = %s (%s)", first.ActorKind, first.ActivityType)
+	}
+}
+
+// TestPollerPushAttributesToThePushingRun is the depth-counter regression (brief D5). A pull
+// request's body carries the marker of the run that OPENED it — forever. Attributing a push by
+// that body pins every later push on the PR to the opening run, so the chain
+// events.cause_run_id → runs.cause_event_id never accumulates and layer 4 cannot see the cycle
+// the brief names. For a `synchronize`, commit identity wins: the head commit's
+// `Lexicode-Run:` trailer names the run that produced it.
+func TestPollerPushAttributesToThePushingRun(t *testing.T) {
+	ph := newPollHarness(t)
+	ph.tick() // baseline over an empty repo
+
+	branch := "dev/pay-9-idempotency"
+	endedA := time.Date(2026, 8, 1, 12, 30, 0, 0, time.UTC)
+	runA := ph.run(domain.RunCompleted, branch, &endedA) // opened the PR, owns the branch name
+	// Every run gets a fresh branch, so the follow-up run's own branch is NOT the PR's — it
+	// checks the PR's branch out and pushes to it. That is why "the agent's latest run on
+	// this branch" resolves to run A and cannot be the signal here.
+	runB := ph.run(domain.RunRunning, "dev/run-b", nil)
+
+	pr := ghPR{
+		Number: 9, Title: "Add idempotency keys", State: "open", Login: "svc-bot",
+		Body: "Automated change by agent **Dev**.\n\n" +
+			domain.Actor{AgentID: ph.agent.ID, RunID: runA.ID}.Marker(),
+		HeadRef: branch, HeadSHA: "sha9a", BaseRef: "main",
+		CreatedAt: at(12, 0), UpdatedAt: at(12, 0),
+	}
+	ph.gh.upsertPR(pr)
+	ph.gh.commitEmails["sha9a"] = "dev@agents.lexicode.local"
+	ph.gh.commitMessages["sha9a"] = "feat: idempotency keys\n\nLexicode-Run: " + runA.ID
+	ph.tick()
+
+	// The PR-open event does attribute to run A, through the marker. That path is unchanged.
+	opened := ph.collected()[len(ph.collected())-1]
+	if opened.ActivityType != "opened" {
+		t.Fatalf("expected opened, got %v", eventKinds(ph.collected()))
+	}
+	if opened.CauseRunID == nil || *opened.CauseRunID != runA.ID {
+		t.Fatalf("opened cause_run = %v, want the opening run %s", opened.CauseRunID, runA.ID)
+	}
+
+	// Run B checks the PR's branch out and pushes to it. The PR body still names run A.
+	pr.HeadSHA = "sha9b"
+	pr.UpdatedAt = at(12, 40)
+	ph.gh.upsertPR(pr)
+	ph.gh.commitEmails["sha9b"] = "dev@agents.lexicode.local"
+	ph.gh.commitMessages["sha9b"] = "fix: address the review\n\nLexicode-Run: " + runB.ID
+	ph.tick()
+
+	events := ph.collected()
+	sync := events[len(events)-1]
+	if sync.ActivityType != "synchronize" {
+		t.Fatalf("expected synchronize, got %v", eventKinds(events))
+	}
+	if sync.ActorKind != domain.ActorAgent || sync.ActorID == nil || *sync.ActorID != ph.agent.ID {
+		t.Fatalf("push actor = %s/%v", sync.ActorKind, sync.ActorID)
+	}
+	if sync.CauseRunID == nil {
+		t.Fatalf("push cause_run is nil, want the pushing run %s", runB.ID)
+	}
+	if *sync.CauseRunID == runA.ID {
+		t.Fatalf("push cause_run = the OPENING run %s; the PR body won over commit identity, "+
+			"so the depth chain can never accumulate", runA.ID)
+	}
+	if *sync.CauseRunID != runB.ID {
+		t.Fatalf("push cause_run = %v, want the pushing run %s", *sync.CauseRunID, runB.ID)
+	}
+
+	// A trailer naming a run this project does not own is no attribution at all; the commit
+	// email still names the agent, and the run falls back to the branch.
+	pr.HeadSHA = "sha9c"
+	pr.UpdatedAt = at(13, 10)
+	ph.gh.upsertPR(pr)
+	ph.gh.commitEmails["sha9c"] = "dev@agents.lexicode.local"
+	ph.gh.commitMessages["sha9c"] = "chore: something\n\nLexicode-Run: not-a-run-id"
+	ph.tick()
+
+	events = ph.collected()
+	sync2 := events[len(events)-1]
+	if sync2.ActivityType != "synchronize" || sync2.ActorID == nil || *sync2.ActorID != ph.agent.ID {
+		t.Fatalf("forged-trailer push = %s actor %v", sync2.ActivityType, sync2.ActorID)
+	}
+	if sync2.CauseRunID == nil || *sync2.CauseRunID != runA.ID {
+		t.Fatalf("forged-trailer push cause_run = %v, want the branch fallback %s",
+			sync2.CauseRunID, runA.ID)
 	}
 }
 

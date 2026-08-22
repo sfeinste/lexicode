@@ -420,7 +420,24 @@ func run(mode string, port, proxyPort, ghPort int) error {
 		return fmt.Errorf("stopped run's branch %q not on the fake remote; branches:\n%s",
 			branch2, gh.Branches())
 	}
+	// The §10.5 artifact push is `git add -A && git commit && git push` inside the container.
+	// The orchestrator's own scaffolding must not ride along: `.lexicode/` holds the run's
+	// live MCP token, and this is the path most likely to leak it into the user's repository.
+	tree, err := gh.Tree(branch2)
+	if err != nil {
+		return err
+	}
+	for _, scaffolding := range []string{".lexicode/", ".claude/"} {
+		if strings.Contains(tree, scaffolding) {
+			return fmt.Errorf(
+				"the preserved failure artifact carries the orchestrator's %s — the run's MCP "+
+					"token is now in the user's repository and its history. Tree:\n%s",
+				scaffolding, tree)
+		}
+	}
 	log.Printf("stopped run: canceled, partial_work recorded, branch %q preserved on the remote:\n%s",
 		branch2, gh.Branches())
+	log.Printf("the preserved artifact carries no orchestrator scaffolding: %s",
+		strings.ReplaceAll(tree, "\n", ", "))
 	return nil
 }

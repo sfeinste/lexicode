@@ -7,9 +7,12 @@ package runs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/ports"
@@ -24,6 +27,15 @@ type PROpener struct {
 	// Forge resolves the repo's forge provider by ID (kernel.Forge).
 	Forge  func(id string) (ports.ForgeProvider, error)
 	Logger *slog.Logger
+	// Now overrides the clock in tests. Nil means time.Now.
+	Now func() time.Time
+}
+
+func (o *PROpener) now() string {
+	if o.Now != nil {
+		return domain.FormatTime(o.Now())
+	}
+	return domain.Now()
 }
 
 // OpenForRun opens the run's pull request, once. (false, nil) means "nothing to open": no
@@ -90,6 +102,21 @@ func (o *PROpener) OpenForRun(ctx context.Context, run domain.Run) (bool, error)
 			Base:  base,
 		})
 	if err != nil {
+		// Not every refusal is a failure. A run always gets a FRESH branch (S19), so a run
+		// that worked an existing pull request's branch — the "changes requested → address
+		// them" hop of the canonical chain — has nothing pushed under its own name, and the
+		// forge answers 422: there is no head branch to open a pull request from. Likewise
+		// when a pull request for this head already exists. Neither is an error on an
+		// otherwise successful run: there is simply nothing to open, and the honest place to
+		// say so is the run's own transcript.
+		if note, isNoOp := nothingToOpen(err, *run.Branch); isNoOp {
+			o.noteNothingToOpen(ctx, run.ID, note)
+			if o.Logger != nil {
+				o.Logger.Info("runs: no pull request to open",
+					slog.String("run", run.ID), slog.String("reason", note.title))
+			}
+			return false, nil
+		}
 		return false, err
 	}
 	if o.Logger != nil {
@@ -97,4 +124,77 @@ func (o *PROpener) OpenForRun(ctx context.Context, run domain.Run) (bool, error)
 			slog.String("run", run.ID), slog.Int("pr", pr.Number))
 	}
 	return true, nil
+}
+
+// noOpNote is the sentence the run's transcript carries when there was nothing to open: a
+// one-line title (what the activity list shows) and the paragraph behind it.
+type noOpNote struct {
+	title  string
+	detail string
+}
+
+// nothingToOpen classifies a forge refusal as "there was nothing to open" rather than a
+// failure.
+//
+// The classification is on the forge's 422 text because that is what the API gives us: the
+// adapter wraps go-github's *ErrorResponse, whose Error() carries the status and the
+// validation errors. GitHub spells the two cases several ways depending on the endpoint's
+// mood — a `head`/`invalid` validation error, "head branch … does not exist", "No commits
+// between …", "A pull request already exists for …" — so all the spellings are matched, and a
+// 422 is required so an unrelated failure with a similar word in it stays an error.
+func nothingToOpen(err error, branch string) (noOpNote, bool) {
+	if err == nil {
+		return noOpNote{}, false
+	}
+	low := strings.ToLower(err.Error())
+	if !strings.Contains(low, "422") {
+		return noOpNote{}, false
+	}
+	switch {
+	case strings.Contains(low, "a pull request already exists"):
+		return noOpNote{
+			title: fmt.Sprintf("No pull request opened: one already exists for `%s`.", branch),
+			detail: fmt.Sprintf(
+				"The forge already has an open pull request for `%s`, so this run opened none. "+
+					"The run itself succeeded.", branch),
+		}, true
+	case strings.Contains(low, "does not exist"),
+		strings.Contains(low, "field:head code:invalid"),
+		strings.Contains(low, "no commits between"):
+		return noOpNote{
+			title: fmt.Sprintf("No pull request opened: nothing was pushed to `%s`.", branch),
+			detail: fmt.Sprintf(
+				"Every run gets a fresh branch, and this run pushed nothing to `%s` — it worked "+
+					"on an existing pull request's branch instead, where its commits already are. "+
+					"There is no branch of its own to open a pull request from. The run itself "+
+					"succeeded.", branch),
+		}, true
+	}
+	return noOpNote{}, false
+}
+
+// noteNothingToOpen records the level-2 system line. The scheduler writes the same shape for
+// its own post-terminal notes (appendSystemActivity); this one is written here because only
+// this file knows what the forge answered.
+func (o *PROpener) noteNothingToOpen(ctx context.Context, runID string, note noOpNote) {
+	a := domain.Activity{
+		RunID: runID, Type: domain.ActivitySystem, Level: 2, GroupKey: "system",
+		Title: note.title, Payload: json.RawMessage(mustJSONText(note.detail)), Attempt: 1,
+		CreatedAt: o.now(),
+	}
+	// Detached from the caller's context: the run is already terminal, and a cancelled
+	// context must not lose the record.
+	if err := o.Store.Activities().AppendNext(context.WithoutCancel(ctx), &a); err != nil && o.Logger != nil {
+		o.Logger.Error("runs: system activity append failed",
+			slog.String("run", runID), slog.String("error", err.Error()))
+	}
+}
+
+// mustJSONText renders {"text": …} for the activity payload.
+func mustJSONText(text string) []byte {
+	b, err := json.Marshal(map[string]string{"text": text})
+	if err != nil { // impossible for a string map
+		return []byte(`{"text":""}`)
+	}
+	return b
 }

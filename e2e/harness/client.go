@@ -96,6 +96,7 @@ func (c *Client) Run(id string) (map[string]any, error) {
 // ActivityRow is one run activity, as the driver asserts on it.
 type ActivityRow struct {
 	Type     string `json:"type"`
+	Level    int64  `json:"level"`
 	Title    string `json:"title"`
 	ToolName string `json:"tool_name"`
 	OK       *bool  `json:"ok"`

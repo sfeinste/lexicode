@@ -546,6 +546,17 @@ func (g *GitHub) Head(ref string) string {
 	return sha
 }
 
+// Tree lists every path a ref's commit carries, for asserting what an agent did — and did not
+// — commit.
+func (g *GitHub) Tree(ref string) (string, error) {
+	out, err := exec.Command("git", "--git-dir", g.BareDir(), "ls-tree", "-r",
+		"--name-only", ref).Output()
+	if err != nil {
+		return "", fmt.Errorf("git ls-tree %s: %w", ref, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // FileAt returns one file's contents at a ref, for asserting what an agent actually wrote.
 func (g *GitHub) FileAt(ref, path string) (string, error) {
 	out, err := exec.Command("git", "--git-dir", g.BareDir(), "show", ref+":"+path).Output()

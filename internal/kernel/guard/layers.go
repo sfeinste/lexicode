@@ -107,6 +107,34 @@ func stop(outcome domain.FiringOutcome, reason string) Verdict {
 	return Verdict{Proceed: false, Outcome: outcome, Reason: reason}
 }
 
+// eventCheckSuite is the normalized event kind for a CI result (the github.poll catalog's
+// "check_suite"; the string is the contract between the source's catalog and this layer).
+const eventCheckSuite = "check_suite"
+
+// exemptFromActorSuppression carves the one hole layer 1 must have.
+//
+// Actor suppression exists so an agent's own action cannot re-trigger the rule that runs it —
+// "Dev pushed" must not fire "on a push, run Dev". It keys on the event's attributed actor,
+// and the poller attributes a check suite by the branch it ran on, which is the branch of the
+// agent whose work CI is judging. So the brief's own step 6, "CI failed → Dev fixes it", is
+// suppressed by layer 1 on every branch Dev owns: the rule can never fire, and the only way
+// to use it was to switch actor suppression off for that rule — which also switches it off
+// for the loop the layer is there to stop.
+//
+// A check suite is not the agent acting. It is a machine's verdict ABOUT the agent's work,
+// produced by CI, arriving after the agent's run has ended. Nothing an agent does in response
+// can loop through layer 1 in the way layer 1 guards against, because the agent cannot emit a
+// check_suite event — only pushing can, and the push events stay suppressed. The runaway case
+// that remains (fix → CI fails again → fix → …) is real, and it is layers 2, 4 and 5's job:
+// debounce, the depth counter and the budget all still apply to this event, unchanged.
+//
+// Scope: attribution kind only. This does not weaken the skip token, the depth reset, or any
+// other layer, and it applies to check_suite alone — a pull_request or review event
+// attributed to the agent is still suppressed.
+func exemptFromActorSuppression(ev domain.Event) bool {
+	return ev.Kind == eventCheckSuite
+}
+
 // Evaluate runs the escape hatch and the five layers in order. Any internal error fails
 // closed for read errors on the layers that suppress (the event is let through — a broken
 // database must not silently mute every trigger) and is logged; the depth layer fails safe
@@ -123,7 +151,8 @@ func (l *Layers) Evaluate(ctx context.Context, in Input) Verdict {
 	// Layer 1 — actor suppression: the event's resolved actor (S25 attribution, D-9) is the
 	// very agent this rule would run. Keyed on actor_id, which the poller sets to the agent
 	// row's ID on any attribution hit.
-	if cfg.ActorSuppression && in.Event.ActorKind == domain.ActorAgent && in.Event.ActorID != nil {
+	if cfg.ActorSuppression && !exemptFromActorSuppression(in.Event) &&
+		in.Event.ActorKind == domain.ActorAgent && in.Event.ActorID != nil {
 		for _, id := range in.RunAgentIDs {
 			if id == *in.Event.ActorID {
 				return stop(domain.FiringNoAction, "actor suppressed")

@@ -498,6 +498,10 @@ func suggestedTriggers(workflowFiles []string) []TriggerCandidate {
 			Workflows:     workflowFiles, Checked: true,
 		},
 		{
+			// No loop_config override: the guard exempts check_suite events from actor
+			// suppression (a CI result is a machine verdict about the agent's work, not the
+			// agent acting), so this rule fires on the agent's own branch under the shipped
+			// defaults. See internal/kernel/guard's exemptFromActorSuppression.
 			ID: "ci-failed-fix", Name: "CI failed → run Dev",
 			Event:         "check_suite",
 			ActivityTypes: []string{"completed"},

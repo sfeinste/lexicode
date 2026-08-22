@@ -40,6 +40,30 @@ const (
 	commitHookPath     = ".lexicode/hooks/commit-msg"
 )
 
+// Container resource ceilings (§10.3: "resource limits (cpu, memory, pids)"; the sandbox
+// applies them to the container's HostConfig — see internal/module/docker's createAndStart).
+// There is no workspace setting for them: workspace_settings carries MaxConcurrentContainers
+// but no per-container ceiling, so these named constants are the single place the numbers
+// live, and a schema field can later override them without moving the policy.
+//
+// The numbers are sized for the product V1 ships as: one binary on the user's own machine,
+// running up to MaxConcurrentContainers of these at once, each holding one Claude Code process
+// tree doing git, an install and a build.
+//
+//   - 2 cores: enough for a `npm ci`/compile step, small enough that the default three
+//     concurrent runs cannot monopolize a 4-8 core laptop.
+//   - 4 GiB: a Node toolchain plus a test run fits; a leak is stopped by the OOM killer inside
+//     the container instead of swapping the host to death.
+//   - 512 pids: a fork bomb dies, `make -j` does not.
+//
+// Zero would mean "no limit" (ports.ResourceLimits) — which is what shipped before this was
+// filled in, and is exactly what lets a runaway agent exhaust the host.
+const (
+	defaultCPUs        = 2.0
+	defaultMemoryBytes = 4 << 30 // 4 GiB
+	defaultPidsLimit   = 512
+)
+
 // PlaceholderRunToken is written into .lexicode/mcp.json when the caller supplies no token —
 // pre-S22 callers only; the scheduler mints real tokens via the MCP server (S21). It is
 // obviously fake on purpose.
@@ -286,7 +310,10 @@ func (b *Builder) Build(ctx context.Context, in PrepInput) (Prep, error) {
 			Network:     network,
 			Labels:      map[string]string{"lexicode.agent": in.Agent.ID},
 			Limits: ports.ResourceLimits{
-				WallClock: time.Duration(in.Agent.MaxWallClockSeconds) * time.Second,
+				CPUs:        defaultCPUs,
+				MemoryBytes: defaultMemoryBytes,
+				Pids:        defaultPidsLimit,
+				WallClock:   time.Duration(in.Agent.MaxWallClockSeconds) * time.Second,
 			},
 		},
 		Branch:       branch,

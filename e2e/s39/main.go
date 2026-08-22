@@ -362,6 +362,26 @@ func run(port, proxyPort, ghPort int) (*timings, error) {
 		return t, fmt.Errorf("branch %q is not on the remote; branches:\n%s", branch, gh.Branches())
 	}
 
+	// Security: the provisioner materializes .lexicode/ (which holds this run's live MCP
+	// token) and .claude/ into the workspace root, and the agent ran a plain `git add -A`.
+	// Nothing of ours may reach the user's repository — the sandbox writes both into
+	// .git/info/exclude during Prepare, and this is where that is proved end to end.
+	tree, err := gh.Tree(branch)
+	if err != nil {
+		return t, err
+	}
+	for _, scaffolding := range []string{".lexicode/", ".claude/"} {
+		if strings.Contains(tree, scaffolding) {
+			return t, fmt.Errorf(
+				"the pushed branch carries the orchestrator's %s — the run's MCP token is now in "+
+					"the user's repository and its history. Tree:\n%s", scaffolding, tree)
+		}
+	}
+	log.Printf("pushed tree carries no orchestrator scaffolding (no .lexicode/, no .claude/):")
+	for _, line := range strings.Split(tree, "\n") {
+		log.Printf("    | %s", line)
+	}
+
 	prs := gh.PullRequests()
 	if len(prs) != 1 {
 		return t, fmt.Errorf("the fake GitHub has %d pull requests, want 1: %s", len(prs), harness.Compact(prs))
@@ -458,13 +478,18 @@ func run(port, proxyPort, ghPort int) (*timings, error) {
 	if !strings.Contains(body, "TTL_MS") {
 		return t, fmt.Errorf("the addressed file does not carry the fix:\n%s", body)
 	}
-	// Known gap, asserted rather than hidden: a run always gets a NEW branch, so a follow-up
-	// run that works on the pull request's branch leaves its own branch unpushed, and the
-	// orchestrator's PR-open step reports that it could not open one. The run still succeeds
-	// and the system activity says exactly what happened.
+	// A run always gets a NEW branch, so a follow-up run that works on the pull request's
+	// branch leaves its own branch unpushed and there is no pull request to open. That is a
+	// no-op, not a failure: the run succeeds and a level-2 system line says so plainly.
 	if note := systemActivity(c, run3, "could not open a pull request"); note != "" {
-		log.Printf("known gap (reported): %s", note)
+		return t, fmt.Errorf("the address run reported a PR-open FAILURE: %s", note)
 	}
+	note := systemActivity(c, run3, "No pull request opened")
+	if note == "" {
+		return t, fmt.Errorf("the address run has no system note about the pull request it "+
+			"could not open; activities: %s", activityTitles(c, run3))
+	}
+	log.Printf("no-op, reported plainly: %s", note)
 
 	// -- step 6: CI failed spawns Dev to fix -----------------------------------------------
 	step(6, `the "CI failed" trigger spawns Dev to fix`)
@@ -570,15 +595,16 @@ var triggerOrder = []string{"pr-opened", "changes-requested", "ci-failed", "revi
 // 5 and 6; the fourth is the "addressed → re-review" hop that closes the cycle the loop guard
 // exists to stop (brief D5's "PR opened → review → address → push → PR updated" example).
 //
-// Two rules override a loop-config default, both deliberately and both documented:
+// Every rule keeps actor suppression ON, the shipped default — ci-failed included. CI runs on
+// the agent's own branch, so the poller attributes the check suite to that agent, but layer 1
+// exempts check_suite events (a CI result is a machine's verdict about the agent's work, not
+// the agent acting; see internal/kernel/guard's exemptFromActorSuppression). The brief's step 6
+// therefore fires under the default config, with no per-rule escape hatch.
 //
-//   - ci-failed turns actor suppression OFF. The poller attributes a check suite to the agent
-//     whose branch it ran on, so with suppression on, "CI failed → run Dev" is suppressed by
-//     layer 1 on Dev's own branch and the brief's step 6 can never fire. Turning it off for
-//     this one rule is the product's own escape hatch for exactly this case.
-//   - changes-requested shortens the debounce from 90s to 5s. This harness compresses a chain
-//     that would take a human afternoon into a couple of minutes; at 90s, layer 2 would
-//     absorb the second bounce (correctly!) before layer 4 ever saw it.
+// One rule overrides a loop-config default, deliberately and documented: changes-requested
+// shortens the debounce from 90s to 5s. This harness compresses a chain that would take a
+// human afternoon into a couple of minutes; at 90s, layer 2 would absorb the second bounce
+// (correctly!) before layer 4 ever saw it.
 func createTriggers(c *harness.Client, dev, reviewer string) (map[string]string, error) {
 	specs := []struct {
 		key  string
@@ -616,9 +642,9 @@ func createTriggers(c *harness.Client, dev, reviewer string) (map[string]string,
 			"activity_types": []string{"completed"},
 			"conditions": rawJSON(
 				`{"all":[{"field":"check.conclusion","op":"enum.is","value":"failure"}]}`),
-			// See the function comment: layer 1 would suppress this rule on the agent's own
-			// branch, which is where CI always runs.
-			"loop_config": rawJSON(`{"actor_suppression":false,"debounce_seconds":5,` +
+			// Actor suppression stays ON (the default): the guard exempts check_suite
+			// events, so this rule fires on the agent's own branch without an escape hatch.
+			"loop_config": rawJSON(`{"actor_suppression":true,"debounce_seconds":5,` +
 				`"cancel_in_progress":true,"depth_limit":3,"daily_budget_cents":null}`),
 			"actions": rawJSON(fmt.Sprintf(
 				`[{"action_id":"run_agent","params":{"agent_id":%q,"prompt_override":%q}}]`,
@@ -759,6 +785,19 @@ func systemActivity(c *harness.Client, runID, needle string) string {
 		}
 	}
 	return ""
+}
+
+// activityTitles renders a run's activity titles for a failure message.
+func activityTitles(c *harness.Client, runID string) string {
+	acts, err := c.Activities(runID)
+	if err != nil {
+		return err.Error()
+	}
+	titles := make([]string, 0, len(acts))
+	for _, a := range acts {
+		titles = append(titles, fmt.Sprintf("%s/%d %q", a.Type, a.Level, a.Title))
+	}
+	return strings.Join(titles, ", ")
 }
 
 func contains(list []string, want string) bool {

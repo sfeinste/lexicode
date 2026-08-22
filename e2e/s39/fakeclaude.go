@@ -51,11 +51,12 @@ finish() {
 emit '{"type":"system","subtype":"init","cwd":"/workspace","session_id":"e2e-s39","tools":["Bash","mcp__lexicode__submit_review"],"model":"fake-model"}'
 say "role: $ROLE"
 
-# Keep the orchestrator's own scaffolding out of the commit. The provisioner materializes
-# .lexicode/ (which holds the run's MCP token) and .claude/ into the workspace root, and a
-# plain "git add -A" would commit both. Documented as a finding in the S39 report; a real
-# agent would need the same line in its instructions until the sandbox excludes them itself.
-printf '.lexicode/\n.claude/\n' >> .git/info/exclude
+# Note: this agent does NOT exclude the orchestrator's scaffolding itself. The provisioner
+# materializes .lexicode/ (which holds the run's live MCP token) and .claude/ into the
+# workspace root, and a plain "git add -A" below would commit both — so the sandbox writes
+# them into .git/info/exclude during Prepare. The assertion after the first push proves it:
+# if the sandbox ever stops doing it, the token lands in the fake GitHub's repository and
+# the run fails there, not silently.
 
 case "$ROLE" in
 

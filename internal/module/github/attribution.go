@@ -23,6 +23,24 @@ import (
 // back to the agent's most recent run on the subject's branch — non-terminal preferred, else
 // the most recent one if it ended within recentRunWindow (a terminal run that ended long ago
 // is not "recent": the event was probably caused by something else touching the old branch).
+//
+// A PUSH is the exception, and it is the important one. A `synchronize` event carries no body
+// of its own: the only body in sight is the pull request's, which was written when the PR was
+// OPENED and therefore carries the opening run's marker forever. Attributing a push by that
+// marker pins every later push on the PR to run #1, and the depth counter — which walks
+// events.cause_run_id → runs.cause_event_id — never accumulates, so brief D5's own cycle
+// (PR opened → review → address → push → PR updated → …) stays at depth ≤ 1 and layer 4 never
+// trips on it. For a push, commit identity wins over the PR body:
+//
+//  1. the `Lexicode-Run: <run_id>` commit trailer on the head commit. Every commit made in a
+//     run's workspace carries it — prep.go installs a commit-msg hook and commit.template for
+//     exactly this purpose — so it names the run that produced the head sha precisely, which
+//     is what "the pushing run" means.
+//  2. the commit author/committer email → the agent; the run then resolves through causeRun.
+//  3. the head branch → the agent, same run resolution.
+//
+// The PR body's marker is consulted for a push only as a last resort and only for the AGENT;
+// its run id is discarded, because it is the opening run's, not the pusher's.
 
 // recentRunWindow bounds the terminal-run attribution fallback.
 const recentRunWindow = 7 * 24 * time.Hour
@@ -33,6 +51,22 @@ const recentRunWindow = 7 * 24 * time.Hour
 // empty run id (S28); the agent half still attributes, which is what actor suppression needs
 // to keep such a comment from re-triggering its own rule.
 var markerRe = regexp.MustCompile(`<!-- lexicode:actor=agent:(\S+) run=(\S*) -->`)
+
+// runTrailerRe matches the D-9 commit trailer `Lexicode-Run: <run_id>` that prep.go's
+// commit-msg hook appends to every commit made in a run's workspace. Like the marker, the
+// format is load-bearing: the two packages must not import each other, so the string IS the
+// protocol (internal/service/runs/prep.go builds it). Anchored to a line start so a run id
+// quoted in prose cannot pass for a trailer.
+var runTrailerRe = regexp.MustCompile(`(?m)^[ \t]*Lexicode-Run:[ \t]*(\S+)[ \t]*$`)
+
+// parseRunTrailer extracts the run id from a commit message's trailer.
+func parseRunTrailer(message string) (runID string, ok bool) {
+	m := runTrailerRe.FindStringSubmatch(message)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
 
 // attribution is one resolved actor: the agent, and the causing run when known.
 type attribution struct {
@@ -76,6 +110,36 @@ func attributeEmail(agents []domain.Agent, emails ...string) (attribution, bool)
 			if e != "" && strings.EqualFold(e, want) {
 				return attribution{agent: &agents[i]}, true
 			}
+		}
+	}
+	return attribution{}, false
+}
+
+// attributeTrailer resolves the push signal: the `Lexicode-Run:` trailer on the head commit
+// names the run that produced it, and the run row names the agent. The run must belong to
+// this project and to an agent this project knows — a trailer naming anything else is stale
+// or forged, and is no attribution at all.
+func (p *Poller) attributeTrailer(ctx context.Context, projectID, message string, agents []domain.Agent) (attribution, bool) {
+	if p.store == nil {
+		return attribution{}, false
+	}
+	runID, ok := parseRunTrailer(message)
+	if !ok {
+		return attribution{}, false
+	}
+	run, err := p.store.Runs().ByID(ctx, runID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			p.logger.Warn("github.poll: commit-trailer run lookup failed", "error", err.Error())
+		}
+		return attribution{}, false
+	}
+	if run.ProjectID != projectID {
+		return attribution{}, false
+	}
+	for i := range agents {
+		if agents[i].ID == run.AgentID {
+			return attribution{agent: &agents[i], runID: run.ID}, true
 		}
 	}
 	return attribution{}, false

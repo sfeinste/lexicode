@@ -36,6 +36,24 @@ const internalNetwork = "lexicode-internal"
 // removed together with the container.
 const workspaceDir = "/workspace"
 
+// scaffoldingPaths are the orchestrator's own directories inside the workspace: `.lexicode/`
+// holds the run's MCP config (and therefore the run's live MCP token) and prompt, `.claude/`
+// holds the generated settings file. They are provisioning inputs, not the user's source, and
+// they must never reach the user's repository — the §10.5 failure-artifact path runs
+// `git add -A && git commit && git push`, which would otherwise publish the run token into the
+// repo and its history.
+//
+// The clone step writes them into `.git/info/exclude` rather than `.gitignore`: exclude is
+// local to the checkout, so it never shows up in a diff, a commit or a pull request the way an
+// edited `.gitignore` would. It holds for every path out of the container — the artifact push,
+// an agent's own `git add -A`, a `git status` the agent reads — not just for the one caller
+// that remembers.
+//
+// The strings mirror internal/service/runs' settingsPath/mcpConfigPath prefixes. The packages
+// must not import each other (module → service is a forbidden edge), so, as elsewhere in this
+// codebase, the string IS the protocol.
+var scaffoldingPaths = []string{".lexicode/", ".claude/"}
+
 // RunStateFn resolves a run's current state for the orphan sweeper: found=false means no such
 // run. The module wires this from the kernel store in Init; tests inject a fake. The sandbox
 // holds this one narrow function, never the store.
@@ -357,9 +375,14 @@ func (s *Sandbox) clone(ctx context.Context, inst *Instance, c ports.CloneSpec, 
 	const step = "clone"
 	sink.Step(step, ports.StepRunning, "")
 
+	// $LEXICODE_EXCLUDES is appended to .git/info/exclude immediately after `git init`, so
+	// there is no window in which a `git add -A` could pick the orchestrator's scaffolding up
+	// (see scaffoldingPaths).
 	const script = `set -e
 git config --global --add safe.directory '*'
 git init -q .
+mkdir -p .git/info
+printf '%s\n' "$LEXICODE_EXCLUDES" >> .git/info/exclude
 git remote add origin "$LEXICODE_CLONE_URL"
 ref="$LEXICODE_CLONE_REF"
 [ -n "$ref" ] || ref=HEAD
@@ -368,6 +391,7 @@ git checkout -q -f FETCH_HEAD`
 	env := map[string]string{
 		"LEXICODE_CLONE_URL": c.URL,
 		"LEXICODE_CLONE_REF": c.Ref,
+		"LEXICODE_EXCLUDES":  strings.Join(scaffoldingPaths, "\n"),
 	}
 	code, out, err := inst.runCmd(ctx, []string{"/bin/sh", "-c", script}, env, sink.Log)
 	if err != nil {

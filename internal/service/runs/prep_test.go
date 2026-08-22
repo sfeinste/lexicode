@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/ports"
@@ -511,6 +512,36 @@ func TestBuildFailsWithoutCredentials(t *testing.T) {
 	_, err := b.Build(context.Background(), e.in)
 	if err == nil || !strings.Contains(err.Error(), "oauth-token") || !strings.Contains(err.Error(), "env") {
 		t.Errorf("Build without credentials = %v, want an error naming both sources", err)
+	}
+}
+
+// TestBuildSetsContainerResourceLimits: the spec the builder hands the sandbox must bound cpu,
+// memory and pids, not just wall clock. Zero means "no limit" in ports.ResourceLimits, so a
+// zero here is a runaway agent with the whole host to eat.
+func TestBuildSetsContainerResourceLimits(t *testing.T) {
+	e := newPrepEnv(t)
+	p, err := e.builder().Build(context.Background(), e.in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := p.Spec.Limits
+	if limits.CPUs <= 0 {
+		t.Errorf("Limits.CPUs = %v, want a non-zero ceiling", limits.CPUs)
+	}
+	if limits.MemoryBytes <= 0 {
+		t.Errorf("Limits.MemoryBytes = %d, want a non-zero ceiling", limits.MemoryBytes)
+	}
+	if limits.Pids <= 0 {
+		t.Errorf("Limits.Pids = %d, want a non-zero ceiling", limits.Pids)
+	}
+	if want := time.Duration(e.in.Agent.MaxWallClockSeconds) * time.Second; limits.WallClock != want {
+		t.Errorf("Limits.WallClock = %s, want %s", limits.WallClock, want)
+	}
+	// The documented defaults, so a change to the numbers is a deliberate edit here too.
+	if limits.CPUs != defaultCPUs || limits.MemoryBytes != defaultMemoryBytes ||
+		limits.Pids != defaultPidsLimit {
+		t.Errorf("limits = %+v, want the documented defaults (%v cpus, %d bytes, %d pids)",
+			limits, float64(defaultCPUs), int64(defaultMemoryBytes), int64(defaultPidsLimit))
 	}
 }
 

@@ -496,25 +496,45 @@ func deriveActivities(prev domain.PollPRState, seen bool, pr domain.PullRequest)
 // emitPREvent publishes one pull_request event with the contracts §4 payload and D-9 actor
 // attribution.
 func (p *Poller) emitPREvent(ctx context.Context, t *tickState, pr domain.PullRequest, act string) error {
-	att, ok := attributeBody(pr.Body, t.agents)
-	headMessage := ""
+	var (
+		att         attribution
+		ok          bool
+		headMessage string
+	)
 	if act == "synchronize" {
-		// A push changes no body; the commit's git identity is the attribution signal (D-9),
-		// and the same read carries the head commit message the loop guard scans for skip
-		// tokens (S27) — it rides the synchronize payload as pr.head_commit_message.
+		// A push changes no body — the only body in sight is the pull request's, and it
+		// carries the OPENING run's marker forever. Commit identity wins here, or every
+		// later push on a PR attributes to run #1 and the depth chain never accumulates
+		// (see attribution.go's header). The same read carries the head commit message the
+		// loop guard scans for skip tokens (S27) — it rides the synchronize payload as
+		// pr.head_commit_message.
 		author, committer, message, cerr := p.forge.CommitEmails(ctx, t.creds, t.repo.Ref(), pr.HeadSHA)
 		if cerr != nil {
 			p.logger.Warn("github.poll: commit read for attribution failed",
 				slog.Int("pr", pr.Number), slog.String("error", cerr.Error()))
 		} else {
 			headMessage = message
+			// The trailer names the pushing run exactly; the emails name only the agent,
+			// and the run is resolved from the branch below (newEvent → causeRun).
+			att, ok = p.attributeTrailer(ctx, t.projectID, message, t.agents)
 			if !ok {
 				att, ok = attributeEmail(t.agents, author, committer)
 			}
 		}
+	} else {
+		// Comments, reviews and PR-open carry a marker written for that very activity.
+		att, ok = attributeBody(pr.Body, t.agents)
 	}
 	if !ok {
 		att, ok = attributeBranch(pr.HeadRef, t.template, t.agents)
+	}
+	if !ok && act == "synchronize" {
+		// Last resort for a push whose commit could not be read and whose branch does not
+		// match: the PR body names *an* agent, which is better than nothing for actor
+		// suppression. Its run id is deliberately dropped — it is the opening run's.
+		if att, ok = attributeBody(pr.Body, t.agents); ok {
+			att.runID = ""
+		}
 	}
 
 	occurred := pr.UpdatedAt

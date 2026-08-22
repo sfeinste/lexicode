@@ -268,6 +268,52 @@ func TestActorSuppression(t *testing.T) {
 	}
 }
 
+// TestCheckSuiteExemptFromActorSuppression: a CI result is a machine's verdict about the
+// agent's work, not the agent acting. The poller attributes a check suite by the branch it ran
+// on — always the branch of the agent whose work is being judged — so with the exemption
+// absent, "CI failed → Dev fixes it" (the brief's step 6) is suppressed by layer 1 on every
+// branch Dev owns and can never fire.
+func TestCheckSuiteExemptFromActorSuppression(t *testing.T) {
+	f := newFix(t)
+	tr := f.mkTrigger(`{"debounce_seconds":0,"cancel_in_progress":false,"depth_limit":0}`)
+
+	// A check_suite attributed to the very agent the rule would run: NOT suppressed.
+	ci := f.mkEvent("check_suite", "completed", domain.ActorAgent, &f.agent.ID, nil, stamp(0))
+	if v := f.eval(nil).Evaluate(f.ctx, f.input(tr, ci)); !v.Proceed {
+		t.Fatalf("check_suite attributed to the rule's own agent = %+v, want proceed", v)
+	}
+
+	// The exemption is scoped to check_suite: a pull_request event attributed to the same
+	// agent is still suppressed, with actor suppression left at its default (on).
+	push := f.mkEvent("pull_request", "synchronize", domain.ActorAgent, &f.agent.ID, nil, stamp(1))
+	v := f.eval(nil).Evaluate(f.ctx, f.input(tr, push))
+	if v.Proceed || v.Outcome != domain.FiringNoAction || v.Reason != "actor suppressed" {
+		t.Fatalf("pull_request attributed to the rule's own agent = %+v, want actor suppressed", v)
+	}
+
+	// And a review event attributed to the same agent is still suppressed too.
+	rev := f.mkEvent("pull_request_review", "submitted", domain.ActorAgent, &f.agent.ID, nil, stamp(2))
+	if v := f.eval(nil).Evaluate(f.ctx, f.input(tr, rev)); v.Proceed {
+		t.Fatalf("pull_request_review attributed to the rule's own agent = %+v, want suppressed", v)
+	}
+}
+
+// TestCheckSuiteStillCountsForDepth: the exemption is layer 1 only. A check_suite event whose
+// chain has already reached the depth limit is still stopped by layer 4.
+func TestCheckSuiteStillCountsForDepth(t *testing.T) {
+	f := newFix(t)
+	tr := f.mkTrigger(`{"debounce_seconds":0,"cancel_in_progress":false,"depth_limit":1}`)
+	root := f.mkEvent("check_suite", "completed", domain.ActorHuman, nil, nil, stamp(0))
+	run := f.mkRun(tr, domain.RunCompleted, "pr:219", &root.ID, stamp(1))
+	ci := f.mkEvent("check_suite", "completed", domain.ActorAgent, &f.agent.ID, &run.ID, stamp(2))
+
+	rec := &recorder{st: f.st}
+	v := f.eval(rec).Evaluate(f.ctx, f.input(tr, ci))
+	if v.Proceed || v.Outcome != domain.FiringLoopStopped {
+		t.Fatalf("check_suite at the depth limit = %+v, want loop_stopped", v)
+	}
+}
+
 // ---------------------------------------------------------------- layer 2 -----
 
 func TestDebounce(t *testing.T) {
