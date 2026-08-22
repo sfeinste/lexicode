@@ -51,6 +51,10 @@ export type MemberListResponse = components["schemas"]["MemberListResponse"];
 export type WorkspaceSettings = components["schemas"]["WorkspaceSettings"];
 export type UpdateWorkspaceSettingsRequest =
   components["schemas"]["UpdateWorkspaceSettingsRequest"];
+export type Secret = components["schemas"]["Secret"];
+export type SecretListResponse = components["schemas"]["SecretListResponse"];
+export type SetSecretRequest = components["schemas"]["SetSecretRequest"];
+export type RenameSecretRequest = components["schemas"]["RenameSecretRequest"];
 
 export const API_BASE = "/api/v1";
 
@@ -167,6 +171,39 @@ export const projectsApi = {
     api<Project>("PATCH", `/projects/${encodeURIComponent(key)}`, { body }),
   overview: (key: string, signal?: AbortSignal) =>
     api<ProjectOverview>("GET", `/projects/${encodeURIComponent(key)}/overview`, { signal }),
+};
+
+/**
+ * Secrets are write-only (D-16): `set` carries a value in; nothing ever carries one out.
+ * Project scope and workspace scope share shapes; workspace routes are owner-only.
+ */
+export const secretsApi = {
+  list: (projectKey: string, signal?: AbortSignal) =>
+    api<SecretListResponse>(
+      "GET",
+      `/projects/${encodeURIComponent(projectKey)}/secrets`,
+      { signal },
+    ),
+  set: (projectKey: string, body: SetSecretRequest) =>
+    api<Secret>("POST", `/projects/${encodeURIComponent(projectKey)}/secrets`, { body }),
+  rename: (projectKey: string, id: string, body: RenameSecretRequest) =>
+    api<Secret>(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectKey)}/secrets/${encodeURIComponent(id)}`,
+      { body },
+    ),
+  remove: (projectKey: string, id: string) =>
+    api<void>(
+      "DELETE",
+      `/projects/${encodeURIComponent(projectKey)}/secrets/${encodeURIComponent(id)}`,
+    ),
+  workspaceList: (signal?: AbortSignal) =>
+    api<SecretListResponse>("GET", "/workspace/secrets", { signal }),
+  workspaceSet: (body: SetSecretRequest) => api<Secret>("POST", "/workspace/secrets", { body }),
+  workspaceRename: (id: string, body: RenameSecretRequest) =>
+    api<Secret>("PATCH", `/workspace/secrets/${encodeURIComponent(id)}`, { body }),
+  workspaceRemove: (id: string) =>
+    api<void>("DELETE", `/workspace/secrets/${encodeURIComponent(id)}`),
 };
 
 export const columnsApi = {

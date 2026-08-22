@@ -26,13 +26,14 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/httpx"
 	"github.com/spruce/lexicode/internal/kernel/ports"
+	"github.com/spruce/lexicode/internal/kernel/secrets"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
 // Kernel owns the subsystems every module and service shares. Subsystems are added one story at a
 // time; each one is a field here plus an accessor, and nothing else in the shape changes. The
-// accessors that contracts §1 lists but that have no subsystem yet — Scheduler and
-// Secrets — are deliberately absent rather than stubbed, so that no caller can be
+// accessor that contracts §1 lists but that has no subsystem yet — Scheduler — is
+// deliberately absent rather than stubbed, so that no caller can be
 // written against a stub that later changes meaning.
 type Kernel struct {
 	logger      *slog.Logger
@@ -41,6 +42,7 @@ type Kernel struct {
 	bus         *bus.Bus
 	auth        *auth.Service
 	audit       *audit.Writer
+	secrets     *secrets.Store
 	sse         *httpx.Hub
 	stopTimeout time.Duration
 
@@ -92,6 +94,10 @@ type Options struct {
 	// Audit is the audit-log writer (S06). When set alongside Auth, the kernel serves
 	// GET /api/v1/audit behind RequireAuth + RequireOwner. Nil is tolerated only for tests.
 	Audit *audit.Writer
+	// Secrets is the encrypted secret store (S13, D-16). cmd/lexicode opens it right after
+	// the database — a bad master key file refuses boot there. Nil is tolerated only for
+	// tests; modules and services that need secret values may assume it is set.
+	Secrets *secrets.Store
 	// SSE is the SSE hub (S06). When set alongside Auth, the kernel serves
 	// GET /api/v1/stream behind RequireAuth. cmd/lexicode attaches it to the bus before
 	// bus.Start. Nil is tolerated only for tests.
@@ -121,6 +127,7 @@ func New(opts Options) *Kernel {
 		bus:               opts.Bus,
 		auth:              opts.Auth,
 		audit:             opts.Audit,
+		secrets:           opts.Secrets,
 		sse:               opts.SSE,
 		stopTimeout:       timeout,
 		eventSources:      newRegistry[ports.EventSource]("event source"),
@@ -157,6 +164,11 @@ func (k *Kernel) Mux() *httpx.Mux { return k.mux }
 // Audit is the audit-log writer (contracts §1, architecture §14): every service mutation calls
 // Audit().Write, which reads the actor from the request context.
 func (k *Kernel) Audit() *audit.Writer { return k.audit }
+
+// Secrets is the encrypted secret store (contracts §1, D-16). Modules read values with
+// Secrets().Get — in-process only; no HTTP handler may call it (see
+// internal/kernel/secrets/apilint_test.go).
+func (k *Kernel) Secrets() *secrets.Store { return k.secrets }
 
 // SSE is the SSE hub (contracts §1, §5.1): the one bridge from the bus to connected browser
 // tabs. Handlers never write to it directly.

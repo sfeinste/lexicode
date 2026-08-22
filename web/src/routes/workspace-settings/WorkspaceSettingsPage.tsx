@@ -9,8 +9,10 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { SaveStatus } from "../../components/SaveStatus/SaveStatus";
+import { SecretsPanel } from "../../components/SecretsPanel/SecretsPanel";
 import {
   authApi,
+  secretsApi,
   type UpdateWorkspaceSettingsRequest,
   type WorkspaceSettings,
 } from "../../lib/api/client";
@@ -169,6 +171,27 @@ function SettingsForm({ settings }: { settings: WorkspaceSettings }) {
           />
         </label>
       </div>
+
+      {/*
+        Workspace-scope secrets (S13, D-16): the schema's other scope. Owner-only like the
+        rest of this screen; the API refuses members regardless. Same write-only contract as
+        project secrets — names and set-dates are all that ever renders.
+      */}
+      <section aria-label="Workspace secrets" className={styles.secretsSection}>
+        <h2 className={styles.sectionTitle}>Secrets</h2>
+        <p className={styles.lede}>
+          Available to every project. Values are encrypted at rest and can never be viewed
+          again after saving — only replaced or deleted.
+        </p>
+        <SecretsPanel
+          queryKey={["secrets", "workspace"]}
+          api={{
+            list: (signal) => secretsApi.workspaceList(signal),
+            set: (body) => secretsApi.workspaceSet(body),
+            remove: (id) => secretsApi.workspaceRemove(id),
+          }}
+        />
+      </section>
     </div>
   );
 }

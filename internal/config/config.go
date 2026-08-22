@@ -76,6 +76,10 @@ func (c Config) LogFile() string { return filepath.Join(c.DataDir, "logs", "lexi
 // DBFile is the SQLite database inside the data directory (D-2).
 func (c Config) DBFile() string { return filepath.Join(c.DataDir, "lexicode.db") }
 
+// MasterKeyFile is the secrets master key inside the data directory (D-16) — wherever
+// data_dir points, never a hardcoded home path.
+func (c Config) MasterKeyFile() string { return filepath.Join(c.DataDir, "master.key") }
+
 // Defaults returns the built-in configuration, before any file, environment or flag is consulted.
 // home is the user's home directory; when empty the data directory falls back to ".lexicode"
 // relative to the working directory.

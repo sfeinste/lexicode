@@ -20,12 +20,14 @@ import type { InheritedInt, Project, UpdateProjectRequest } from "../../../lib/a
 import { useProjectQuery, useUpdateProject } from "../../../lib/api/projectQueries";
 import { useAutosave } from "../../../lib/autosave";
 import { BoardSection } from "./BoardSection";
+import { SecretsSection } from "./SecretsSection";
 import styles from "./settings.module.css";
 
 /** The §5.11 rail. Sections without an owning story yet render disabled. */
 const SECTIONS: Array<{ id: string; label: string; enabled: boolean }> = [
   { id: "general", label: "General", enabled: true },
   { id: "board", label: "Board", enabled: true },
+  { id: "secrets", label: "Secrets", enabled: true },
   { id: "wiki", label: "Wiki", enabled: false },
   { id: "repository", label: "Repository", enabled: false },
   { id: "agents", label: "Agents", enabled: false },
@@ -77,6 +79,8 @@ export function ProjectSettingsPage() {
       <div className={styles.pane}>
         {section === "board" ? (
           <BoardSection projectKey={key} />
+        ) : section === "secrets" ? (
+          <SecretsSection projectKey={key} />
         ) : (
           <GeneralSection project={project.data} />
         )}

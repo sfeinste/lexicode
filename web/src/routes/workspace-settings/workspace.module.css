@@ -29,6 +29,18 @@
   gap: 16px;
 }
 
+.secretsSection {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.sectionTitle {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
 .field {
   display: flex;
   flex-direction: column;

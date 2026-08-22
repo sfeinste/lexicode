@@ -21,11 +21,13 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/bus"
 	"github.com/spruce/lexicode/internal/kernel/httpx"
 	"github.com/spruce/lexicode/internal/kernel/sched"
+	"github.com/spruce/lexicode/internal/kernel/secrets"
 	"github.com/spruce/lexicode/internal/kernel/store"
 	"github.com/spruce/lexicode/internal/kernel/store/seed"
 	"github.com/spruce/lexicode/internal/logging"
 	"github.com/spruce/lexicode/internal/service/board"
 	"github.com/spruce/lexicode/internal/service/projects"
+	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
 	"github.com/spruce/lexicode/internal/service/tickets"
 	webui "github.com/spruce/lexicode/web"
 )
@@ -101,6 +103,16 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		}
 	}
 
+	// The secret store opens right after the database: a master key file with lax
+	// permissions, or one that is not a key at all, refuses boot here with an actionable
+	// message (D-16) — before any listener exists.
+	sec, err := secrets.Open(secrets.Options{
+		Store: st, KeyPath: cfg.MasterKeyFile(), Logger: logger,
+	})
+	if err != nil {
+		return err
+	}
+
 	mux := httpx.NewMux(httpx.Options{Logger: logger})
 	b := bus.New(bus.Options{Store: st, Logger: logger})
 	authSvc := auth.New(auth.Options{Store: st, Logger: logger})
@@ -112,7 +124,8 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		return err
 	}
 	k := kernel.New(kernel.Options{
-		Logger: logger, Mux: mux, Store: st, Bus: b, Auth: authSvc, Audit: auditW, SSE: hub,
+		Logger: logger, Mux: mux, Store: st, Bus: b, Auth: authSvc, Audit: auditW,
+		Secrets: sec, SSE: hub,
 	})
 
 	// Services (architecture §2.1: wiring happens here and only here). Each service registers
@@ -128,6 +141,10 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 		Store: st, Audit: auditW, Bus: b, Sched: sched.Unscheduled{}, Logger: logger,
 	})
 	ticketsSvc.Routes(mux, authSvc)
+	secretsSvc := secretsvc.New(secretsvc.Options{
+		Store: st, Secrets: sec, Audit: auditW, Logger: logger,
+	})
+	secretsSvc.Routes(mux, authSvc)
 
 	// No modules yet. github, docker, claudecode, actions, context and notify arrive with the
 	// stories that build them (architecture §3.1); each is one line here.

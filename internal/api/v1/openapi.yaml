@@ -225,6 +225,86 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/secrets:
+    get:
+      operationId: listProjectSecrets
+      summary: >
+        A project's secrets — names and dates only. Secret values are write-only through the
+        API (D-16): no route ever returns one.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The secret list, name order. Metadata only, never values.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: setProjectSecret
+      summary: >
+        Set a secret: create it, or replace the value of the existing secret with this name.
+        The one shape a value ever crosses the API in — requests only, never responses.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetSecretRequest" }
+      responses:
+        "200":
+          description: The value of the existing secret with this name was replaced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "201":
+          description: A new secret was created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/secrets/{id}:
+    patch:
+      operationId: renameProjectSecret
+      summary: Rename a secret. The stored value is untouched.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenameSecretRequest" }
+      responses:
+        "200":
+          description: The renamed secret's metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteProjectSecret
+      summary: >
+        Delete a secret. A secret something still references (a connected repo's token)
+        answers 409 secret_in_use rather than orphaning the reference.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /projects/{key}/columns:
     get:
       operationId: listColumns
@@ -715,6 +795,74 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
+  /workspace/secrets:
+    get:
+      operationId: listWorkspaceSecrets
+      summary: >
+        Workspace-scope secrets (owner only) — names and dates only, like the project list.
+        Values are write-only through the API (D-16).
+      responses:
+        "200":
+          description: The secret list, name order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretListResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: setWorkspaceSecret
+      summary: Set a workspace-scope secret — create, or replace the existing name's value (owner only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetSecretRequest" }
+      responses:
+        "200":
+          description: The value of the existing secret with this name was replaced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "201":
+          description: A new secret was created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /workspace/secrets/{id}:
+    patch:
+      operationId: renameWorkspaceSecret
+      summary: Rename a workspace-scope secret (owner only). The stored value is untouched.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenameSecretRequest" }
+      responses:
+        "200":
+          description: The renamed secret's metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteWorkspaceSecret
+      summary: Delete a workspace-scope secret (owner only).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /audit:
     get:
       operationId: auditList
@@ -1050,6 +1198,50 @@ components:
         default_verification_days: { type: integer }
         max_concurrent_containers: { type: integer }
         poll_interval_seconds: { type: integer }
+    Secret:
+      type: object
+      description: >
+        A secret's metadata (D-16). Deliberately value-free: there is no field for the stored
+        value anywhere in this API, and no route that returns one. The UI renders
+        "set · <relative updated_at>".
+      required: [id, scope, project_id, name, created_at, updated_at]
+      properties:
+        id: { type: string }
+        scope: { type: string, enum: [workspace, project] }
+        project_id:
+          type: [string, "null"]
+          description: Null for workspace-scope secrets.
+        name:
+          type: string
+          description: Env-var shaped — this is the variable name inside a run container (S19).
+        created_at: { type: string, format: date-time }
+        updated_at:
+          type: string
+          format: date-time
+          description: When the value was last set — the "set · 4 days ago" date.
+    SecretListResponse:
+      type: object
+      required: [secrets]
+      properties:
+        secrets:
+          type: array
+          items: { $ref: "#/components/schemas/Secret" }
+    SetSecretRequest:
+      type: object
+      description: Create the named secret, or replace the existing one's value.
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          description: "A–Z, 0–9 and _, not starting with a digit; at most 128 characters."
+        value:
+          type: string
+          description: Write-only; at most 64 KiB. Never returned by any route.
+    RenameSecretRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
     TicketPriority:
       type: string
       enum: [none, low, medium, high, urgent]

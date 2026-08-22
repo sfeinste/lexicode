@@ -193,6 +193,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{key}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A project's secrets — names and dates only. Secret values are write-only through the API (D-16): no route ever returns one. */
+        get: operations["listProjectSecrets"];
+        put?: never;
+        /** Set a secret: create it, or replace the value of the existing secret with this name. The one shape a value ever crosses the API in — requests only, never responses. */
+        post: operations["setProjectSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/secrets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a secret. A secret something still references (a connected repo's token) answers 409 secret_in_use rather than orphaning the reference. */
+        delete: operations["deleteProjectSecret"];
+        options?: never;
+        head?: never;
+        /** Rename a secret. The stored value is untouched. */
+        patch: operations["renameProjectSecret"];
+        trace?: never;
+    };
     "/projects/{key}/columns": {
         parameters: {
             query?: never;
@@ -442,6 +478,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspace/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace-scope secrets (owner only) — names and dates only, like the project list. Values are write-only through the API (D-16). */
+        get: operations["listWorkspaceSecrets"];
+        put?: never;
+        /** Set a workspace-scope secret — create, or replace the existing name's value (owner only). */
+        post: operations["setWorkspaceSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace/secrets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a workspace-scope secret (owner only). */
+        delete: operations["deleteWorkspaceSecret"];
+        options?: never;
+        head?: never;
+        /** Rename a workspace-scope secret (owner only). The stored value is untouched. */
+        patch: operations["renameWorkspaceSecret"];
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -689,6 +761,36 @@ export interface components {
             default_verification_days?: number;
             max_concurrent_containers?: number;
             poll_interval_seconds?: number;
+        };
+        /** @description A secret's metadata (D-16). Deliberately value-free: there is no field for the stored value anywhere in this API, and no route that returns one. The UI renders "set · <relative updated_at>". */
+        Secret: {
+            id: string;
+            /** @enum {string} */
+            scope: "workspace" | "project";
+            /** @description Null for workspace-scope secrets. */
+            project_id: string | null;
+            /** @description Env-var shaped — this is the variable name inside a run container (S19). */
+            name: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description When the value was last set — the "set · 4 days ago" date.
+             */
+            updated_at: string;
+        };
+        SecretListResponse: {
+            secrets: components["schemas"]["Secret"][];
+        };
+        /** @description Create the named secret, or replace the existing one's value. */
+        SetSecretRequest: {
+            /** @description A–Z, 0–9 and _, not starting with a digit; at most 128 characters. */
+            name: string;
+            /** @description Write-only; at most 64 KiB. Never returned by any route. */
+            value: string;
+        };
+        RenameSecretRequest: {
+            name: string;
         };
         /** @enum {string} */
         TicketPriority: "none" | "low" | "medium" | "high" | "urgent";
@@ -1193,6 +1295,126 @@ export interface operations {
                     "application/json": components["schemas"]["ProjectOverview"];
                 };
             };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    listProjectSecrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The secret list, name order. Metadata only, never values. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    setProjectSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description The value of the existing secret with this name was replaced. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            /** @description A new secret was created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    deleteProjectSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    renameProjectSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description The renamed secret's metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
@@ -1890,6 +2112,118 @@ export interface operations {
             400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
+        };
+    };
+    listWorkspaceSecrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The secret list, name order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretListResponse"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    setWorkspaceSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description The value of the existing secret with this name was replaced. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            /** @description A new secret was created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    deleteWorkspaceSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    renameWorkspaceSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description The renamed secret's metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
         };
     };
     auditList: {
