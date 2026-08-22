@@ -27,6 +27,7 @@ import (
 	"github.com/spruce/lexicode/internal/logging"
 	githubmod "github.com/spruce/lexicode/internal/module/github"
 	"github.com/spruce/lexicode/internal/service/board"
+	"github.com/spruce/lexicode/internal/service/bootstrap"
 	"github.com/spruce/lexicode/internal/service/projects"
 	secretsvc "github.com/spruce/lexicode/internal/service/secrets"
 	"github.com/spruce/lexicode/internal/service/tickets"
@@ -149,11 +150,20 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 
 	// Modules (architecture §3.1); each is one line here. docker, claudecode, actions, context
 	// and notify arrive with the stories that build them.
-	if err := k.RegisterModule(
-		githubmod.New(githubmod.Options{}),
-	); err != nil {
+	ghMod := githubmod.New(githubmod.Options{BaseURL: cfg.GitHubBaseURL})
+	if err := k.RegisterModule(ghMod); err != nil {
 		return err
 	}
+
+	// The bootstrap service resolves the forge port through the kernel at call time; its doc
+	// detection uses the github adapter's extra ListDir/ReadFileIfExists methods, which the
+	// frozen ForgeProvider port does not carry — the concrete value is handed over here, at
+	// the one wiring site (see bootstrap.DocLister).
+	bootstrapSvc := bootstrap.New(bootstrap.Options{
+		Store: st, Secrets: sec, Forge: k.Forge, Docs: ghMod.Forge(),
+		Audit: auditW, Bus: b, Logger: logger,
+	})
+	bootstrapSvc.Routes(mux, authSvc)
 
 	// Init all → (migrate, story S03) → Start all → serve → Stop all in reverse.
 	if err := k.Init(); err != nil {

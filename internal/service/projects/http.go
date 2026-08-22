@@ -132,17 +132,26 @@ func toWorkspaceBody(ws domain.WorkspaceSettings) workspaceBody {
 	}
 }
 
-// overviewBody is GET /projects/{key}/overview — the About card's fields that exist in S08.
-// Repo is null until S14 connects one; recent runs, pinned pages and the activity feed arrive
-// with their stories.
+// overviewBody is GET /projects/{key}/overview — the About card. Repo is null until S15
+// connects one; recent runs, pinned pages and the activity feed arrive with their stories.
 type overviewBody struct {
 	Project         projectBody `json:"project"`
 	Owner           ownerBody   `json:"owner"`
-	Repo            *struct{}   `json:"repo"`
+	Repo            *repoBody   `json:"repo"`
 	AgentCount      int64       `json:"agent_count"`
 	OpenTickets     int64       `json:"open_tickets"`
 	RunsToday       int64       `json:"runs_today"`
 	SpendTodayCents int64       `json:"spend_today_cents"`
+}
+
+// repoBody is the About card's repo facts (S15): what §5.2 shows — repo, branch, last commit.
+type repoBody struct {
+	Provider      string  `json:"provider"`
+	Owner         string  `json:"owner"`
+	Name          string  `json:"name"`
+	DefaultBranch *string `json:"default_branch"`
+	HeadSHA       *string `json:"head_sha"`
+	HeadMessage   *string `json:"head_message"`
 }
 
 type ownerBody struct {
@@ -286,10 +295,20 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
+	var repo *repoBody
+	switch rp, err := s.st.Repos().ByProject(ctx, p.ID); {
+	case err == nil:
+		repo = &repoBody{Provider: rp.Provider, Owner: rp.Owner, Name: rp.Name,
+			DefaultBranch: rp.DefaultBranch, HeadSHA: rp.HeadSHA, HeadMessage: rp.HeadMessage}
+	case !errors.Is(err, store.ErrNotFound):
+		s.writeError(w, err)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, overviewBody{
 		Project: toProjectBody(p, ws),
 		Owner: ownerBody{ID: owner.ID, DisplayName: owner.DisplayName,
 			AvatarColor: owner.AvatarColor},
+		Repo:        repo,
 		AgentCount:  agentCount,
 		OpenTickets: stats[p.ID].OpenTickets,
 		RunsToday:   runsToday, SpendTodayCents: stats[p.ID].SpendTodayCents,

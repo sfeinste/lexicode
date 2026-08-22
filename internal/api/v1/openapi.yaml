@@ -305,6 +305,101 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/repo:
+    post:
+      operationId: connectRepo
+      summary: >
+        Connect a GitHub repository (S15): verify owner/name + PAT against the forge, store
+        the token as the project's GITHUB_TOKEN secret (write-only, D-16) and persist the
+        repos row with the default branch and head commit for the About card. Reconnecting
+        replaces the token and refreshes the row.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConnectRepoRequest" }
+      responses:
+        "201":
+          description: The connected repository.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    get:
+      operationId: repoStatus
+      summary: The project's repo connection. `connected:false` is a normal state, not a 404.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Whether a repository is connected, and which.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoStatus" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: disconnectRepo
+      summary: >
+        Disconnect the repository and delete the stored token. Everything a bootstrap
+        imported — tickets, wiki pages, triggers, agents — stays with the project.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Disconnected. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/bootstrap/preview:
+    post:
+      operationId: bootstrapPreview
+      summary: >
+        The bootstrap checklist in one payload (brief §6.3): open issues checked by default,
+        detected instruction docs with proposed agent_scope (D-11), detected CI as two
+        pre-filled triggers whose toggles are OFF, suggested starter agents, and an Overview
+        draft from the README. Writes nothing. Previously imported items (matched on issue
+        number / doc path) come back unchecked and labeled.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The checklist payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BootstrapPreview" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{key}/bootstrap/apply:
+    post:
+      operationId: bootstrapApply
+      summary: >
+        Create exactly the checked subset: tickets from issues (origin `import`), live wiki
+        pages from docs, the suggested triggers DISABLED, the starter agents, the project
+        description. Already-imported items are skipped, never duplicated.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BootstrapApplyRequest" }
+      responses:
+        "200":
+          description: What was created and what was skipped.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BootstrapApplyResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /projects/{key}/columns:
     get:
       operationId: listColumns
@@ -1103,8 +1198,10 @@ components:
         project: { $ref: "#/components/schemas/Project" }
         owner: { $ref: "#/components/schemas/ProjectOwner" }
         repo:
-          type: [object, "null"]
-          description: Null until a repository is connected (S14).
+          oneOf:
+            - $ref: "#/components/schemas/OverviewRepo"
+            - type: "null"
+          description: Null until a repository is connected (S15).
         agent_count: { type: integer }
         open_tickets: { type: integer }
         runs_today: { type: integer }
@@ -1116,6 +1213,149 @@ components:
         id: { type: string }
         display_name: { type: string }
         avatar_color: { type: string }
+    OverviewRepo:
+      type: object
+      description: The About card's repo facts (UI spec §5.2).
+      required: [provider, owner, name, default_branch, head_sha, head_message]
+      properties:
+        provider: { type: string }
+        owner: { type: string }
+        name: { type: string }
+        default_branch: { type: [string, "null"] }
+        head_sha: { type: [string, "null"] }
+        head_message: { type: [string, "null"] }
+    ConnectRepoRequest:
+      type: object
+      required: [owner, name, token]
+      properties:
+        owner: { type: string }
+        name: { type: string }
+        token:
+          type: string
+          description: A GitHub PAT. Stored write-only as the project secret GITHUB_TOKEN (D-16).
+    Repo:
+      type: object
+      description: A connected repository. The token never appears — only that one is stored.
+      required:
+        [provider, owner, name, default_branch, head_sha, head_message, connected_at,
+         last_synced_at, has_token]
+      properties:
+        provider: { type: string }
+        owner: { type: string }
+        name: { type: string }
+        default_branch: { type: [string, "null"] }
+        head_sha: { type: [string, "null"] }
+        head_message: { type: [string, "null"] }
+        connected_at: { type: [string, "null"] }
+        last_synced_at: { type: [string, "null"] }
+        has_token: { type: boolean }
+    RepoStatus:
+      type: object
+      required: [connected]
+      properties:
+        connected: { type: boolean }
+        repo: { $ref: "#/components/schemas/Repo" }
+    IssueCandidate:
+      type: object
+      required: [number, title, body, author_login, labels, url, checked, already_imported]
+      properties:
+        number: { type: integer }
+        title: { type: string }
+        body: { type: string }
+        author_login: { type: string }
+        labels: { type: array, items: { type: string } }
+        url: { type: string }
+        checked: { type: boolean }
+        already_imported: { type: boolean }
+        ticket_key: { type: string, description: Set when already imported. }
+    DocCandidate:
+      type: object
+      required: [path, title, proposed_scope, scope_paths, checked, already_imported]
+      properties:
+        path: { type: string }
+        title: { type: string }
+        proposed_scope: { $ref: "#/components/schemas/AgentScope" }
+        scope_paths: { type: array, items: { type: string } }
+        checked: { type: boolean }
+        already_imported: { type: boolean }
+        page_slug: { type: string, description: Set when already imported. }
+    AgentScope:
+      type: string
+      enum: [always, auto, paths, manual, never]
+    TriggerCandidate:
+      type: object
+      description: A pre-filled suggested trigger. Created DISABLED — the toggles ship off (§6.3).
+      required: [id, name, event, activity_types, description, workflows, checked, already_created]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        event: { type: string }
+        activity_types: { type: array, items: { type: string } }
+        description: { type: string }
+        workflows: { type: array, items: { type: string } }
+        checked: { type: boolean }
+        already_created: { type: boolean }
+    AgentCandidate:
+      type: object
+      required: [name, role, model, directive, checked, already_created]
+      properties:
+        name: { type: string }
+        role: { type: string }
+        model: { type: string }
+        directive: { type: string }
+        checked: { type: boolean }
+        already_created: { type: boolean }
+    OverviewCandidate:
+      type: object
+      required: [draft, checked, already_set]
+      properties:
+        draft: { type: string }
+        checked: { type: boolean }
+        already_set: { type: boolean }
+    BootstrapPreview:
+      type: object
+      required: [issues, docs, triggers, agents, overview]
+      properties:
+        issues: { type: array, items: { $ref: "#/components/schemas/IssueCandidate" } }
+        docs: { type: array, items: { $ref: "#/components/schemas/DocCandidate" } }
+        triggers: { type: array, items: { $ref: "#/components/schemas/TriggerCandidate" } }
+        agents: { type: array, items: { $ref: "#/components/schemas/AgentCandidate" } }
+        overview: { $ref: "#/components/schemas/OverviewCandidate" }
+    DocChoice:
+      type: object
+      required: [path, scope]
+      properties:
+        path: { type: string }
+        scope: { $ref: "#/components/schemas/AgentScope" }
+        paths: { type: array, items: { type: string } }
+    BootstrapApplyRequest:
+      type: object
+      description: Exactly the checked subset. Absent sections create nothing.
+      properties:
+        issues: { type: array, items: { type: integer } }
+        docs: { type: array, items: { $ref: "#/components/schemas/DocChoice" } }
+        triggers:
+          type: array
+          items: { type: string }
+          description: Candidate IDs from the preview.
+        agents:
+          type: array
+          items: { type: string }
+          description: Candidate names from the preview.
+        overview: { type: [string, "null"] }
+    BootstrapApplyResult:
+      type: object
+      required:
+        [tickets_created, issues_skipped, pages_created, docs_skipped, triggers_created,
+         agents_created, overview_set]
+      properties:
+        tickets_created: { type: array, items: { type: string } }
+        issues_skipped: { type: array, items: { type: integer } }
+        pages_created: { type: array, items: { type: string } }
+        docs_skipped: { type: array, items: { type: string } }
+        triggers_created: { type: array, items: { type: string } }
+        agents_created: { type: array, items: { type: string } }
+        overview_set: { type: boolean }
     ColumnCategory:
       type: string
       description: >

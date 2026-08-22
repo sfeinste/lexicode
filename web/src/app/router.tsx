@@ -26,6 +26,7 @@ import { InboxPage } from "../routes/inbox/InboxPage";
 import { AgentDetailPage } from "../routes/project/agents/AgentDetailPage";
 import { AgentsPage } from "../routes/project/agents/AgentsPage";
 import { BoardPage } from "../routes/project/board/BoardPage";
+import { BootstrapPage } from "../routes/project/bootstrap/BootstrapPage";
 import { OverviewPage } from "../routes/project/overview/OverviewPage";
 import { RunDetailPage } from "../routes/project/runs/RunDetailPage";
 import { RunsPage } from "../routes/project/runs/RunsPage";
@@ -103,6 +104,14 @@ const overviewRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/",
   component: OverviewPage,
+});
+
+// The bootstrap checklist (S15): connect a repo on the Overview gate, review the scan here.
+// Reached again later via "Re-scan repository" in project settings.
+const bootstrapRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "bootstrap",
+  component: BootstrapPage,
 });
 
 /**
@@ -285,6 +294,7 @@ const routeTree = rootRoute.addChildren([
     workspaceSettingsRoute,
     projectRoute.addChildren([
       overviewRoute,
+      bootstrapRoute,
       boardRoute,
       triageRoute,
       ticketRoute,

@@ -15,6 +15,19 @@ type AgentPermissions struct {
 	CreateWikiPages bool `json:"create_wiki_pages"`
 }
 
+// AgentDirective is a row of agent_directives (data model §3): one immutable version of an
+// agent's system prompt. The table is append-only — the diff view reads two rows.
+type AgentDirective struct {
+	ID            string
+	AgentID       string
+	Version       int64
+	Body          string
+	TokenEstimate int64
+	AuthorID      *string
+	Note          string
+	CreatedAt     string
+}
+
 // Agent is a row of agents.
 type Agent struct {
 	ID                  string

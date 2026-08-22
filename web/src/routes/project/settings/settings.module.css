@@ -396,3 +396,45 @@
 .primaryButton:hover {
   filter: brightness(1.08);
 }
+
+/* ---- the S15 Repository pane ---- */
+
+.repoFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.repoFacts dt {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.repoFacts dd {
+  margin-top: 2px;
+}
+
+.repoActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.quietButton {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  padding: 6px 8px;
+}
+
+.quietButton:hover {
+  color: var(--text);
+}
+
+.fieldError {
+  color: var(--fail);
+}

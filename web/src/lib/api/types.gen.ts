@@ -229,6 +229,59 @@ export interface paths {
         patch: operations["renameProjectSecret"];
         trace?: never;
     };
+    "/projects/{key}/repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The project's repo connection. `connected:false` is a normal state, not a 404. */
+        get: operations["repoStatus"];
+        put?: never;
+        /** Connect a GitHub repository (S15): verify owner/name + PAT against the forge, store the token as the project's GITHUB_TOKEN secret (write-only, D-16) and persist the repos row with the default branch and head commit for the About card. Reconnecting replaces the token and refreshes the row. */
+        post: operations["connectRepo"];
+        /** Disconnect the repository and delete the stored token. Everything a bootstrap imported — tickets, wiki pages, triggers, agents — stays with the project. */
+        delete: operations["disconnectRepo"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/bootstrap/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The bootstrap checklist in one payload (brief §6.3): open issues checked by default, detected instruction docs with proposed agent_scope (D-11), detected CI as two pre-filled triggers whose toggles are OFF, suggested starter agents, and an Overview draft from the README. Writes nothing. Previously imported items (matched on issue number / doc path) come back unchecked and labeled. */
+        post: operations["bootstrapPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}/bootstrap/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create exactly the checked subset: tickets from issues (origin `import`), live wiki pages from docs, the suggested triggers DISABLED, the starter agents, the project description. Already-imported items are skipped, never duplicated. */
+        post: operations["bootstrapApply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{key}/columns": {
         parameters: {
             query?: never;
@@ -687,8 +740,8 @@ export interface components {
         ProjectOverview: {
             project: components["schemas"]["Project"];
             owner: components["schemas"]["ProjectOwner"];
-            /** @description Null until a repository is connected (S14). */
-            repo: Record<string, never> | null;
+            /** @description Null until a repository is connected (S15). */
+            repo: components["schemas"]["OverviewRepo"] | null;
             agent_count: number;
             open_tickets: number;
             runs_today: number;
@@ -698,6 +751,116 @@ export interface components {
             id: string;
             display_name: string;
             avatar_color: string;
+        };
+        /** @description The About card's repo facts (UI spec §5.2). */
+        OverviewRepo: {
+            provider: string;
+            owner: string;
+            name: string;
+            default_branch: string | null;
+            head_sha: string | null;
+            head_message: string | null;
+        };
+        ConnectRepoRequest: {
+            owner: string;
+            name: string;
+            /** @description A GitHub PAT. Stored write-only as the project secret GITHUB_TOKEN (D-16). */
+            token: string;
+        };
+        /** @description A connected repository. The token never appears — only that one is stored. */
+        Repo: {
+            provider: string;
+            owner: string;
+            name: string;
+            default_branch: string | null;
+            head_sha: string | null;
+            head_message: string | null;
+            connected_at: string | null;
+            last_synced_at: string | null;
+            has_token: boolean;
+        };
+        RepoStatus: {
+            connected: boolean;
+            repo?: components["schemas"]["Repo"];
+        };
+        IssueCandidate: {
+            number: number;
+            title: string;
+            body: string;
+            author_login: string;
+            labels: string[];
+            url: string;
+            checked: boolean;
+            already_imported: boolean;
+            /** @description Set when already imported. */
+            ticket_key?: string;
+        };
+        DocCandidate: {
+            path: string;
+            title: string;
+            proposed_scope: components["schemas"]["AgentScope"];
+            scope_paths: string[];
+            checked: boolean;
+            already_imported: boolean;
+            /** @description Set when already imported. */
+            page_slug?: string;
+        };
+        /** @enum {string} */
+        AgentScope: "always" | "auto" | "paths" | "manual" | "never";
+        /** @description A pre-filled suggested trigger. Created DISABLED — the toggles ship off (§6.3). */
+        TriggerCandidate: {
+            id: string;
+            name: string;
+            event: string;
+            activity_types: string[];
+            description: string;
+            workflows: string[];
+            checked: boolean;
+            already_created: boolean;
+        };
+        AgentCandidate: {
+            name: string;
+            role: string;
+            model: string;
+            directive: string;
+            checked: boolean;
+            already_created: boolean;
+        };
+        OverviewCandidate: {
+            draft: string;
+            checked: boolean;
+            already_set: boolean;
+        };
+        BootstrapPreview: {
+            issues: components["schemas"]["IssueCandidate"][];
+            docs: components["schemas"]["DocCandidate"][];
+            triggers: components["schemas"]["TriggerCandidate"][];
+            agents: components["schemas"]["AgentCandidate"][];
+            overview: components["schemas"]["OverviewCandidate"];
+        };
+        DocChoice: {
+            path: string;
+            scope: components["schemas"]["AgentScope"];
+            paths?: string[];
+        };
+        /** @description Exactly the checked subset. Absent sections create nothing. */
+        BootstrapApplyRequest: {
+            issues?: number[];
+            docs?: components["schemas"]["DocChoice"][];
+            /** @description Candidate IDs from the preview. */
+            triggers?: string[];
+            /** @description Candidate names from the preview. */
+            agents?: string[];
+            overview?: string | null;
+        };
+        BootstrapApplyResult: {
+            tickets_created: string[];
+            issues_skipped: number[];
+            pages_created: string[];
+            docs_skipped: string[];
+            triggers_created: string[];
+            agents_created: string[];
+            overview_set: boolean;
         };
         /**
          * @description The stable key automation reads (brief D2 / plan rule 3). Code branches on this, never on a column's user-facing name.
@@ -1412,6 +1575,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Secret"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    repoStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether a repository is connected, and which. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoStatus"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    connectRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectRepoRequest"];
+            };
+        };
+        responses: {
+            /** @description The connected repository. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repo"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    disconnectRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    bootstrapPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The checklist payload. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BootstrapPreview"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    bootstrapApply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BootstrapApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description What was created and what was skipped. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BootstrapApplyResult"];
                 };
             };
             400: components["responses"]["Problem"];

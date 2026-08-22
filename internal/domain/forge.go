@@ -89,6 +89,15 @@ type CheckSuite struct {
 	URL        string
 }
 
+// DirEntry is one entry of a repository directory listing, as bootstrap doc detection (S15)
+// consumes it. It is deliberately minimal: enough to walk .cursor/rules/*, docs/** (depth 2)
+// and .github/workflows/* — not a general tree API.
+type DirEntry struct {
+	Name string // base name, "deploy.md"
+	Path string // repo-relative path, "docs/deploy.md"
+	Type string // "file" | "dir"
+}
+
 // Issue is one open issue as the bootstrap import (S15) offers it. Pull requests are excluded
 // by the adapter — on GitHub every PR is an issue, but an importable ticket is not a PR.
 type Issue struct {

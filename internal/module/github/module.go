@@ -96,6 +96,12 @@ func New(opts Options) *Module {
 // Name implements kernel.Module.
 func (m *Module) Name() string { return moduleName }
 
+// Forge returns the concrete adapter. cmd/lexicode (the wiring site) uses it to satisfy the
+// bootstrap service's DocLister seam with the adapter's extra ListDir method — a capability the
+// frozen ForgeProvider port does not carry (see Forge.ListDir). No other caller should reach
+// for the concrete type.
+func (m *Module) Forge() *Forge { return m.forge }
+
 // Init registers the forge port and wires the dependencies that were not injected: the
 // permission lookup and output recorder read the kernel's store, the audit recorder is the
 // kernel's writer, and health transitions go to kernel.SetModuleState. No I/O happens here.

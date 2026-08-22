@@ -20,6 +20,7 @@ import type { InheritedInt, Project, UpdateProjectRequest } from "../../../lib/a
 import { useProjectQuery, useUpdateProject } from "../../../lib/api/projectQueries";
 import { useAutosave } from "../../../lib/autosave";
 import { BoardSection } from "./BoardSection";
+import { RepositorySection } from "./RepositorySection";
 import { SecretsSection } from "./SecretsSection";
 import styles from "./settings.module.css";
 
@@ -29,7 +30,7 @@ const SECTIONS: Array<{ id: string; label: string; enabled: boolean }> = [
   { id: "board", label: "Board", enabled: true },
   { id: "secrets", label: "Secrets", enabled: true },
   { id: "wiki", label: "Wiki", enabled: false },
-  { id: "repository", label: "Repository", enabled: false },
+  { id: "repository", label: "Repository", enabled: true },
   { id: "agents", label: "Agents", enabled: false },
   { id: "triggers", label: "Triggers", enabled: false },
   { id: "members", label: "Members & access", enabled: false },
@@ -81,6 +82,8 @@ export function ProjectSettingsPage() {
           <BoardSection projectKey={key} />
         ) : section === "secrets" ? (
           <SecretsSection projectKey={key} />
+        ) : section === "repository" ? (
+          <RepositorySection projectKey={key} />
         ) : (
           <GeneralSection project={project.data} />
         )}

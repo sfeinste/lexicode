@@ -1,13 +1,15 @@
 /*
- * Project Overview — `/p/:key` (UI spec §5.2). S08 renders the About card with the fields
- * that exist: description, owner, agent count, open tickets, runs today, spend today /
- * ceiling. Repo + branch + last commit arrive with S14; the three columns below (recent
- * runs, pinned wiki pages, activity feed) with their stories.
+ * Project Overview — `/p/:key` (UI spec §5.2). The About card carries description, owner,
+ * repo + branch + last commit (S15), agent count, open tickets, runs today, spend today /
+ * ceiling. A project without a repo renders the single connect gate below the card (S15);
+ * the three columns (recent runs, pinned wiki pages, activity feed) arrive with their
+ * stories.
  */
 import { useParams } from "@tanstack/react-router";
 
 import { useProjectOverviewQuery } from "../../../lib/api/projectQueries";
 import { formatUSD } from "../../../lib/format/format";
+import { ConnectRepoCard } from "./ConnectRepoCard";
 import styles from "./overview.module.css";
 
 export function OverviewPage() {
@@ -27,7 +29,7 @@ export function OverviewPage() {
     );
   }
 
-  const { project, owner, agent_count, open_tickets, runs_today, spend_today_cents } =
+  const { project, owner, repo, agent_count, open_tickets, runs_today, spend_today_cents } =
     overview.data;
   const ceiling = project.settings.daily_budget_cents.value;
 
@@ -60,7 +62,24 @@ export function OverviewPage() {
           </div>
           <div className={styles.fact}>
             <dt>Repo</dt>
-            <dd className={styles.quiet}>Not connected</dd>
+            {repo ? (
+              <dd className={styles.repoFact}>
+                <span>
+                  {repo.owner}/{repo.name}
+                  {repo.default_branch && (
+                    <span className={styles.quiet}> · {repo.default_branch}</span>
+                  )}
+                </span>
+                {repo.head_sha && (
+                  <span className={styles.repoCommit}>
+                    <span className={styles.mono}>{repo.head_sha.slice(0, 7)}</span>{" "}
+                    {repo.head_message}
+                  </span>
+                )}
+              </dd>
+            ) : (
+              <dd className={styles.quiet}>Not connected</dd>
+            )}
           </div>
           <div className={styles.fact}>
             <dt>Agents</dt>
@@ -83,6 +102,7 @@ export function OverviewPage() {
           </div>
         </dl>
       </section>
+      {!repo && <ConnectRepoCard projectKey={key} />}
       <div className={styles.columns}>
         <section aria-label="Recent runs">
           <h2 className={styles.sectionTitle}>Recent runs</h2>

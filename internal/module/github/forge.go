@@ -408,6 +408,67 @@ func (f *Forge) ReadFile(ctx context.Context, c ports.Creds, r domain.RepoRef, r
 	return []byte(content), nil
 }
 
+// ReadFileIfExists is ReadFile with an existence answer: absent files come back (nil, false,
+// nil) instead of a wrapped 404. Like ListDir below it is NOT part of ports.ForgeProvider —
+// bootstrap doc detection probes a list of well-known paths, and "not there" is the common
+// case, not an error. Reached through the bootstrap service's DocLister seam.
+func (f *Forge) ReadFileIfExists(ctx context.Context, c ports.Creds, r domain.RepoRef, ref, path string) ([]byte, bool, error) {
+	cl, err := f.client(c)
+	if err != nil {
+		return nil, false, err
+	}
+	file, dir, resp, err := cl.Repositories.GetContents(ctx, r.Owner, r.Name, path,
+		&gh.RepositoryContentGetOptions{Ref: ref})
+	if err != nil {
+		if resp != nil && resp.StatusCode == 404 {
+			return nil, false, nil
+		}
+		return nil, false, wrapErr("read file "+path+" at "+ref, r, err)
+	}
+	if file == nil || dir != nil {
+		return nil, false, nil // a directory is not the instruction file being probed for
+	}
+	content, err := file.GetContent()
+	if err != nil {
+		return nil, false, wrapErr("decode file "+path, r, err)
+	}
+	return []byte(content), true, nil
+}
+
+// ListDir returns one directory's entries at ref, or an empty listing when the path does not
+// exist. It is NOT part of ports.ForgeProvider: the frozen port (contracts §2.2) has ReadFile
+// only, and bootstrap doc detection (S15) needs a bounded directory listing for
+// .cursor/rules/*, docs/** and .github/workflows/*. Rather than widening the frozen port, the
+// concrete adapter exposes this extra method and cmd/lexicode hands it to the bootstrap
+// service through its narrow DocLister seam — flagged in the S15 report as a candidate for a
+// future port revision.
+func (f *Forge) ListDir(ctx context.Context, c ports.Creds, r domain.RepoRef, ref, path string) ([]domain.DirEntry, error) {
+	cl, err := f.client(c)
+	if err != nil {
+		return nil, err
+	}
+	file, dir, resp, err := cl.Repositories.GetContents(ctx, r.Owner, r.Name, path,
+		&gh.RepositoryContentGetOptions{Ref: ref})
+	if err != nil {
+		if resp != nil && resp.StatusCode == 404 {
+			return nil, nil // an absent directory is "nothing detected", not a failure
+		}
+		return nil, wrapErr("list directory "+path+" at "+ref, r, err)
+	}
+	if file != nil {
+		return nil, fmt.Errorf("github: %s in %s is a file, not a directory", path, r)
+	}
+	out := make([]domain.DirEntry, 0, len(dir))
+	for _, e := range dir {
+		out = append(out, domain.DirEntry{
+			Name: e.GetName(),
+			Path: e.GetPath(),
+			Type: e.GetType(), // "file" | "dir"
+		})
+	}
+	return out, nil
+}
+
 // ------------------------------------------------------------------------------ writes -----
 //
 // Every write follows contracts §2.2 in order: (1) the grant check, before any network I/O, so

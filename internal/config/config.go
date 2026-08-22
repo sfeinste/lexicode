@@ -44,6 +44,9 @@ type Config struct {
 	DataDir string `yaml:"data_dir"`
 	// DockerHost overrides the Docker endpoint. Empty means "use the environment".
 	DockerHost string `yaml:"docker_host"`
+	// GitHubBaseURL overrides the GitHub API base URL (GitHub Enterprise, or a fixture
+	// server during development). Empty means api.github.com.
+	GitHubBaseURL string `yaml:"github_base_url"`
 	// LogLevel is one of debug, info, warn, error.
 	LogLevel string `yaml:"log_level"`
 	// OpenBrowser opens a browser tab at the dashboard when the server is ready.
@@ -121,6 +124,7 @@ func Bind(fs *flag.FlagSet) *flag.FlagSet {
 	fs.Int("port", 0, "port to bind (default 7717)")
 	fs.String("data-dir", "", "directory for the database, logs and workspaces (default ~/.lexicode)")
 	fs.String("docker-host", "", "Docker endpoint override (default from the environment)")
+	fs.String("github-base-url", "", "GitHub API base URL override (GitHub Enterprise; default api.github.com)")
 	fs.String("log-level", "", "debug, info, warn or error (default info)")
 	fs.Bool("open-browser", false, "open a browser tab when the server is ready (default true)")
 	fs.String("config", "", "path to config.yaml (default ~/.lexicode/config.yaml)")
@@ -134,6 +138,7 @@ type yamlConfig struct {
 	Port        *int    `yaml:"port"`
 	DataDir     *string `yaml:"data_dir"`
 	DockerHost  *string `yaml:"docker_host"`
+	GitHubBase  *string `yaml:"github_base_url"`
 	LogLevel    *string `yaml:"log_level"`
 	OpenBrowser *bool   `yaml:"open_browser"`
 }
@@ -209,6 +214,7 @@ func applyFile(cfg *Config, path string) error {
 	assign(&cfg.Port, raw.Port)
 	assign(&cfg.DataDir, raw.DataDir)
 	assign(&cfg.DockerHost, raw.DockerHost)
+	assign(&cfg.GitHubBaseURL, raw.GitHubBase)
 	assign(&cfg.LogLevel, raw.LogLevel)
 	assign(&cfg.OpenBrowser, raw.OpenBrowser)
 	return nil
@@ -223,6 +229,7 @@ func applyEnv(cfg *Config, lookup func(string) (string, bool)) error {
 	str("HOST", &cfg.Host)
 	str("DATA_DIR", &cfg.DataDir)
 	str("DOCKER_HOST", &cfg.DockerHost)
+	str("GITHUB_BASE_URL", &cfg.GitHubBaseURL)
 	str("LOG_LEVEL", &cfg.LogLevel)
 
 	if v, ok := lookup(EnvPrefix + "PORT"); ok {
@@ -254,6 +261,9 @@ func applyFlags(cfg *Config, fs *flag.FlagSet) error {
 	}
 	if v, ok := setFlag(fs, "docker-host"); ok {
 		cfg.DockerHost = v
+	}
+	if v, ok := setFlag(fs, "github-base-url"); ok {
+		cfg.GitHubBaseURL = v
 	}
 	if v, ok := setFlag(fs, "log-level"); ok {
 		cfg.LogLevel = v

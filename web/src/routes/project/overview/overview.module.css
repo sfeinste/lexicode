@@ -110,3 +110,102 @@
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
 }
+
+.fact dd.repoFact {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.repoCommit {
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- the S15 connect gate ---- */
+
+.connectCard {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 20px 24px;
+  max-width: 560px;
+}
+
+.connectHeadline {
+  font-size: var(--fs-section);
+  font-weight: 600;
+}
+
+.connectBody {
+  margin-top: 4px;
+  color: var(--text-2);
+}
+
+.connectForm {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.connectFields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.connectField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.connectField input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 9px;
+  color: var(--text);
+  font-weight: 400;
+}
+
+.connectField input:focus {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.fieldError {
+  color: var(--fail);
+  font-weight: 400;
+}
+
+.fieldHint {
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+  font-weight: 400;
+}
+
+.connectButton {
+  align-self: flex-start;
+  background: var(--accent);
+  color: #ffffff;
+  border-radius: 5px;
+  padding: 7px 16px;
+  font-weight: 600;
+}
+
+.connectButton:hover {
+  filter: brightness(1.08);
+}
+
+.connectButton:disabled {
+  opacity: 0.55;
+  filter: none;
+}

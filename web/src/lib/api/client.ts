@@ -51,6 +51,18 @@ export type MemberListResponse = components["schemas"]["MemberListResponse"];
 export type WorkspaceSettings = components["schemas"]["WorkspaceSettings"];
 export type UpdateWorkspaceSettingsRequest =
   components["schemas"]["UpdateWorkspaceSettingsRequest"];
+export type OverviewRepo = components["schemas"]["OverviewRepo"];
+export type Repo = components["schemas"]["Repo"];
+export type RepoStatus = components["schemas"]["RepoStatus"];
+export type ConnectRepoRequest = components["schemas"]["ConnectRepoRequest"];
+export type BootstrapPreview = components["schemas"]["BootstrapPreview"];
+export type IssueCandidate = components["schemas"]["IssueCandidate"];
+export type DocCandidate = components["schemas"]["DocCandidate"];
+export type TriggerCandidate = components["schemas"]["TriggerCandidate"];
+export type AgentCandidate = components["schemas"]["AgentCandidate"];
+export type AgentScope = components["schemas"]["AgentScope"];
+export type BootstrapApplyRequest = components["schemas"]["BootstrapApplyRequest"];
+export type BootstrapApplyResult = components["schemas"]["BootstrapApplyResult"];
 export type Secret = components["schemas"]["Secret"];
 export type SecretListResponse = components["schemas"]["SecretListResponse"];
 export type SetSecretRequest = components["schemas"]["SetSecretRequest"];
@@ -303,4 +315,31 @@ export const workspaceApi = {
 export const auditApi = {
   list: (params: URLSearchParams, signal?: AbortSignal) =>
     api<AuditListResponse>("GET", `/audit?${params}`, { signal }),
+};
+
+/**
+ * Repo connect and project bootstrap (S15). The PAT crosses in the connect request only —
+ * responses carry `has_token`, never the token (D-16).
+ */
+export const repoApi = {
+  status: (projectKey: string, signal?: AbortSignal) =>
+    api<RepoStatus>("GET", `/projects/${encodeURIComponent(projectKey)}/repo`, { signal }),
+  connect: (projectKey: string, body: ConnectRepoRequest) =>
+    api<Repo>("POST", `/projects/${encodeURIComponent(projectKey)}/repo`, { body }),
+  disconnect: (projectKey: string) =>
+    api<void>("DELETE", `/projects/${encodeURIComponent(projectKey)}/repo`),
+};
+
+export const bootstrapApi = {
+  preview: (projectKey: string) =>
+    api<BootstrapPreview>(
+      "POST",
+      `/projects/${encodeURIComponent(projectKey)}/bootstrap/preview`,
+    ),
+  apply: (projectKey: string, body: BootstrapApplyRequest) =>
+    api<BootstrapApplyResult>(
+      "POST",
+      `/projects/${encodeURIComponent(projectKey)}/bootstrap/apply`,
+      { body },
+    ),
 };

@@ -34,10 +34,20 @@ import (
 //
 // If this test fails, the fix is to remove the reference — never to rename fields or smuggle
 // the value through a differently-named accessor.
+//
+// One documented exemption (S15): service/bootstrap/service.go. Contracts §2.2 states, of
+// ports.Creds, that "the service layer resolves the token from the secret store
+// (repos.token_secret_id) and passes it down; the adapter never reads secrets itself" — the
+// bootstrap service's creds() helper is that sanctioned in-process resolution. Its Get call
+// feeds forge calls only; no handler writes the value to a response (the repo bodies carry
+// has_token, never the token). Widen this list only with the same justification.
 func TestNoAPIHandlerTouchesSecretValues(t *testing.T) {
 	roots := []string{
 		filepath.Join("..", "..", "api"),
 		filepath.Join("..", "..", "service"),
+	}
+	exempt := map[string]bool{
+		filepath.Join("service", "bootstrap", "service.go"): true,
 	}
 	forbiddenWords := []string{"ciphertext", "plaintext", "nonce"}
 
@@ -65,6 +75,9 @@ func TestNoAPIHandlerTouchesSecretValues(t *testing.T) {
 			}
 			rel, _ := filepath.Rel(abs, path)
 			rel = filepath.Base(root) + string(filepath.Separator) + rel
+			if exempt[rel] {
+				return nil
+			}
 
 			lower := strings.ToLower(string(src))
 			for _, word := range forbiddenWords {
