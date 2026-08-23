@@ -43,6 +43,20 @@ jobs:
 
       - run: make check
 
+  # The one status check branch protection requires (.github/rulesets/main.json). It exists so
+  # the required context has a single stable name: `needs.check.result` is `success` only when
+  # every leg of the matrix passed, so adding an OS here never leaves a required check dangling.
+  required:
+    name: all checks passed
+    runs-on: ubuntu-latest
+    needs: [check]
+    if: always()
+    steps:
+      - name: Fail unless every check job succeeded
+        run: |
+          echo "check: ${{ needs.check.result }}"
+          [[ "${{ needs.check.result }}" == "success" ]]
+
   # The Docker sandbox acceptance suite (story S17): real containers against the runner's
   # daemon, so Linux only. Best-effort — the first run builds the agent base image, which
   # depends on external downloads (nodejs.org, npm), so a transient failure here must not

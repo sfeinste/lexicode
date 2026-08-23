@@ -163,3 +163,12 @@ scripts/s39-acceptance.sh   # the brief §3 chain, all eight steps, with the tim
 ```
 
 Both need Docker and a few minutes. Shared fixture code is in [`e2e/harness`](e2e/harness).
+
+`make check` also runs on every pull request and on pushes to `main`, on Linux and macOS
+([`.github/workflows/check.yml`](.github/workflows/check.yml)). Its `all checks passed` job is the
+single status check merging is gated on. The gate itself is repository state rather than a file
+GitHub reads from the branch, so it is committed as a ruleset and applied with:
+
+```sh
+scripts/protect-main.sh     # applies .github/rulesets/main.json (needs gh, and admin on the repo)
+```
