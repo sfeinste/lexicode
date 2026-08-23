@@ -36,7 +36,10 @@ import (
 // mcpFixture is the store, the rows and the MCP server the two reachability tests share: one
 // project, one agent, one running run, and a live token for it.
 type mcpFixture struct {
-	server  *mcpsvc.Server
+	server *mcpsvc.Server
+	// store is the same store the server reads: the elicitation acceptance polls it for the
+	// pending row while the container's tool call is blocked.
+	store   *store.Store
 	project domain.Project
 	agent   domain.Agent
 	run     domain.Run
@@ -96,7 +99,7 @@ func newMCPFixture(t *testing.T, runID string, logger *slog.Logger) mcpFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return mcpFixture{server: mcpServer, project: project, agent: agent, run: run, token: token}
+	return mcpFixture{server: mcpServer, store: st, project: project, agent: agent, run: run, token: token}
 }
 
 func TestS21MCPReachableUnderPolicyNone(t *testing.T) {

@@ -69,13 +69,14 @@ type AttachOptions struct {
 // tool_result. queued_ms is not derivable from the stream and stays null.
 func Attach(spec ports.RunSpec, st ports.Streams, sink ports.RunSink, opts AttachOptions) ports.Handle {
 	s := &session{
-		spec:     spec,
-		st:       st,
-		sink:     sink,
-		opts:     opts,
-		inFlight: map[string]*action{},
-		lastDone: map[string]finished{},
-		done:     make(chan struct{}),
+		spec:        spec,
+		st:          st,
+		sink:        sink,
+		opts:        opts,
+		inFlight:    map[string]*action{},
+		lastDone:    map[string]finished{},
+		progressSeq: map[string]int64{},
+		done:        make(chan struct{}),
 	}
 	if s.opts.Grace <= 0 {
 		s.opts.Grace = defaultGrace
@@ -129,7 +130,8 @@ type session struct {
 	seq         int64
 	inFlight    map[string]*action
 	lastDone    map[string]finished
-	queue       []string // steering messages awaiting a gap between tool calls
+	progressSeq map[string]int64 // tool_use_id → the seq of its tool_progress row
+	queue       []string         // steering messages awaiting a gap between tool calls
 	stopped     bool
 	stopReason  string
 	ended       bool
@@ -213,6 +215,8 @@ func (s *session) handleLine(raw []byte) {
 		s.handleUserLocked(&line, now)
 	case "result":
 		s.handleResultLocked(&line, now)
+	case "tool_progress":
+		s.handleToolProgressLocked(&line, now)
 	default:
 		s.emitLocked(domain.Activity{
 			Type:    domain.ActivitySystem,
@@ -257,6 +261,63 @@ func (s *session) handleSystemLocked(line *streamLine, raw []byte, now time.Time
 		Title:   truncateLine("system: " + line.Subtype),
 		Payload: mustJSON(map[string]any{"line": cappedString(raw)}),
 	}, now)
+}
+
+// handleToolProgressLocked renders a tool_progress heartbeat. The CLI emits one every 30
+// seconds while a tool call is still outstanding; for a parked ask_human they are the only
+// thing on the stream between the question and the answer, and filing them as "unhandled
+// message" is how a run waiting on a human came to look like a run that had gone quiet.
+//
+// One row per call, re-emitted under its own Seq as the heartbeats arrive, so the transcript
+// gains a line that counts up rather than a line per thirty seconds. Level 2: the wait is
+// already a level-0 elicitation row and the run header's own state; this is the verbose-mode
+// evidence that the call is alive.
+func (s *session) handleToolProgressLocked(line *streamLine, now time.Time) {
+	tool := line.ToolName
+	if act, ok := s.inFlight[line.ToolUseID]; ok && tool == "" {
+		tool = act.tool
+	}
+	if tool == "" {
+		tool = "a tool"
+	}
+	elapsed := time.Duration(line.ElapsedTimeSeconds * float64(time.Second)).Round(time.Second)
+
+	a := domain.Activity{
+		Type:     domain.ActivitySystem,
+		Level:    2,
+		ToolName: line.ToolName,
+		GroupKey: "tool_progress:" + line.ToolUseID,
+		Title:    truncateLine(progressTitle(tool, elapsed)),
+		Payload: mustJSON(map[string]any{
+			"tool_use_id":        line.ToolUseID,
+			"tool_name":          line.ToolName,
+			"elapsed_s":          line.ElapsedTimeSeconds,
+			"heartbeat":          line.Heartbeat,
+			"parent_tool_use_id": line.ParentToolUseID,
+		}),
+	}
+	if seq, ok := s.progressSeq[line.ToolUseID]; ok {
+		a.Seq = seq
+		s.emitAtLocked(a, now)
+		return
+	}
+	s.progressSeq[line.ToolUseID] = s.emitLocked(a, now)
+}
+
+// progressTitle words the heartbeat. The two Lexicode tools that park a run are named for
+// what is actually happening — a human has not answered yet — because "still running" reads
+// like a hung tool and this is the opposite of one.
+func progressTitle(tool string, elapsed time.Duration) string {
+	switch tool {
+	case "mcp__lexicode__ask_human":
+		return fmt.Sprintf("waiting on you to answer — %s elapsed", elapsed)
+	case "mcp__lexicode__request_approval":
+		return fmt.Sprintf("waiting on you to approve — %s elapsed", elapsed)
+	}
+	if server, name, ok := splitMCPTool(tool); ok {
+		tool = server + ": " + name
+	}
+	return fmt.Sprintf("%s still running — %s elapsed", tool, elapsed)
 }
 
 func (s *session) handleAssistantLocked(line *streamLine, now time.Time) {
@@ -373,6 +434,7 @@ func (s *session) handleUserLocked(line *streamLine, now time.Time) {
 			continue
 		}
 		delete(s.inFlight, block.ToolUseID)
+		delete(s.progressSeq, block.ToolUseID)
 
 		mergeResult(act.tool, act.payload, block)
 		toolMS := now.Sub(act.started).Milliseconds()

@@ -58,9 +58,14 @@ type env struct {
 
 func newEnv(t *testing.T) *env { return newEnvWithCeiling(t, 30*time.Second) }
 
-// newEnvWithCeiling wires store + auth + audit + bus + the MCP server and its routes,
-// exactly as cmd/lexicode serves them, with an injected state recorder and wait ceiling.
 func newEnvWithCeiling(t *testing.T, ceiling time.Duration) *env {
+	return newEnvWith(t, ceiling, 0)
+}
+
+// newEnvWith wires store + auth + audit + bus + the MCP server and its routes, exactly as
+// cmd/lexicode serves them, with an injected state recorder, wait ceiling and progress
+// cadence (zero leaves the production default).
+func newEnvWith(t *testing.T, ceiling, progressInterval time.Duration) *env {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st, err := store.Open(store.Options{Path: filepath.Join(t.TempDir(), "s21.db"), Logger: logger})
@@ -89,6 +94,8 @@ func newEnvWithCeiling(t *testing.T, ceiling time.Duration) *env {
 		SetRunState:  rec.set,
 		SubmitReview: reviews.submit,
 		WaitCeiling:  ceiling,
+
+		ProgressInterval: progressInterval,
 	})
 	mcpSvc.Routes(mux, authSvc)
 	mux.Handle("/mcp/{token}", mcpSvc.Handler())

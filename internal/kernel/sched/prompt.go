@@ -75,8 +75,8 @@ func (s *Scheduler) PreviewContext(ctx context.Context, projectID, agentID strin
 //
 //  1. the agent directive (the snapshot taken at enqueue),
 //  2. every registered ContextProvider's injected items, in provider Priority order —
-//     `project` (guidance) 10 · `wiki` 20 · `ticket` 30 · `repofiles` 40 (listed, never
-//     injected — D-11),
+//     `project` (guidance) 10 · `wiki` 20 · `event` (the occurrence that caused this run) 25 ·
+//     `ticket` 30 · `repofiles` 40 (listed, never injected — D-11),
 //  3. the request's prompt override, as the final "Task" section.
 //
 // The returned items are the run_context_items rows (RunID/ID stamped by the caller).
@@ -92,6 +92,7 @@ func (s *Scheduler) assemblePrompt(ctx context.Context, agent domain.Agent, tick
 		ProjectID:    req.ProjectID,
 		AgentID:      agent.ID,
 		TicketID:     req.TicketID,
+		CauseEventID: req.CauseEventID,
 		ChangedPaths: req.ChangedPaths,
 	}
 	if ticket != nil {

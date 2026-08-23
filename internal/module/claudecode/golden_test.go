@@ -22,7 +22,8 @@ var update = flag.Bool("update", false, "rewrite golden files")
 // grouping, ok/duration merges, and (via the deterministic stepping clock) timestamps and the
 // timing gutter. The fixture covers init, a thought, Read, Edit with diff hunks, a failing
 // Bash, TodoWrite, an unknown tool, a Grep, an MCP tool, a malformed line mid-stream, and the
-// final result.
+// final result, and a parked mcp__lexicode__ask_human whose 30-second tool_progress
+// heartbeats collapse onto one elapsed-counting row.
 func TestGoldenSession(t *testing.T) {
 	fixture, err := os.ReadFile("testdata/session.ndjson")
 	if err != nil {

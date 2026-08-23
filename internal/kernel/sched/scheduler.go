@@ -33,7 +33,11 @@ type SpecInput struct {
 	Agent     domain.Agent
 	Ticket    *domain.Ticket // nil for a ticketless run
 	Run       domain.Run
-	RunToken  string
+	// CauseEvent is the event that spawned the run (runs.cause_event_id), when it had one:
+	// nil for a manual delegation. The builder reads the pull request's head branch off it,
+	// so a run whose subject is a pull request is prepared ON that pull request.
+	CauseEvent *domain.Event
+	RunToken   string
 }
 
 // SpecResult is a SpecBuilder's product.
@@ -177,6 +181,16 @@ type supervisor struct {
 	stopKind domain.RunState // canceled | timed_out | failed — what Stop was for
 	stopWhy  string
 	steer    chan struct{}
+
+	// The wall-clock pause (D-12). A run parked on a human is not working, and the wall
+	// clock exists to bound work, so the supervisor stops charging it while the run sits in
+	// needs_input / awaiting_approval. parked says whether it is stopped right now,
+	// parkedSince is when it stopped, and parkedTotal is everything credited back so far;
+	// the supervise loop re-derives its timer from them whenever park nudges it.
+	parked      bool
+	parkedSince time.Time
+	parkedTotal time.Duration
+	park        chan struct{}
 }
 
 // New builds a scheduler. Call Start to begin reconciliation and admission.

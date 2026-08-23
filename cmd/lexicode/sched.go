@@ -24,7 +24,8 @@ type specBuilderAdapter struct{ b *runsvc.Builder }
 func (a specBuilderAdapter) Build(ctx context.Context, in sched.SpecInput) (sched.SpecResult, error) {
 	prep, err := a.b.Build(ctx, runsvc.PrepInput{
 		Workspace: in.Workspace, Project: in.Project, Repo: in.Repo,
-		Agent: in.Agent, Ticket: in.Ticket, Run: in.Run, RunToken: in.RunToken,
+		Agent: in.Agent, Ticket: in.Ticket, Run: in.Run, CauseEvent: in.CauseEvent,
+		RunToken: in.RunToken,
 	})
 	if err != nil {
 		return sched.SpecResult{}, err

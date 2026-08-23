@@ -76,11 +76,21 @@ func (stubSpecs) Build(_ context.Context, in sched.SpecInput) (sched.SpecResult,
 	}, nil
 }
 
+// specBuilder is the env's SpecBuilder: the options override if there is one, else the
+// deterministic stub.
+func (e *env) specBuilder() sched.SpecBuilder {
+	if e.specs != nil {
+		return e.specs
+	}
+	return stubSpecs{}
+}
+
 type env struct {
 	t         *testing.T
 	st        *store.Store
 	bus       *bus.Bus
 	providers []ports.ContextProvider
+	specs     sched.SpecBuilder
 	sb        *testkit.Sandbox
 	rt        *testkit.Scripted
 	mcp       *mcpsvc.Server
@@ -98,6 +108,8 @@ type options struct {
 	// providers overrides the context-provider set (default: ticket + project). The S34
 	// context tests wire all four.
 	providers []ports.ContextProvider
+	// specs overrides the SpecBuilder stand-in. Nil means stubSpecs.
+	specs sched.SpecBuilder
 }
 
 func newEnv(t *testing.T, o options) *env {
@@ -129,6 +141,7 @@ func newEnv(t *testing.T, o options) *env {
 	e.sb = testkit.NewSandbox(testkit.Script{})
 	e.rt = &testkit.Scripted{Fixture: []byte(o.fixture), Pace: o.pace, ExitCode: o.exitCode}
 	e.providers = o.providers
+	e.specs = o.specs
 
 	var schedRef *sched.Scheduler
 	e.mcp = mcpsvc.New(mcpsvc.Options{
@@ -185,7 +198,7 @@ func newScheduler(t *testing.T, e *env, auditW *audit.Writer, logger *slog.Logge
 				contextmod.NewProjectProvider(e.st),
 			}
 		},
-		Specs:         stubSpecs{},
+		Specs:         e.specBuilder(),
 		Tokens:        e.mcp,
 		SandboxID:     "fake",
 		AdmitInterval: 25 * time.Millisecond,

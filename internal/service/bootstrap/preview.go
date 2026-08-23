@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -482,6 +483,41 @@ func readmeFirstSection(readme string) string {
 	return out
 }
 
+// The prompt overrides the two suggested rules ship with (contracts §4 `{{...}}`
+// interpolation, evaluated against the normalized event payload by service/triggers).
+//
+// They are not decoration. A trigger-spawned run has no ticket, so the prompt override is the
+// only thing that can put a "# Task" section in its prompt: with an empty override — which is
+// what these rules used to carry — the agent was handed its directive, its project guidance
+// and nothing whatsoever about what it was supposed to do. It then did something plausible and
+// unrelated. The `event` context provider now supplies the facts of the occurrence; these
+// strings supply the instruction, which is a different thing and still has to be said.
+//
+// Both are exported so the acceptance harness can fire the SHIPPED rule rather than a
+// hand-written stand-in — the drift that let a broken default pass a green acceptance.
+const (
+	// ReviewerPrompt is the "agent PR opened → run Reviewer" task. It names the tool because
+	// a review that is not submitted through `submit_review` is not posted anywhere: it ends
+	// as the run's final message, which is exactly the failure this default exists to stop.
+	ReviewerPrompt = "Review pull request #{{pr.number}} — \"{{pr.title}}\" — on branch " +
+		"`{{pr.branch}}`, opened against `{{pr.base}}` by {{pr.author}}.\n\n" +
+		"That head branch is already checked out in this workspace, so read the diff against " +
+		"`{{pr.base}}` and review the change on its merits: correctness first, then the " +
+		"tests, then anything a maintainer would have to fix later.\n\n" +
+		"Post your findings with the `submit_review` tool (`mcp__lexicode__submit_review`): a " +
+		"short summary, plus one severity-tagged finding per problem — `blocker`, `major`, " +
+		"`minor` or `nit` — each with the file and line it is on. That tool call is the only " +
+		"way your review reaches the pull request. A review written as your final message is " +
+		"never posted, and nobody sees it."
+
+	// CIFixPrompt is the "CI failed → run Dev" task.
+	CIFixPrompt = "The `{{check.name}}` check suite failed on pull request #{{pr.number}}, " +
+		"on branch `{{pr.branch}}`. The failing run is at {{check.url}}.\n\n" +
+		"That branch is already checked out in this workspace. Work out why the suite failed, " +
+		"fix it on this branch, and commit the fix. Keep it to what the failure needs — this " +
+		"run exists to get the checks green, not to revisit the change they are checking."
+)
+
 // suggestedTriggers is the brief's two pre-filled rules, offered only when CI was detected.
 // Both ship with Enabled=false — Apply preserves that.
 func suggestedTriggers(workflowFiles []string) []TriggerCandidate {
@@ -519,10 +555,10 @@ func triggerRow(cand TriggerCandidate, projectID, createdBy, now string) domain.
 	switch cand.ID {
 	case "agent-pr-review":
 		conditions = `{"all":[{"field":"pr.author_kind","op":"enum.is","value":"agent"}]}`
-		actions = `[{"action_id":"run_agent","params":{"agent_name":"Reviewer","prompt":""}}]`
+		actions = runAgentAction("Reviewer", ReviewerPrompt)
 	case "ci-failed-fix":
 		conditions = `{"all":[{"field":"check.conclusion","op":"enum.is","value":"failure"}]}`
-		actions = `[{"action_id":"run_agent","params":{"agent_name":"Dev","prompt":""}}]`
+		actions = runAgentAction("Dev", CIFixPrompt)
 	}
 	var by *string
 	if createdBy != "" {
@@ -536,6 +572,21 @@ func triggerRow(cand TriggerCandidate, projectID, createdBy, now string) domain.
 		LoopConfig: domain.DefaultLoopConfig(),
 		CreatedBy:  by, CreatedAt: now, UpdatedAt: now,
 	}
+}
+
+// runAgentAction renders the one-action list a suggested rule carries. json.Marshal, not a
+// hand-built string: the prompts contain quotes and newlines, and a rule whose actions column
+// is invalid JSON fires nothing.
+func runAgentAction(agentName, prompt string) string {
+	b, err := json.Marshal([]map[string]any{{
+		"action_id": "run_agent",
+		"params":    map[string]any{"agent_name": agentName, "prompt": prompt},
+	}})
+	if err != nil {
+		// Unreachable: the inputs are strings and maps of strings.
+		return `[]`
+	}
+	return string(b)
 }
 
 func jsonArr(ss []string) (string, error) {

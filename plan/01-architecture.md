@@ -96,7 +96,7 @@ the dashboard from loading.
 | `module/docker` | `Sandbox` | Docker SDK, embedded Dockerfile, egress proxy. |
 | `module/claudecode` | `AgentRuntime` | stream-json parse, steering, permission wiring. |
 | `module/actions` | `TriggerAction` ×5 | `run_agent`, `create_ticket`, `move_ticket`, `post_comment`, `notify`. |
-| `module/context` | `ContextProvider` ×4 | `project`, `wiki`, `repofiles`, `ticket`. |
+| `module/context` | `ContextProvider` ×5 | `project`, `wiki`, `event`, `ticket`, `repofiles`. |
 | `module/notify` | `Notifier` | in-app only in V1. |
 | `module/testkit` | `Sandbox`, `AgentRuntime`, `EventSource` | fakes, built under a `testkit` tag; the reason the engine is testable without Docker. |
 
@@ -488,6 +488,7 @@ subsequent run on the same ticket: *"A human took over and changed X."*
 |---|---|---|---|
 | `project` | 10 | Project-wide agent guidance from settings | `project guidance` |
 | `wiki` | 20 | `always` pages; `paths` pages whose globs match; `auto` pages by title/tag keyword match against the task | `always` / `matched path infra/deploy.ts` / `retrieved for "deployment"` |
+| `event` | 25 | The occurrence that caused a trigger-spawned run — what happened, to what subject, by which actor — rendered from the normalized payload (contracts §4) | `the pull_request opened event that started this run (pr #219)` |
 | `ticket` | 30 | Title, description, acceptance criteria, parent/sub-tickets | `ticket PAY-14` |
 | `repofiles` | 40 | Enumerates `AGENTS.md`, `CLAUDE.md`, `.cursor/rules/*` present in the checkout — **listed, not injected** (Claude Code reads them itself) | `repo file` |
 

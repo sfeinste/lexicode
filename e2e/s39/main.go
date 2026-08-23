@@ -43,6 +43,7 @@ import (
 
 	"github.com/spruce/lexicode/e2e/harness"
 	"github.com/spruce/lexicode/internal/kernel/ports"
+	"github.com/spruce/lexicode/internal/service/bootstrap"
 )
 
 const (
@@ -429,9 +430,46 @@ func run(port, proxyPort, ghPort int) (*timings, error) {
 
 	// -- step 4: the severity-tagged review ------------------------------------------------
 	step(4, "Reviewer posts a severity-tagged review")
+	headBeforeReview := gh.Head(pr.Head)
 	if err := waitCompleted(c, run2, "the reviewer run"); err != nil {
 		return t, err
 	}
+
+	// The reviewer's workspace WAS the pull request, and the run owns no branch. Both are
+	// visible from outside the container, which is the only place this can be proved
+	// honestly: the provisioning checklist has a clone step and no `branch` step, and
+	// runs.branch is null. (Inside the container the fixture asserts the change under review
+	// is actually in the workspace, and fails the run if it is not — see e2e/s39's
+	// fakeClaude reviewer role.)
+	revChecklist, err := provisionSteps(c, run2)
+	if err != nil {
+		return t, err
+	}
+	log.Printf("reviewer provisioning checklist: %s", strings.Join(revChecklist, ", "))
+	if !contains(revChecklist, "clone") {
+		return t, fmt.Errorf("the reviewer run has no successful clone step: %v", revChecklist)
+	}
+	if contains(revChecklist, "branch") {
+		return t, fmt.Errorf(
+			"the reviewer run cut a branch of its own; a run whose subject is a pull request "+
+				"works on that pull request's head and creates nothing: %v", revChecklist)
+	}
+	run2Body, err := c.Run(run2)
+	if err != nil {
+		return t, err
+	}
+	if b, _ := run2Body["branch"].(string); b != "" {
+		return t, fmt.Errorf("the reviewer run's branch = %q, want none", b)
+	}
+	// And nothing of the reviewer's reached the pull request author's branch.
+	if after := gh.Head(pr.Head); after != headBeforeReview {
+		return t, fmt.Errorf(
+			"the reviewer run moved %s from %s to %s — a review must never push to the pull "+
+				"request author's branch", pr.Head, headBeforeReview, after)
+	}
+	log.Printf("reviewer worked on the PR head, cut no branch, pushed nothing (%s still at %s)",
+		pr.Head, headBeforeReview[:8])
+
 	reviews := gh.Reviews()
 	if len(reviews) != 1 {
 		return t, fmt.Errorf("the fake GitHub has %d reviews, want 1", len(reviews))
@@ -439,6 +477,13 @@ func run(port, proxyPort, ghPort int) (*timings, error) {
 	rev := reviews[0]
 	if rev.State != "CHANGES_REQUESTED" {
 		return t, fmt.Errorf("review state = %q, want CHANGES_REQUESTED", rev.State)
+	}
+	// Posted against the right pull request — a number the agent was never handed directly.
+	// The trigger's override is the shipped bootstrap default and the fixture passes no
+	// pr_number, so this asserts the whole chain: the event section named the pull request,
+	// and submit_review defaulted to it from the causing event.
+	if rev.PRNumber != pr.Number {
+		return t, fmt.Errorf("the review landed on PR #%d, want #%d", rev.PRNumber, pr.Number)
 	}
 	for _, want := range []string{"[BLOCKER]", "[MINOR]", "[NIT]", "<!-- lexicode:actor=agent:"} {
 		if !strings.Contains(rev.Body, want) {
@@ -611,6 +656,25 @@ var triggerOrder = []string{"pr-opened", "changes-requested", "ci-failed", "revi
 // shortens the debounce from 90s to 5s. This harness compresses a chain that would take a
 // human afternoon into a couple of minutes; at 90s, layer 2 would absorb the second bounce
 // (correctly!) before layer 4 ever saw it.
+// reviewerPrompt is the prompt override both reviewer rules carry: the SHIPPED bootstrap
+// default (internal/service/bootstrap.ReviewerPrompt), verbatim, with two fixture markers in
+// front of it.
+//
+// Firing the shipped string rather than a hand-written stand-in is the point. The harness used
+// to write its own override — one that spelled out the PR number and the branch in fields the
+// scripted agent read directly — and it passed green for months while the rule the product
+// actually creates carried `"prompt":""`. A reviewer spawned by that rule was handed no task
+// at all. An acceptance that exercises a better input than the product produces is not an
+// acceptance; it is a second implementation.
+//
+// The two markers are the irreducible fixture seam: a scripted `claude` has to be told which
+// of four roles to play, and which verdict to return so the chain reaches the loop guard. They
+// carry no information about the pull request — no number, no branch. Everything the fixture
+// knows about what it is reviewing, it reads out of the prompt the product built.
+func reviewerPrompt(verdict string) string {
+	return "E2E-ROLE: reviewer\nE2E-REVIEW: " + verdict + "\n\n" + bootstrap.ReviewerPrompt
+}
+
 func createTriggers(c *harness.Client, dev, reviewer string) (map[string]string, error) {
 	specs := []struct {
 		key  string
@@ -623,10 +687,7 @@ func createTriggers(c *harness.Client, dev, reviewer string) (map[string]string,
 			"conditions":     rawJSON(`{"all":[{"op":"actor.is_agent"}]}`),
 			"actions": rawJSON(fmt.Sprintf(
 				`[{"action_id":"run_agent","params":{"agent_id":%q,"prompt_override":%q}}]`,
-				reviewer, "E2E-ROLE: reviewer\nE2E-REVIEW: request_changes\n"+
-					"E2E-PR: {{pr.number}}\nE2E-BRANCH: {{pr.branch}}\n\n"+
-					"Review pull request #{{pr.number}} on branch {{pr.branch}}. "+
-					"Submit a review with severity-tagged findings.")),
+				reviewer, reviewerPrompt("request_changes"))),
 		}},
 		{"changes-requested", map[string]any{
 			"name": "Changes requested → Dev addresses them", "enabled": true,
@@ -668,9 +729,7 @@ func createTriggers(c *harness.Client, dev, reviewer string) (map[string]string,
 				`"cancel_in_progress":true,"depth_limit":3,"daily_budget_cents":null}`),
 			"actions": rawJSON(fmt.Sprintf(
 				`[{"action_id":"run_agent","params":{"agent_id":%q,"prompt_override":%q}}]`,
-				reviewer, "E2E-ROLE: reviewer\nE2E-REVIEW: request_changes\n"+
-					"E2E-PR: {{pr.number}}\nE2E-BRANCH: {{pr.branch}}\n\n"+
-					"Dev says the findings on PR #{{pr.number}} are addressed. Look again.")),
+				reviewer, reviewerPrompt("request_changes"))),
 		}},
 	}
 	out := map[string]string{}

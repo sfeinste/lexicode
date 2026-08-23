@@ -231,13 +231,14 @@ type ContextProvider interface {
 type ContextRequest struct {
     ProjectID, AgentID string
     TicketID           string   // may be empty
+    CauseEventID       string   // the event that spawned the run; empty for a manual run
     TaskSummary        string   // ticket title + trigger description, for `auto` retrieval
     ChangedPaths       []string // known for PR-triggered runs; empty otherwise
     Dry                bool     // true for the agent's "what every run sees" preview
 }
 
 type ContextItem struct {
-    SourceKind string   // "wiki" | "repo_file" | "project" | "ticket"
+    SourceKind string   // "wiki" | "repo_file" | "project" | "ticket" | "event"
     SourceRef  string
     Title      string
     Reason     string   // rendered verbatim in the Context panel

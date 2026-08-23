@@ -21,7 +21,12 @@ package main
 //	                          acceptance criterion, commit. The orchestrator pushes it and
 //	                          opens the PR.
 //	E2E-ROLE: reviewer        read the PR's diff and call submit_review with severity-tagged
-//	                          findings. E2E-REVIEW says request_changes or comment.
+//	                          findings. E2E-REVIEW says request_changes or comment. This role
+//	                          gets NO E2E-PR and NO E2E-BRANCH: its trigger carries the
+//	                          shipped bootstrap prompt (bootstrap.ReviewerPrompt) and nothing
+//	                          else, so the pull request number has to come out of the prompt
+//	                          the product assembled and the code under review has to already
+//	                          be the workspace. Both are asserted, and a miss fails the run.
 //	E2E-ROLE: dev-address     check out the PR's branch, commit a fix on it, then submit a
 //	                          COMMENT review saying so — the "addressed, please re-review"
 //	                          hop that carries the chain forward. The orchestrator pushes.
@@ -39,6 +44,7 @@ ROLE=$(field 'E2E-ROLE'); [ -n "$ROLE" ] || ROLE=dev-implement
 PR=$(field 'E2E-PR')
 BRANCH=$(field 'E2E-BRANCH')
 REVIEW=$(field 'E2E-REVIEW'); [ -n "$REVIEW" ] || REVIEW=request_changes
+BASE_BRANCH=main
 
 emit() { printf '%s\n' "$1"; }
 # await_stdin_eof is what makes this fixture honest. Under --input-format stream-json the real
@@ -61,6 +67,15 @@ finish() {
   emit "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":4,\"result\":$(printf '%s' "$1" | jq -Rs .),\"total_cost_usd\":0.0217,\"usage\":{\"input_tokens\":1400,\"output_tokens\":260}}"
   await_stdin_eof
   exit 0
+}
+# die ends the run as a FAILURE with the reason on it. It is how a fixture assertion — "the
+# product did not give me what a real agent would need" — becomes a red acceptance with a
+# readable cause, instead of a downstream count that is mysteriously off by one.
+die() {
+  say "FIXTURE ASSERTION FAILED: $1"
+  emit "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"num_turns\":1,\"result\":$(printf 'FIXTURE ASSERTION FAILED: %s' "$1" | jq -Rs .),\"total_cost_usd\":0.001,\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}"
+  await_stdin_eof
+  exit 1
 }
 
 emit '{"type":"system","subtype":"init","cwd":"/workspace","session_id":"e2e-s39","tools":["Bash","mcp__lexicode__submit_review"],"model":"fake-model"}'
@@ -108,9 +123,25 @@ EOF
 
 reviewer)
   step "reading the pull request diff" 1 2
-  # No fetch: the branch is already here as a remote-tracking ref, from the clone step.
-  DIFF=$(git diff --stat HEAD "origin/$BRANCH" 2>/dev/null | tail -5)
-  say "Reviewing PR #$PR on $BRANCH. Diff:
+  # Everything this role knows about what it is reviewing comes out of the prompt the PRODUCT
+  # assembled — the trigger's override is the shipped bootstrap default, and the event
+  # context provider supplies the facts of the occurrence. The trigger writes no E2E-PR and
+  # no E2E-BRANCH for this role, so the two assertions below fail loudly if either half
+  # regresses instead of quietly reviewing the wrong thing.
+  PR=$(grep -oE 'pull request #[0-9]+' "$PROMPT" | head -1 | grep -oE '[0-9]+')
+  if [ -z "$PR" ]; then
+    die "the prompt names no pull request: neither the event section nor the trigger's prompt override reached it. Prompt:
+$(cat "$PROMPT")"
+  fi
+  # The workspace must BE the pull request's head. src/idempotency.ts exists only on that
+  # branch; a workspace cut fresh from the default branch does not contain it, which is
+  # exactly the bug that let a reviewer produce a competent review of the wrong code.
+  if [ ! -f src/idempotency.ts ]; then
+    die "the change under review is not in the workspace — the PR's head branch was not checked out. HEAD=$(git rev-parse --short HEAD 2>/dev/null), tracked files:
+$(git ls-files | head -20)"
+  fi
+  DIFF=$(git diff --stat "origin/$BASE_BRANCH" HEAD 2>/dev/null | tail -5)
+  say "Reviewing PR #$PR from the checked-out head. Diff against $BASE_BRANCH:
 $DIFF"
   if [ "$REVIEW" = comment ]; then
     ARGS='{"event":"comment","summary":"Second pass: the retry path reads better.","findings":[{"severity":"nit","title":"Prefer a named constant for the 24h TTL","file":"src/idempotency.ts","line":6}]}'
@@ -122,6 +153,12 @@ $DIFF"
   RESULT=$(mcp_call submit_review "$ARGS")
   emit "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t2\",\"content\":$(printf '%s' "$RESULT" | jq -Rs .)}]}}"
   step "review submitted" 2 2
+  # The tool call has to have SUCCEEDED, not merely been made. isError lives in the JSON-RPC
+  # envelope, unescaped; the tool's own payload is escaped JSON inside a text block.
+  case "$RESULT" in
+    *'"isError":false'*) : ;;
+    *) die "submit_review did not succeed: $RESULT" ;;
+  esac
   finish "Submitted a $REVIEW review on PR #$PR."
   ;;
 

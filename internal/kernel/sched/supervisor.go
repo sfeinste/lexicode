@@ -13,6 +13,10 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
 
+// parkedTimerHorizon is what the wall-clock timer is set to while a run is parked: long
+// enough that it never fires, finite so a leaked supervisor is still bounded by the process.
+const parkedTimerHorizon = 100 * 365 * 24 * time.Hour
+
 // startSupervisor hands one admitted run to its own goroutine. The supervisor owns the run
 // from provisioning to teardown; the admission loop never blocks on it.
 func (s *Scheduler) startSupervisor(run domain.Run) {
@@ -32,7 +36,11 @@ func (s *Scheduler) superviseFrom(run domain.Run, reattached ports.Instance) {
 		return
 	}
 	ctx, cancel := context.WithCancel(s.baseCtx)
-	sup := &supervisor{runID: run.ID, cancel: cancel, steer: make(chan struct{}, 1)}
+	sup := &supervisor{
+		runID: run.ID, cancel: cancel,
+		steer: make(chan struct{}, 1),
+		park:  make(chan struct{}, 1),
+	}
 	sup.inst = reattached
 	s.supervisors[run.ID] = sup
 	s.loops.Add(1)
@@ -133,8 +141,14 @@ func (s *Scheduler) supervise(ctx context.Context, sup *supervisor, run domain.R
 	// composer is enabled throughout (§10.3).
 	s.drainSteering(ctx, sup, run.ID)
 
-	// Wall clock counts from started_at, surviving restarts.
+	// Wall clock counts from started_at, surviving restarts, and does not advance while the
+	// run is parked on a human (D-12): see supervisor.parked and wallRemaining.
 	deadline := s.wallDeadline(ctx, run, agent)
+	// A run that is already parked when its supervisor starts — the §10.6 reattach of a run
+	// that was waiting on a question when the orchestrator restarted — starts parked, and
+	// backdates to when it actually parked so the restart does not charge it for a wait it
+	// already was not being charged for.
+	s.seedParked(ctx, sup, run)
 
 	waitCh := make(chan waitOutcome, 1)
 	go func() {
@@ -142,7 +156,7 @@ func (s *Scheduler) supervise(ctx context.Context, sup *supervisor, run domain.R
 		waitCh <- waitOutcome{res: res, err: err}
 	}()
 
-	timer := time.NewTimer(time.Until(deadline))
+	timer := time.NewTimer(sup.wallRemaining(s.opts.Now(), deadline))
 	defer timer.Stop()
 	for {
 		select {
@@ -160,7 +174,21 @@ func (s *Scheduler) supervise(ctx context.Context, sup *supervisor, run domain.R
 			return
 		case <-sup.steer:
 			s.drainSteering(ctx, sup, run.ID)
+		case <-sup.park:
+			// The run parked or resumed; re-derive the deadline. While parked the timer is
+			// pushed past any run's lifetime, so nothing fires on a run that is only
+			// waiting for a person; on resume it comes back with the parked time credited.
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(sup.wallRemaining(s.opts.Now(), deadline))
 		case <-timer.C:
+			if sup.isParked() {
+				continue // raced a park; the reset above owns the next deadline
+			}
 			sup.requestStop(ctx, domain.RunTimedOut, fmt.Sprintf(
 				"wall clock limit of %s reached", (time.Duration(agent.MaxWallClockSeconds)*time.Second)))
 		case w := <-waitCh:
@@ -213,6 +241,83 @@ func (s *Scheduler) wallDeadline(_ context.Context, run domain.Run, agent domain
 	return start.Add(limit)
 }
 
+// wallRemaining is how long the timer should run for. Parked runs get forever — the wall
+// clock is a bound on agent work (D-12), and a run waiting on a human is not working — and
+// everything else gets what is left of the deadline plus whatever parked time has already
+// been credited back.
+func (sup *supervisor) wallRemaining(now, deadline time.Time) time.Duration {
+	sup.mu.Lock()
+	defer sup.mu.Unlock()
+	if sup.parked {
+		// A duration no run reaches, so the timer never fires while parked. The loop owns
+		// exactly one timer for its whole life and Reset needs a duration, so "never" is
+		// spelled as a horizon rather than as a nil channel.
+		return parkedTimerHorizon
+	}
+	return deadline.Add(sup.parkedTotal).Sub(now)
+}
+
+func (sup *supervisor) isParked() bool {
+	sup.mu.Lock()
+	defer sup.mu.Unlock()
+	return sup.parked
+}
+
+// setParked records a park or a resume and nudges the supervise loop to re-derive its timer.
+// Repeating the state it is already in is a no-op, so the elicitation seam can call it on
+// every transition without double-counting.
+func (sup *supervisor) setParked(parked bool, now time.Time) {
+	sup.mu.Lock()
+	if parked == sup.parked {
+		sup.mu.Unlock()
+		return
+	}
+	sup.parked = parked
+	if parked {
+		sup.parkedSince = now
+	} else if !sup.parkedSince.IsZero() {
+		sup.parkedTotal += now.Sub(sup.parkedSince)
+		sup.parkedSince = time.Time{}
+	}
+	sup.mu.Unlock()
+	select {
+	case sup.park <- struct{}{}:
+	default:
+	}
+}
+
+// notePark is the scheduler side of the same thing: the state machine tells the run's
+// supervisor that it just parked or resumed. Runs with no live supervisor (queued, terminal,
+// a parked run whose container died) are a no-op.
+func (s *Scheduler) notePark(runID string, state domain.RunState) {
+	s.mu.Lock()
+	sup := s.supervisors[runID]
+	s.mu.Unlock()
+	if sup == nil {
+		return
+	}
+	sup.setParked(state == domain.RunNeedsInput || state == domain.RunAwaitingApproval, s.opts.Now())
+}
+
+// seedParked starts a supervisor's clock in the right state. It matters only on the §10.6
+// reattach path, where a run can already be parked before anything transitions it: without
+// this, a question asked before a restart would be charged to the run's working budget from
+// started_at, and a long-parked run would time out the instant it was reattached.
+func (s *Scheduler) seedParked(ctx context.Context, sup *supervisor, run domain.Run) {
+	if run.State != domain.RunNeedsInput && run.State != domain.RunAwaitingApproval {
+		return
+	}
+	since := s.opts.Now()
+	if pending, err := s.st.Elicitations().PendingForRun(ctx, run.ID); err == nil {
+		for _, el := range pending {
+			if t, perr := time.Parse(time.RFC3339, el.CreatedAt); perr == nil && t.Before(since) {
+				since = t
+			}
+		}
+	}
+	sup.setParked(true, since)
+}
+
 // ---------------------------------------------------------------- provisioning -----
 
 // provision is §10.3: mint the token, register the proxy, build the spec, Prepare with the
@@ -249,6 +354,19 @@ func (s *Scheduler) provision(ctx context.Context, sup *supervisor, run domain.R
 			ticket = &tk
 		}
 	}
+	// The causing event: the builder needs it to prepare a pull-request run ON the pull
+	// request. Best-effort, like the ticket above — a run whose event row has gone is
+	// prepared the ordinary way rather than failing to provision.
+	var causeEvent *domain.Event
+	if run.CauseEventID != nil {
+		if ev, err := s.st.Events().ByID(ctx, *run.CauseEventID); err == nil {
+			causeEvent = &ev
+		} else {
+			s.logger.Warn("sched: the run's causing event could not be read",
+				slog.String("run", run.ID), slog.String("event", *run.CauseEventID),
+				slog.String("error", err.Error()))
+		}
+	}
 
 	if s.opts.Proxy != nil {
 		var hosts []string
@@ -263,7 +381,7 @@ func (s *Scheduler) provision(ctx context.Context, sup *supervisor, run domain.R
 	}
 	built, err := s.opts.Specs.Build(ctx, SpecInput{
 		Workspace: ws, Project: project, Repo: repo, Agent: agent,
-		Ticket: ticket, Run: run, RunToken: token,
+		Ticket: ticket, Run: run, CauseEvent: causeEvent, RunToken: token,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("preparing the workspace spec: %w", err)

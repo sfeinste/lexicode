@@ -20,9 +20,11 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spruce/lexicode/internal/domain"
+	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/sched"
 	"github.com/spruce/lexicode/internal/module/testkit"
 )
@@ -244,4 +246,110 @@ func TestPushWarnsAboutCommitsMissingTheRunTrailer(t *testing.T) {
 		t.Fatalf("the trailered commit was counted as missing: %q", found.Title)
 	}
 	t.Logf("attribution warning: %s\n%s", found.Title, payload)
+}
+
+// reviewSpecs is the SpecBuilder answer for a run whose subject is a pull request and whose
+// agent holds no push_branches grant: the workspace is the pull request's head, and the run
+// creates — and therefore owns — no branch. It mirrors what the real S19 builder produces
+// (internal/service/runs' workspaceRefs, tested there against the real rows); what is under
+// test here is what the SCHEDULER does with an empty branch at teardown.
+type reviewSpecs struct{ head string }
+
+func (r reviewSpecs) Build(_ context.Context, in sched.SpecInput) (sched.SpecResult, error) {
+	return sched.SpecResult{
+		Spec: ports.SandboxSpec{
+			RunID: in.Run.ID, ProjectID: in.Project.ID,
+			Files: map[string][]byte{".lexicode/prompt.md": []byte(in.Run.Prompt)},
+			Clone: ports.CloneSpec{URL: "file:///fixtures/fixture.git", Ref: r.head},
+		},
+	}, nil
+}
+
+// TestReviewRunPushesNothing is the third lock on "a review run must not push to the pull
+// request author's branch". The first is the push_branches grant; the second is that such a
+// run has no branch at all. This asserts the outcome both of them are for: the teardown push
+// exec never runs, runs.branch stays NULL, and no partial_work row claims otherwise.
+func TestReviewRunPushesNothing(t *testing.T) {
+	const head = "dev/PAY-14-idempotency"
+	e := newEnv(t, options{fixture: fixtureOK, specs: reviewSpecs{head: head}})
+
+	var pushes int32
+	e.sb.SideExec = func(argv []string, _ map[string]string) (testkit.ExecResult, bool) {
+		if testkit.IsTeardownPush(argv) {
+			atomic.AddInt32(&pushes, 1)
+		}
+		return testkit.ExecResult{}, false
+	}
+
+	f := e.seed(1, nil, nil)
+	// A reviewer: reads and comments, never pushes.
+	ctx := context.Background()
+	agent := f.agent
+	agent.Name = "Reviewer"
+	agent.Permissions = domain.AgentPermissions{
+		ReadFiles: true, RunCommands: true, SubmitReviews: true,
+	}
+	if err := e.st.Agents().Update(ctx, &agent); err != nil {
+		t.Fatal(err)
+	}
+	e.start()
+
+	run, err := e.sch.Enqueue(ctx, sched.RunRequest{
+		ProjectID: f.project.ID, AgentID: agent.ID,
+		Reason: "trigger Agent PR opened → run Reviewer", SubjectKey: "pr:219",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "run terminal", func() bool { return e.run(run.ID).State.Terminal() })
+	final := e.run(run.ID)
+	if final.State != domain.RunCompleted {
+		t.Fatalf("state = %s (%s), want completed", final.State, final.ErrorMessage)
+	}
+
+	if n := atomic.LoadInt32(&pushes); n != 0 {
+		t.Errorf("the teardown push ran %d time(s) for a review run", n)
+	}
+	if final.Branch != nil {
+		t.Errorf("runs.branch = %q, want NULL: the run owns no branch", *final.Branch)
+	}
+	if rows := partialWorkOutputs(t, e, final.ID); len(rows) != 0 {
+		t.Errorf("partial_work rows for a run that pushed nothing: %+v", rows)
+	}
+	// And nothing in the run's report may claim a push happened.
+	if strings.Contains(final.ErrorMessage, head) {
+		t.Errorf("the run's message mentions the PR author's branch: %q", final.ErrorMessage)
+	}
+}
+
+// TestEmptyBranchAlonePreventsThePush isolates the second lock. With the push_branches grant
+// ON but no branch on the run, the teardown push must still do nothing — otherwise the only
+// thing standing between a review run and a force-write to someone else's pull request branch
+// would be one boolean on the agent row.
+func TestEmptyBranchAlonePreventsThePush(t *testing.T) {
+	e := newEnv(t, options{fixture: fixtureOK, specs: reviewSpecs{head: "dev/PAY-14"}})
+
+	var pushes int32
+	e.sb.SideExec = func(argv []string, _ map[string]string) (testkit.ExecResult, bool) {
+		if testkit.IsTeardownPush(argv) {
+			atomic.AddInt32(&pushes, 1)
+		}
+		return testkit.ExecResult{}, false
+	}
+	f := e.seed(1, nil, nil) // the seeded Dev agent HAS push_branches
+	if !f.agent.Permissions.PushBranches {
+		t.Fatal("fixture drift: the seeded agent is expected to hold push_branches")
+	}
+	e.start()
+
+	run, err := e.sch.Enqueue(context.Background(), sched.RunRequest{
+		ProjectID: f.project.ID, AgentID: f.agent.ID, Reason: "test", SubjectKey: "pr:219",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "run terminal", func() bool { return e.run(run.ID).State.Terminal() })
+	if n := atomic.LoadInt32(&pushes); n != 0 {
+		t.Fatalf("the teardown push ran %d time(s) for a run with no branch", n)
+	}
 }

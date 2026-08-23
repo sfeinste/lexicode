@@ -102,14 +102,22 @@ func (s *Scheduler) transition(ctx context.Context, runID string, to domain.RunS
 // SetRunState is the seam the MCP server drives (mcp.RunStateSetter): elicitations park a run
 // in needs_input / awaiting_approval and a response resumes it. Only those three targets are
 // accepted here — everything else belongs to the scheduler's own paths.
+//
+// It is also where the wall clock stops and starts (D-12). A parked run is not working, and
+// the wall clock exists to bound work: charging a run for the hours a question sat in
+// somebody's inbox is what left a slow answer with no budget left to act on. The transition
+// is what tells the supervisor; a run with no live supervisor simply has no clock to pause.
 func (s *Scheduler) SetRunState(ctx context.Context, runID string, state domain.RunState, reason string) error {
 	switch state {
 	case domain.RunNeedsInput, domain.RunAwaitingApproval, domain.RunRunning:
 	default:
 		return fmt.Errorf("sched: state %s is not reachable through the elicitation seam", state)
 	}
-	_, err := s.transition(ctx, runID, state, store.RunStateUpdate{StateReason: &reason})
-	return err
+	if _, err := s.transition(ctx, runID, state, store.RunStateUpdate{StateReason: &reason}); err != nil {
+		return err
+	}
+	s.notePark(runID, state)
+	return nil
 }
 
 // mustJSON marshals a value the scheduler controls; a failure is a programming error rendered

@@ -102,13 +102,13 @@ func (o *PROpener) OpenForRun(ctx context.Context, run domain.Run) (bool, error)
 			Base:  base,
 		})
 	if err != nil {
-		// Not every refusal is a failure. A run always gets a FRESH branch (S19), so a run
-		// that worked an existing pull request's branch — the "changes requested → address
-		// them" hop of the canonical chain — has nothing pushed under its own name, and the
-		// forge answers 422: there is no head branch to open a pull request from. Likewise
-		// when a pull request for this head already exists. Neither is an error on an
-		// otherwise successful run: there is simply nothing to open, and the honest place to
-		// say so is the run's own transcript.
+		// Not every refusal is a failure. A run whose subject is an existing pull request
+		// works on that pull request's own head branch — the "changes requested → address
+		// them" and "CI failed → fix it" hops of the canonical chain — so the forge answers
+		// 422: a pull request for this head already exists. A run that produced no commits
+		// of its own gets the other 422: there is no head branch to open from. Neither is an
+		// error on an otherwise successful run: there is simply nothing to open, and the
+		// honest place to say so is the run's own transcript.
 		if note, isNoOp := nothingToOpen(err, *run.Branch); isNoOp {
 			o.noteNothingToOpen(ctx, run.ID, note)
 			if o.Logger != nil {
@@ -164,9 +164,9 @@ func nothingToOpen(err error, branch string) (noOpNote, bool) {
 		return noOpNote{
 			title: fmt.Sprintf("No pull request opened: nothing was pushed to `%s`.", branch),
 			detail: fmt.Sprintf(
-				"Every run gets a fresh branch, and this run pushed nothing to `%s` — it worked "+
-					"on an existing pull request's branch instead, where its commits already are. "+
-					"There is no branch of its own to open a pull request from. The run itself "+
+				"Nothing was pushed to `%s`, so there is no head to open a pull request from — "+
+					"the run either produced no commits of its own or worked on an existing "+
+					"pull request's branch, where its commits already are. The run itself "+
 					"succeeded.", branch),
 		}, true
 	}

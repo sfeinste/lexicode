@@ -218,3 +218,75 @@ func TestSubmitReviewDefaultsPRNumberFromCausingEvent(t *testing.T) {
 		t.Fatalf("pr_number = %d, want 219 (from the causing event)", got)
 	}
 }
+
+// The same defaulting through the payload rather than the typed subject column: an event
+// source that fills only the normalized `pr` object (contracts §4) still tells the tool which
+// pull request the run is about.
+func TestSubmitReviewDefaultsPRNumberFromThePayload(t *testing.T) {
+	e := newEnv(t)
+	f := e.fixtures(domain.AutonomyAuto, domain.AgentPermissions{SubmitReviews: true})
+
+	ctx := context.Background()
+	ev := domain.Event{
+		ID: domain.NewID(), ProjectID: &f.project.ID, Source: "github.poll",
+		Kind: "check_suite", ActivityType: "completed", ActorKind: domain.ActorExternal,
+		SubjectKind:   "pr", // no SubjectNumber: only the payload names the pull request
+		Payload:       json.RawMessage(`{"check":{"conclusion":"failure"},"pr":{"number":407}}`),
+		DedupeKey:     "test:" + domain.NewID(),
+		DispatchState: domain.DispatchDone,
+		OccurredAt:    domain.Now(),
+	}
+	if err := e.st.Events().Insert(ctx, &ev); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID: domain.NewID(), Seq: 3, ProjectID: f.project.ID, AgentID: f.agent.ID,
+		CauseEventID: &ev.ID, State: domain.RunRunning, Autonomy: domain.AutonomyAuto,
+		Model: f.agent.Model, Effort: f.agent.Effort, Prompt: "look at the failure",
+		RuntimeID: "scripted", SandboxID: "fake", SubjectKey: "pr:407",
+		QueuedAt: domain.Now(),
+	}
+	if err := e.st.Runs().Create(ctx, &run); err != nil {
+		t.Fatal(err)
+	}
+	token, err := e.mcp.MintToken(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isErr, result := e.callTool(token, "submit_review", map[string]any{
+		"summary": "The suite failed on a flaky test.",
+	})
+	if isErr {
+		t.Fatalf("submit_review failed: %v", result)
+	}
+	if got := e.reviews.last().prNumber; got != 407 {
+		t.Fatalf("pr_number = %d, want 407 (from the causing event's payload)", got)
+	}
+}
+
+// And a run nobody triggered gets a message that says what to do, not a silent wrong number.
+func TestSubmitReviewWithoutCauseEventAsksForTheNumber(t *testing.T) {
+	e := newEnv(t)
+	f := e.fixtures(domain.AutonomyAuto, domain.AgentPermissions{SubmitReviews: true})
+	ctx := context.Background()
+	run := domain.Run{
+		ID: domain.NewID(), Seq: 4, ProjectID: f.project.ID, AgentID: f.agent.ID,
+		State: domain.RunRunning, Autonomy: domain.AutonomyAuto,
+		Model: f.agent.Model, Effort: f.agent.Effort, Prompt: "review something",
+		RuntimeID: "scripted", SandboxID: "fake", QueuedAt: domain.Now(),
+	}
+	if err := e.st.Runs().Create(ctx, &run); err != nil {
+		t.Fatal(err)
+	}
+	token, err := e.mcp.MintToken(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isErr, result := e.callTool(token, "submit_review", map[string]any{"summary": "hi"})
+	if !isErr {
+		t.Fatalf("submit_review succeeded with no pull request to submit against: %v", result)
+	}
+	if !strings.Contains(result["text"].(string), "pr_number") {
+		t.Fatalf("the error does not say how to fix it: %v", result)
+	}
+}

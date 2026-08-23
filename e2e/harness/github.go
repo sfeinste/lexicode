@@ -395,6 +395,26 @@ func (g *GitHub) createPull(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// And a second pull request for a head that already has an open one fails exactly as on
+	// github.com. This matters: a run whose subject is an existing pull request works on that
+	// pull request's own branch, so the orchestrator's PR-opening step asks for a duplicate
+	// and must be told no. A fixture that cheerfully opened a second pull request would let
+	// that path pass here and fail against the real forge.
+	g.mu.Lock()
+	for _, existing := range g.prs {
+		if existing.Head == body.Head && existing.State == "open" {
+			g.mu.Unlock()
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			writeJSON(w, map[string]any{
+				"message": fmt.Sprintf(
+					"Validation Failed: A pull request already exists for %s:%s.",
+					g.Owner, body.Head),
+			})
+			return
+		}
+	}
+	g.mu.Unlock()
+
 	sha, _, _ := g.commit(body.Head)
 	now := time.Now()
 	g.mu.Lock()

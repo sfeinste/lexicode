@@ -279,6 +279,56 @@ Run tokens are per-run, single-use-scoped, and revoked when the run ends.
 Steering is the reverse direction: queued messages are written to the CLI's stdin between tool
 calls, matching the brief's "queue, don't interrupt."
 
+### Amendment (Aug 2026) — the client's clock, and a parked run's clock
+
+Two limits are involved in a blocking tool call, and only one of them is ours. The *server*
+decides how long it will hold the call open; the *client* — Claude Code — decides how long it
+is willing to wait, and it wins. Claude Code abandons a call to an HTTP MCP server after 60
+seconds per request unless `MCP_TOOL_TIMEOUT` says otherwise, and after an idle window with no
+response and no progress notification (five minutes for a network server) unless
+`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` says otherwise. With neither variable set and no progress
+notifications sent, every `ask_human` died at about 60 seconds no matter what ceiling the
+server was willing to wait — which is the same moment S24's escalation ticker first tells a
+human the question exists. The inbox, the push notification and the answer-from-the-home-card
+surfaces were all built for a question that was already dead by the time they appeared.
+
+So, three things now hold a question open, and they must agree:
+
+1. S19 writes both variables into the container's environment, derived from the agent's
+   `max_wall_clock_seconds` (floored at five minutes, since agents may set a budget as low as
+   sixty seconds).
+2. The MCP server streams `notifications/progress` on the call's own SSE response for as long
+   as the elicitation is pending, when — and only when — the client supplied a `progressToken`.
+3. The server's own elicitation ceiling is the same derivation, so client and server abandon
+   a question at the same moment instead of one silently outliving the other.
+
+**D-12a — a parked run's wall clock is paused.** The wall clock was bounding two different
+things at once: how long the agent may work, and how long a human has to answer. A question
+asked at minute 55 of an hour got five minutes of human time and then killed the run, and a
+slow answer ate the budget for acting on it. Architecture §10.6 says elicitations are durable
+across a restart, which was only true inside that hour.
+
+The wall clock exists to bound *agent work*, and a run parked in `needs_input` /
+`awaiting_approval` is not working — no model tokens, no CPU, nothing to run away with. So the
+scheduler stops charging it while parked and resumes when the answer lands
+(`sched.SetRunState` → `supervisor.setParked`). The alternative — keep one budget and render
+the deadline on the run — was rejected: it makes the deadline visible without making it
+right, and it leaves "answer quickly or the fix has no budget" as a rule humans have to obey.
+
+What now bounds each thing, separately and namably:
+
+| Bound | Value | Where |
+|---|---|---|
+| Agent working time | `max_wall_clock_seconds` | `sched.wallDeadline` + the pause |
+| How long a question stays answerable | the same number, floored at 5 minutes | `mcp.ceilingFor`, and `MCP_TOOL_TIMEOUT` in the container |
+| Concurrency held by a parked run | its agent's `concurrency_cap` slot | admission |
+
+Known limit, stated rather than hidden: the accumulated parked time lives in the supervisor,
+not in a column. A restart re-derives it from the pending elicitation's `created_at`
+(`sched.seedParked`), which recovers the common case exactly; a run that parked, was answered,
+parked again and then survived a restart loses the credit for the first wait. Making it exact
+needs a `runs.parked_ms` column and a migration, which this fix did not take.
+
 ## D-13 — Events are persisted before they are dispatched
 
 Every external and internal event is written to the `events` table first, then published on the

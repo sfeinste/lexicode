@@ -119,6 +119,13 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request, runID string) 
 	case "tools/list":
 		resp.Result = map[string]any{"tools": toolDescriptors()}
 	case "tools/call":
+		// A call the client asked for progress on, from a client that accepts an SSE
+		// stream, is answered on one — notifications while it blocks, then the response
+		// (see progress.go). Everything else answers with one JSON body.
+		if token, ok := progressTokenOf(req.Params); ok && acceptsSSE(r) {
+			s.callToolStreaming(w, r, runID, req, token)
+			return
+		}
 		result, rpcErr := s.callTool(r, runID, req.Params)
 		resp.Result, resp.Error = result, rpcErr
 	default:

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -672,5 +673,209 @@ func TestTokenHygiene(t *testing.T) {
 	}
 	if !strings.Contains(corpus.String(), redactedPlaceholder) {
 		t.Error("expected the placeholder to appear where secrets were scrubbed")
+	}
+}
+
+// ---------------------------------------------------------------- pull-request runs -----
+
+// prEvent is the causing event of a run spawned by a pull-request trigger: the poller's
+// typed subject columns plus the contracts §4 payload.
+func prEvent(number int64, branch string, payloadBranch string) *domain.Event {
+	b := branch
+	ev := &domain.Event{
+		ID: "ev-pr", Source: "github.poll", Kind: "pull_request", ActivityType: "opened",
+		ActorKind: domain.ActorAgent, SubjectKind: "pr", SubjectNumber: &number,
+		Payload: []byte(fmt.Sprintf(`{"pr":{"number":%d,"branch":%q}}`, number, payloadBranch)),
+	}
+	if branch != "" {
+		ev.SubjectBranch = &b
+	}
+	return ev
+}
+
+// TestPRSubjectReviewRunChecksOutTheHeadAndCutsNoBranch is the regression for the reviewer
+// that reviewed `main`. A run whose subject is a pull request must be prepared ON that pull
+// request: the clone fetches the head branch, and a reviewer — no push_branches grant — gets
+// no branch of its own, so there is nothing for the teardown push to send anywhere.
+func TestPRSubjectReviewRunChecksOutTheHeadAndCutsNoBranch(t *testing.T) {
+	e := newPrepEnv(t)
+	e.in.Ticket = nil // a trigger-spawned run has no ticket
+	e.in.Run.SubjectKey = "pr:219"
+	e.in.CauseEvent = prEvent(219, "dev/PAY-14-idempotency", "dev/PAY-14-idempotency")
+	e.in.Agent.Name = "Reviewer"
+	e.in.Agent.Permissions = domain.AgentPermissions{
+		ReadFiles: true, RunCommands: true, SubmitReviews: true,
+	}
+
+	prep, err := e.builder().Build(context.Background(), e.in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prep.Spec.Clone.Ref != "dev/PAY-14-idempotency" {
+		t.Errorf("clone ref = %q, want the PR's head branch", prep.Spec.Clone.Ref)
+	}
+	if prep.Spec.Clone.Branch != "" {
+		t.Errorf("clone branch = %q, want none: a review run creates no branch", prep.Spec.Clone.Branch)
+	}
+	if prep.Branch != "" {
+		t.Errorf("prep branch = %q, want empty — runs.branch stays NULL, so the push path "+
+			"has nothing to push even if the grant is later flipped on", prep.Branch)
+	}
+	// Nothing resembling the S19 minted branch may appear anywhere in the spec.
+	if strings.Contains(prep.Spec.Clone.Branch+prep.Branch, "Reviewer/") {
+		t.Errorf("a run branch was minted anyway: %+v", prep.Spec.Clone)
+	}
+}
+
+// TestPRSubjectPushingAgentWorksOnTheHeadBranch: the other half. An agent sent at a pull
+// request WITH the push_branches grant — "CI failed → fix it", "changes requested → address
+// them" — works on a local branch of the same name, so the orchestrator's teardown push
+// carries its commits back to the pull request instead of to a branch nobody is looking at.
+func TestPRSubjectPushingAgentWorksOnTheHeadBranch(t *testing.T) {
+	e := newPrepEnv(t)
+	e.in.Ticket = nil
+	e.in.Run.SubjectKey = "pr:219"
+	e.in.CauseEvent = prEvent(219, "dev/PAY-14-idempotency", "dev/PAY-14-idempotency")
+
+	prep, err := e.builder().Build(context.Background(), e.in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prep.Spec.Clone.Ref != "dev/PAY-14-idempotency" || prep.Spec.Clone.Branch != "dev/PAY-14-idempotency" {
+		t.Fatalf("clone = %+v, want both ref and branch on the PR head", prep.Spec.Clone)
+	}
+	if prep.Branch != "dev/PAY-14-idempotency" {
+		t.Errorf("prep branch = %q, want the PR head branch", prep.Branch)
+	}
+}
+
+// TestPRSubjectFallsBackToThePayloadBranch: the event row's typed subject_branch is the
+// primary source, the normalized payload's pr.branch the fallback for a source that fills
+// only the payload.
+func TestPRSubjectFallsBackToThePayloadBranch(t *testing.T) {
+	e := newPrepEnv(t)
+	e.in.Ticket = nil
+	e.in.Run.SubjectKey = "pr:219"
+	e.in.CauseEvent = prEvent(219, "", "dev/from-payload")
+
+	prep, err := e.builder().Build(context.Background(), e.in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prep.Spec.Clone.Ref != "dev/from-payload" {
+		t.Errorf("clone ref = %q, want the payload's pr.branch", prep.Spec.Clone.Ref)
+	}
+}
+
+// TestNonPRSubjectStillCutsAFreshBranch: everything that is not a pull-request run is
+// untouched — a ticket run is still cut from the default branch onto a fresh template
+// branch, which is the S19 behaviour the rest of the product depends on.
+func TestNonPRSubjectStillCutsAFreshBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*prepEnv)
+	}{
+		{"ticket delegation, no event", func(e *prepEnv) {}},
+		{"a ticket subject", func(e *prepEnv) {
+			e.in.Run.SubjectKey = "ticket:PAY-14"
+			e.in.CauseEvent = prEvent(219, "dev/PAY-14-idempotency", "dev/PAY-14-idempotency")
+		}},
+		{"a PR subject whose event is gone", func(e *prepEnv) {
+			e.in.Run.SubjectKey = "pr:219"
+			e.in.CauseEvent = nil
+		}},
+		{"a PR subject whose event names no branch", func(e *prepEnv) {
+			e.in.Run.SubjectKey = "pr:219"
+			e.in.CauseEvent = prEvent(219, "", "")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newPrepEnv(t)
+			tc.setup(e)
+			prep, err := e.builder().Build(context.Background(), e.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prep.Spec.Clone.Ref != "main" {
+				t.Errorf("clone ref = %q, want the default branch", prep.Spec.Clone.Ref)
+			}
+			if prep.Branch != "dev/PAY-14-add-idempotency-keys-to-the-charge" {
+				t.Errorf("prep branch = %q, want the template-rendered fresh branch", prep.Branch)
+			}
+			if prep.Spec.Clone.Branch != prep.Branch {
+				t.Errorf("clone branch = %q, want %q", prep.Spec.Clone.Branch, prep.Branch)
+			}
+		})
+	}
+}
+
+// TestMCPClientTimeoutsAreRaisedFromTheWallClock is the regression for the bug that made
+// ask_human unusable: Claude Code, as the MCP *client*, abandoned every call to our HTTP MCP
+// server after about sixty seconds — its documented per-request default — so a question died
+// at the very moment S24's escalation ticker first told a human it existed. The container's
+// environment now carries the two variables that move those limits, derived from the run's
+// own wall-clock budget.
+func TestMCPClientTimeoutsAreRaisedFromTheWallClock(t *testing.T) {
+	e := newPrepEnv(t)
+	e.in.Agent.MaxWallClockSeconds = 1800
+	p, err := e.builder().Build(context.Background(), e.in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := p.Spec.Env
+
+	// Milliseconds, per the documented units of both variables.
+	if got, want := env["MCP_TOOL_TIMEOUT"], "1800000"; got != want {
+		t.Errorf("MCP_TOOL_TIMEOUT = %q, want %q", got, want)
+	}
+	if got, want := env["CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"], "1800000"; got != want {
+		t.Errorf("CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT = %q, want %q", got, want)
+	}
+
+	// Derived, not hardcoded.
+	e.in.Agent.MaxWallClockSeconds = 7200
+	p, err = e.builder().Build(context.Background(), e.in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.Spec.Env["MCP_TOOL_TIMEOUT"], "7200000"; got != want {
+		t.Errorf("MCP_TOOL_TIMEOUT = %q, want %q", got, want)
+	}
+}
+
+// TestMCPToolTimeoutClearsTheSixtySecondFloor: the whole point is to get past Claude Code's
+// 60-second per-request timer for HTTP servers, which only moves when the value exceeds
+// 60000. Agents may set max_wall_clock_seconds as low as 60, and a run with no limit at all
+// must not fall back to something under it either.
+func TestMCPToolTimeoutClearsTheSixtySecondFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		wallClockSecs int64
+		want          string
+	}{
+		{"minimum allowed budget", 60, "300000"},
+		{"unset budget falls back to an hour", 0, "3600000"},
+		{"a generous budget is used as-is", 3600, "3600000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newPrepEnv(t)
+			e.in.Agent.MaxWallClockSeconds = tc.wallClockSecs
+			p, err := e.builder().Build(context.Background(), e.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := p.Spec.Env["MCP_TOOL_TIMEOUT"]
+			if got != tc.want {
+				t.Fatalf("MCP_TOOL_TIMEOUT = %q, want %q", got, tc.want)
+			}
+			ms, err := strconv.ParseInt(got, 10, 64)
+			if err != nil {
+				t.Fatalf("MCP_TOOL_TIMEOUT is not an integer: %v", err)
+			}
+			if ms <= 60000 {
+				t.Fatalf("MCP_TOOL_TIMEOUT = %dms; at or under 60000 Claude Code keeps its "+
+					"60-second per-request timer and the question dies anyway", ms)
+			}
+		})
 	}
 }

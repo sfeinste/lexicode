@@ -287,6 +287,75 @@
   {
     "RunID": "run-golden",
     "Seq": 11,
+    "Type": "action",
+    "Level": 1,
+    "ToolName": "mcp__lexicode__ask_human",
+    "GroupKey": "mcp__lexicode__ask_human",
+    "Title": "lexicode: ask_human questions=[map[header:Storage multiSelect:false o…",
+    "Payload": {
+      "raw": {
+        "questions": [
+          {
+            "question": "Which storage should the idempotency keys use?",
+            "header": "Storage",
+            "options": [
+              {
+                "label": "Postgres",
+                "description": "Same database as the charges table"
+              },
+              {
+                "label": "Redis",
+                "description": "Fast, but another moving part"
+              }
+            ],
+            "multiSelect": false
+          }
+        ]
+      },
+      "result": "{\"answers\":{\"Which storage should the idempotency keys use?\":[\"Postgres\"]}}"
+    },
+    "OK": true,
+    "Attempt": 1,
+    "DurationMS": 300,
+    "QueuedMS": null,
+    "ModelMS": 100,
+    "ToolMS": 300,
+    "CostCents": 0,
+    "TokensIn": 0,
+    "TokensOut": 0,
+    "TokensCacheRead": 0,
+    "CreatedAt": "2026-01-02T15:04:07.200Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 12,
+    "Type": "system",
+    "Level": 2,
+    "ToolName": "mcp__lexicode__ask_human",
+    "GroupKey": "tool_progress:toolu_ask1",
+    "Title": "waiting on you to answer — 2m30s elapsed",
+    "Payload": {
+      "elapsed_s": 150,
+      "heartbeat": true,
+      "parent_tool_use_id": null,
+      "tool_name": "mcp__lexicode__ask_human",
+      "tool_use_id": "toolu_ask1"
+    },
+    "OK": null,
+    "Attempt": 1,
+    "DurationMS": null,
+    "QueuedMS": null,
+    "ModelMS": null,
+    "ToolMS": null,
+    "CostCents": 0,
+    "TokensIn": 0,
+    "TokensOut": 0,
+    "TokensCacheRead": 0,
+    "CreatedAt": "2026-01-02T15:04:07.100Z"
+  },
+  {
+    "RunID": "run-golden",
+    "Seq": 13,
     "Type": "response",
     "Level": 0,
     "ToolName": "",
@@ -305,6 +374,6 @@
     "TokensIn": 0,
     "TokensOut": 0,
     "TokensCacheRead": 0,
-    "CreatedAt": "2026-01-02T15:04:06.900Z"
+    "CreatedAt": "2026-01-02T15:04:07.300Z"
   }
 ]

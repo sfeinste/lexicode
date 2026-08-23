@@ -1,6 +1,6 @@
-// module.go registers the V1 context providers (architecture §3.1, contracts §2.6): all
-// four of architecture §11's table — `project` (10) · `wiki` (20) · `ticket` (30) ·
-// `repofiles` (40).
+// module.go registers the V1 context providers (architecture §3.1, contracts §2.6):
+// architecture §11's four — `project` (10) · `wiki` (20) · `ticket` (30) · `repofiles` (40)
+// — plus `event` (25), the causing event of a trigger-spawned run.
 package contextmod
 
 import (
@@ -45,6 +45,9 @@ func (m *Module) Init(k *kernel.Kernel) error {
 		return err
 	}
 	if err := k.RegisterContextProvider(NewWikiProvider(m.opts.Store)); err != nil {
+		return err
+	}
+	if err := k.RegisterContextProvider(NewEventProvider(m.opts.Store)); err != nil {
 		return err
 	}
 	if err := k.RegisterContextProvider(NewTicketProvider(m.opts.Store)); err != nil {
