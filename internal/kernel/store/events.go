@@ -126,6 +126,38 @@ func (r *EventsRepo) ByCauseRun(ctx context.Context, runID string) ([]domain.Eve
 	return out, rows.Err()
 }
 
+// ForPRSubject returns the project's events about one pull request, oldest first — the pull
+// request's own history. Without it a run spawned by the second review on a pull request is
+// handed that review and nothing else: the first review, the comments answering it and the
+// pull request's own opening are all rows this run can see nothing of.
+//
+// Matched on the subject columns, which is what every producer of a PR-shaped event sets (the
+// GitHub poller's newEvent and the `submit_review` MCP tool both write subject_kind 'pr' plus
+// the number), so this rides ix_events_subject's (project_id, subject_kind, subject_number).
+// `trigger` kind events are excluded, as in SinceForProject: a firing notification is
+// Lexicode's own bookkeeping, not something that happened on the pull request.
+func (r *EventsRepo) ForPRSubject(ctx context.Context, projectID string, prNumber int64) ([]domain.Event, error) {
+	rows, err := r.h.r.QueryContext(ctx, `
+		SELECT `+eventCols+` FROM events
+		WHERE project_id = ? AND subject_kind = 'pr' AND subject_number = ?
+			AND kind != 'trigger'
+		ORDER BY occurred_at, created_at, id`, projectID, prNumber)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Event
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // SinceForProject returns the project's events with occurred_at >= since, newest first —
 // the backtest scan (D-13, architecture §8.1). `trigger` kind events are excluded for parity
 // with the engine, which never evaluates its own firing notifications. Rides the
