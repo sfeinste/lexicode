@@ -72,8 +72,9 @@ Per run, one container, destroyed when the run ends:
   memory and pid caps, but nothing sets them yet — today a run inherits the daemon's defaults
   for those three. Known gap.
 - **Network** per the project's policy — see [network-policy.md](network-policy.md).
-- **Labelled** `lexicode.agent=<agent id>` and with the orchestrator's instance id, which is what
-  lets the sweeper tell its own containers from yours.
+- **Labelled** `lexicode.agent=<agent id>`, with a per-container instance id, and with
+  `lexicode.owner=<this workspace>`, which is what lets the sweeper tell its own containers from
+  yours — and from another Lexicode's.
 
 The workspace is not a `git clone` — the orchestrator materializes its own files first
 (`.claude/settings.json`, `.lexicode/mcp.json`, the prompt, a commit-msg hook) and then does
@@ -87,9 +88,12 @@ The workspace is not a `git clone` — the orchestrator materializes its own fil
 ## Cleanup
 
 Containers are removed when their run ends. A crash can still leave one behind, so a sweeper
-runs at boot and hourly: it lists containers labelled with this orchestrator, looks up the run
-each belongs to, and removes any whose run is finished or gone. Containers that are not
-Lexicode's are never touched.
+runs at boot and hourly: it lists the containers this workspace created — they carry an owner
+label derived from its data directory — looks up the run each belongs to, and removes any whose
+run is finished or gone. Containers that are not Lexicode's are never touched, and neither are
+another Lexicode's: a second instance on the same machine (an acceptance run, a demo workspace,
+a second data directory) has its own owner, and each sweeps only its own containers even though
+the other's runs are unknown to it.
 
 Images are not swept. `docker image prune` if old `lexicode/agent-base:*` tags accumulate after
 upgrades.
