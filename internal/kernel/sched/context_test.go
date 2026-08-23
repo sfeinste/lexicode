@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -407,5 +408,181 @@ func TestManualRunHasNoEventSection(t *testing.T) {
 	}
 	if strings.Contains(run.Prompt, "# What happened") {
 		t.Fatalf("a manually delegated run got an event section:\n%s", run.Prompt)
+	}
+}
+
+// ---------------------------------------------------- the review provider (LEXI-10) -----
+
+// reviewCommentEvent stores the `pull_request_review_comment/created` event one inline comment
+// of review 555 arrives as, and returns it.
+func (e *env) reviewCommentEvent(projectID string) domain.Event {
+	e.t.Helper()
+	num := int64(219)
+	now := domain.Now()
+	ev := domain.Event{
+		ID: domain.NewID(), ProjectID: &projectID, Source: "github.poll",
+		Kind: "pull_request_review_comment", ActivityType: "created",
+		ActorKind: domain.ActorHuman, SubjectKind: "pr", SubjectNumber: &num,
+		Payload: []byte(`{"pr":{"number":219,"title":"Add rate limiting"},
+			"comment":{"id":"2001","review_id":"555","author":"alice",
+			"body":"this is off by one","path":"internal/api/rate.go","line":42}}`),
+		DedupeKey: "t:" + domain.NewID(), DispatchState: domain.DispatchDone,
+		OccurredAt: now, CreatedAt: now,
+	}
+	if err := e.st.Events().Insert(context.Background(), &ev); err != nil {
+		e.t.Fatal(err)
+	}
+	return ev
+}
+
+// ------------------------------------------------------------- the review provider -----
+
+// stubReviews is the contextmod.ReviewReader seam: one review's threads, canned.
+type stubReviews struct {
+	reviews []domain.Review
+	threads []domain.ReviewThread
+}
+
+func (s stubReviews) ListReviews(context.Context, ports.Creds, domain.RepoRef, int) ([]domain.Review, error) {
+	return s.reviews, nil
+}
+
+func (s stubReviews) ListReviewThreads(context.Context, ports.Creds, domain.RepoRef, int) ([]domain.ReviewThread, error) {
+	return s.threads, nil
+}
+
+// reviewProviderForTest wires a real review provider over the env's store, with a token on the
+// seeded repo so the provider's whole path (repo row → token → forge seam) runs.
+func reviewProviderForTest(t *testing.T, e *env, f fixtures, forge contextmod.ReviewReader) ports.ContextProvider {
+	t.Helper()
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sec, err := secrets.Open(secrets.Options{
+		Store: e.st, KeyPath: filepath.Join(t.TempDir(), "master.key"), Logger: logger,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _, err := sec.Set(ctx, secrets.SetInput{
+		Scope: domain.SecretScopeProject, ProjectID: f.project.ID, Name: "GITHUB_TOKEN",
+		Value: "ghp_test", CreatedBy: e.ownerID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := e.st.Repos().ByProject(ctx, f.project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.TokenSecretID = &info.ID
+	if err := e.st.Repos().Update(ctx, &repo); err != nil {
+		t.Fatal(err)
+	}
+	return contextmod.NewReviewProvider(e.st, sec, forge, logger)
+}
+
+// TestReviewReachesThePromptWhole is LEXI-10's first acceptance criterion end to end at the
+// scheduler: a run caused by ONE comment of a five-comment review is prompted with the review
+// summary and all five threads — file, line and hunk — in one section, and the Context panel
+// has a row saying where it came from.
+func TestReviewReachesThePromptWhole(t *testing.T) {
+	e := newEnv(t, options{fixture: fixtureOK})
+	f := e.seed(2, nil, nil)
+
+	threads := make([]domain.ReviewThread, 0, 5)
+	files := []string{"internal/api/rate.go", "internal/store/limits.go", "web/src/Rate.tsx",
+		"README.md", "Makefile"}
+	bodies := []string{"off by one", "index this column", "this state can go",
+		"document the header", "add the target"}
+	for i, path := range files {
+		threads = append(threads, domain.ReviewThread{
+			ID: path, ReviewID: 555, Path: path, Line: 10 + i,
+			DiffHunk: "@@ -9,3 +9,4 @@\n+\tnew line", ResolutionKnown: true,
+			Comments: []domain.Comment{{
+				ID: int64(2001 + i), AuthorLogin: "alice", Body: bodies[i],
+				Path: path, Line: 10 + i, ReviewID: 555,
+			}},
+		})
+	}
+	e.providers = []ports.ContextProvider{
+		contextmod.NewTicketProvider(e.st),
+		reviewProviderForTest(t, e, f, stubReviews{
+			reviews: []domain.Review{{ID: 555, PRNumber: 219, AuthorLogin: "alice",
+				State: "CHANGES_REQUESTED", Body: "Five things before this can land."}},
+			threads: threads,
+		}),
+	}
+
+	ev := e.reviewCommentEvent(f.project.ID)
+	tk := e.ticket(f, f.backlog, "Add rate limiting")
+	req := runRequest(f, tk, nil)
+	req.CauseEventID = ev.ID
+	run, err := e.sch.Enqueue(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(run.Prompt, "Five things before this can land.") {
+		t.Errorf("the review summary is missing from the prompt:\n%s", run.Prompt)
+	}
+	for i, path := range files {
+		anchor := path + ":" + strconv.Itoa(10+i)
+		if !strings.Contains(run.Prompt, anchor) {
+			t.Errorf("thread %s is missing from the prompt:\n%s", anchor, run.Prompt)
+		}
+		if !strings.Contains(run.Prompt, bodies[i]) {
+			t.Errorf("comment %q is missing from the prompt:\n%s", bodies[i], run.Prompt)
+		}
+	}
+	if !strings.Contains(run.Prompt, "```diff") {
+		t.Errorf("the diff hunks are missing from the prompt:\n%s", run.Prompt)
+	}
+	if strings.Count(run.Prompt, "# Review by alice on PR #219") != 1 {
+		t.Errorf("the review is not exactly one section:\n%s", run.Prompt)
+	}
+
+	items, err := e.st.RunContextItems().ForRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.Provider == "review" {
+			found = true
+			if it.Reason != "review on PR #219" || !it.Injected {
+				t.Errorf("review context item = %+v", it)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no review row in the context stack: %+v", items)
+	}
+}
+
+// TestNoReviewNoSection: a run with no causing event resolves the same stack it always did —
+// the review provider contributes nothing rather than an empty heading.
+func TestNoReviewNoSection(t *testing.T) {
+	e := newEnv(t, options{fixture: fixtureOK})
+	f := e.seed(2, nil, nil)
+	e.providers = []ports.ContextProvider{
+		contextmod.NewTicketProvider(e.st),
+		reviewProviderForTest(t, e, f, stubReviews{}),
+	}
+	tk := e.ticket(f, f.backlog, "Add rate limiting")
+	run, err := e.sch.Enqueue(context.Background(), runRequest(f, tk, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(run.Prompt, "Review") {
+		t.Errorf("a run with no causing event got a review section:\n%s", run.Prompt)
+	}
+	items, err := e.st.RunContextItems().ForRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if it.Provider == "review" {
+			t.Errorf("review row on a run no review caused: %+v", it)
+		}
 	}
 }

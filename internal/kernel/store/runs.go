@@ -227,6 +227,32 @@ func (r *RunsRepo) LatestOnSubject(ctx context.Context, triggerID, subjectKey, c
 		ORDER BY queued_at DESC, seq DESC LIMIT 1`, triggerID, subjectKey, cutoffQueuedAt))
 }
 
+// LatestForReview returns the most recent run of this trigger whose causing event belongs to
+// forge review reviewID on one subject — the loop guard's review-coalescing probe (LEXI-10).
+//
+// A human review arrives as one `pull_request_review/submitted` event plus one
+// `pull_request_review_comment/created` event per inline comment, and each of them would fire
+// the rule on its own. Since the `review` context provider gives a run the WHOLE review, the
+// second event onwards has nothing left to add: this query is how the guard finds the run that
+// already has it. The review id is read out of the causing event's payload — `review.id` for
+// the review event, `comment.review_id` for a comment fragment — so no new column is needed to
+// key on it, and the (project, subject_kind, subject_number) prefix means the JSON is only read
+// for the one pull request's events (ix_events_subject), not for the whole table.
+//
+// loop_stopped rows are excluded for the same reason as in LatestOnSubject: they are guard
+// artifacts, not work that has the review.
+func (r *RunsRepo) LatestForReview(ctx context.Context, triggerID, projectID, subjectKind string, subjectNumber int64, reviewID string) (domain.Run, error) {
+	return scanRun(r.h.r.QueryRowContext(ctx, `
+		SELECT `+runCols+` FROM runs
+		WHERE trigger_id = ? AND state != 'loop_stopped' AND cause_event_id IN (
+			SELECT id FROM events
+			WHERE project_id = ? AND subject_kind = ? AND subject_number = ?
+			  AND (json_extract(payload, '$.review.id') = ?
+			    OR json_extract(payload, '$.comment.review_id') = ?))
+		ORDER BY queued_at DESC, seq DESC LIMIT 1`,
+		triggerID, projectID, subjectKind, subjectNumber, reviewID, reviewID))
+}
+
 // ActiveOnSubject returns the newest non-terminal run for (trigger, subject) — the loop
 // guard's cancel-in-progress probe (S27). ErrNotFound when nothing is live.
 func (r *RunsRepo) ActiveOnSubject(ctx context.Context, triggerID, subjectKey string) (domain.Run, error) {

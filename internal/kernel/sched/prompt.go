@@ -104,6 +104,18 @@ func (s *Scheduler) assemblePrompt(ctx context.Context, agent domain.Agent, tick
 		}
 		creq.TaskSummary += req.Reason
 	}
+	// The causing event, for the providers that react to what happened (the `review`
+	// provider assembles the whole review a review fragment belongs to). A read failure is
+	// not fatal: those providers simply contribute nothing, exactly as for a manual run.
+	if req.CauseEventID != "" {
+		ev, err := s.st.Events().ByID(ctx, req.CauseEventID)
+		if err != nil {
+			s.logger.Warn("sched: causing event unreadable for context resolution",
+				slog.String("event", req.CauseEventID), slog.String("error", err.Error()))
+		} else {
+			creq.CausingEvent = &ev
+		}
+	}
 
 	resolved, err := s.resolveContext(ctx, creq)
 	if err != nil {

@@ -1,6 +1,7 @@
 // module.go registers the V1 context providers (architecture §3.1, contracts §2.6):
 // architecture §11's four — `project` (10) · `wiki` (20) · `ticket` (30) · `repofiles` (40)
-// — plus `event` (25), the causing event of a trigger-spawned run.
+// — plus `event` (25), the causing event of a trigger-spawned run, and `review` (35), which
+// assembles the whole review behind a run caused by a review fragment (LEXI-10).
 package contextmod
 
 import (
@@ -24,6 +25,9 @@ type Options struct {
 	// package) the repofiles provider lists instruction files through. Nil disables the
 	// enumeration.
 	Docs DocLister
+	// Reviews is the forge seam the `review` provider assembles a whole review through.
+	// Nil leaves the provider with only what the causing event carried.
+	Reviews ReviewReader
 	// Logger receives repofiles' non-fatal enumeration warnings. Nil means slog.Default().
 	Logger *slog.Logger
 }
@@ -51,6 +55,10 @@ func (m *Module) Init(k *kernel.Kernel) error {
 		return err
 	}
 	if err := k.RegisterContextProvider(NewTicketProvider(m.opts.Store)); err != nil {
+		return err
+	}
+	if err := k.RegisterContextProvider(
+		NewReviewProvider(m.opts.Store, m.opts.Secrets, m.opts.Reviews, m.opts.Logger)); err != nil {
 		return err
 	}
 	return k.RegisterContextProvider(
