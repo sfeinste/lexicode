@@ -400,16 +400,19 @@ func (s *Scheduler) drainSteering(ctx context.Context, sup *supervisor, runID st
 	}
 }
 
-// appendSystemActivity records a level-2 system line on a run — post-terminal notes like a
-// failed PR open, honest in the transcript rather than lost in a log file.
-func (s *Scheduler) appendSystemActivity(ctx context.Context, runID, title string) {
+// appendErrorActivity records a level-0 error line on a run — post-terminal failures like a
+// pull request that could not be opened, honest in the transcript rather than lost in a log
+// file. Level 0 on purpose (LEXI-7): level 2 is verbose-only, and a run that ends green with
+// no pull request and no explanation anywhere on screen is a silent failure.
+func (s *Scheduler) appendErrorActivity(ctx context.Context, runID, title string) {
+	failed := false
 	a := domain.Activity{
-		RunID: runID, Type: domain.ActivitySystem, Level: 2, GroupKey: "system",
+		RunID: runID, Type: domain.ActivityError, Level: 0, GroupKey: "system",
 		Title: truncate(title, 200), Payload: mustJSON(map[string]any{"text": title}),
-		Attempt: 1, CreatedAt: s.now(),
+		OK: &failed, Attempt: 1, CreatedAt: s.now(),
 	}
 	if err := s.st.Activities().AppendNext(ctx, &a); err != nil {
-		s.logger.Error("sched: system activity append failed",
+		s.logger.Error("sched: error activity append failed",
 			slog.String("run", runID), slog.String("error", err.Error()))
 	}
 }
@@ -544,8 +547,9 @@ func (s *Scheduler) finish(ctx context.Context, sup *supervisor, run domain.Run,
 		if opened, err := s.opts.PRs.OpenForRun(ctx, after); err != nil {
 			s.logger.Error("sched: opening the run's pull request failed",
 				slog.String("run", run.ID), slog.String("error", err.Error()))
-			s.appendSystemActivity(ctx, run.ID,
-				"could not open a pull request: "+err.Error())
+			note := prFailureNote(after, err)
+			s.appendErrorActivity(ctx, run.ID, note)
+			after = s.appendToOutcome(ctx, after, note)
 		} else if opened {
 			s.logger.Info("sched: pull request opened for run", slog.String("run", run.ID))
 		}
@@ -588,6 +592,49 @@ func (s *Scheduler) terminalMessage(kind domain.RunState, run domain.Run, branch
 		fmt.Fprintf(&b, " Partial work pushed to `%s`.", branch)
 	}
 	return b.String()
+}
+
+// prFailureNote is the sentence a completed run whose pull request could not be opened
+// carries — on its outcome line and in its transcript. It names the branch that WAS pushed
+// before the reason, because the work is not lost (once the cause is fixed the pull request
+// opens from there) and because the reason can be long: the activity title is truncated, and
+// what a glance must show is "no pull request, work is here".
+func prFailureNote(run domain.Run, err error) string {
+	note := "The pull request could not be opened"
+	if run.Branch != nil && *run.Branch != "" {
+		note += fmt.Sprintf(", so the work stays on `%s`", *run.Branch)
+	}
+	return note + ": " + strings.TrimSuffix(strings.TrimSpace(err.Error()), ".") + "."
+}
+
+// appendToOutcome adds a sentence to a terminal run's outcome line and returns the updated
+// row. The terminal transition has already landed by the time the pull request is attempted,
+// so this is a second, guarded write of error_message on a run that must still be in the
+// state it ended in — and it re-emits run.state, so anything watching sees the corrected
+// outcome instead of a green line that quietly changed underneath it.
+func (s *Scheduler) appendToOutcome(ctx context.Context, run domain.Run, note string) domain.Run {
+	message := strings.TrimSpace(run.ErrorMessage)
+	if message != "" {
+		message = strings.TrimSuffix(message, ".") + ". "
+	}
+	message += note
+
+	ok, err := s.st.Runs().SetState(ctx, run.ID, []domain.RunState{run.State}, run.State,
+		store.RunStateUpdate{ErrorMessage: &message})
+	if err != nil {
+		s.logger.Error("sched: outcome line update failed",
+			slog.String("run", run.ID), slog.String("error", err.Error()))
+		return run
+	}
+	if !ok {
+		return run // the row left the state it ended in; leave its outcome alone
+	}
+	after, err := s.st.Runs().ByID(ctx, run.ID)
+	if err != nil {
+		return run
+	}
+	s.emitRunState(ctx, after)
+	return after
 }
 
 // pushArtifact runs the §10.5 commit-and-push inside the instance and records the

@@ -201,6 +201,49 @@ func TestOpenForRunNoHeadBranchIsNotAnError(t *testing.T) {
 	}
 }
 
+// TestOpenForRun403NamesTheTokenScope is LEXI-7. Run #9 completed, its branch was pushed, and
+// the forge answered "403 Resource not accessible by personal access token" because the
+// project token has `Contents: write` and not `Pull requests: write`. The raw API error does
+// not say that; the error the scheduler puts on the outcome line must, or the 30-second fix
+// sits behind an hour of confusion. A 403 that IS transient — a secondary rate limit — must
+// not be blamed on the token's scopes.
+func TestOpenForRun403NamesTheTokenScope(t *testing.T) {
+	const branch = "dev/lexi-2-git-actions-for-tests-2"
+	forbidden := errors.New("github: open pull request for acme/payments: " +
+		"POST https://api.github.com/repos/sfeinste/lexicode/pulls: 403 " +
+		"Resource not accessible by personal access token []")
+
+	e := newOpenerEnv(t, branch)
+	opened, err := e.opener(forbidden).OpenForRun(context.Background(), e.run)
+	if err == nil {
+		t.Fatal("a 403 returned no error, want it surfaced")
+	}
+	if opened {
+		t.Error("OpenForRun reported a pull request opened")
+	}
+	if !strings.Contains(err.Error(), "Pull requests: write") {
+		t.Errorf("the 403 does not name the likely cause:\n  %s", err)
+	}
+	if !strings.Contains(err.Error(), "Resource not accessible by personal access token") {
+		t.Errorf("the raw API answer was dropped:\n  %s", err)
+	}
+	if !errors.Is(err, forbidden) {
+		t.Errorf("the forge error is no longer reachable through errors.Is:\n  %s", err)
+	}
+	t.Logf("outcome cause: %s", err)
+
+	// A secondary rate limit is GitHub's other 403. It is transient, so it keeps its own
+	// words rather than being blamed on the token's permissions.
+	secondary := errors.New("github: open pull request for acme/payments: " +
+		"POST https://api.github.com/repos/acme/payments/pulls: 403 " +
+		"You have exceeded a secondary rate limit []")
+	e2 := newOpenerEnv(t, branch)
+	if _, err := e2.opener(secondary).OpenForRun(context.Background(), e2.run); err == nil ||
+		strings.Contains(err.Error(), "Pull requests: write") {
+		t.Errorf("a secondary rate limit was reported as a scope problem:\n  %v", err)
+	}
+}
+
 // TestOpenForRunRealFailureStaysAnError: the classification is narrow. Anything that is not
 // one of the "nothing to open" 422s still reaches the scheduler as an error, which is what
 // puts it in the run's transcript as a failure.

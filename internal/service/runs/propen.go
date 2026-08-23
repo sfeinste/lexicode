@@ -117,7 +117,7 @@ func (o *PROpener) OpenForRun(ctx context.Context, run domain.Run) (bool, error)
 			}
 			return false, nil
 		}
-		return false, err
+		return false, explainRefusal(err)
 	}
 	if o.Logger != nil {
 		o.Logger.Info("runs: pull request opened",
@@ -173,9 +173,37 @@ func nothingToOpen(err error, branch string) (noOpNote, bool) {
 	return noOpNote{}, false
 }
 
-// noteNothingToOpen records the level-2 system line. The scheduler writes the same shape for
-// its own post-terminal notes (appendSystemActivity); this one is written here because only
-// this file knows what the forge answered.
+// explainRefusal names the likely cause of a forge refusal that is a real failure, so the
+// outcome line the scheduler renders says something a human can act on rather than echoing
+// the raw API error alone (LEXI-7).
+//
+// The only case worth naming is the one that keeps happening: a 403 on POST /pulls, which
+// almost always means the repository token can write contents but not pull requests. The
+// transient 403s never reach here as text — the adapter's transport turns a primary rate
+// limit into a typed *ports.RateLimitedError before go-github builds an *ErrorResponse — so a
+// 403 arriving as text is a permissions answer. Secondary rate limits are the one exception
+// GitHub also spells 403, and they say so in the body; those are left alone, as is every
+// other status, whose raw text is already the whole truth.
+func explainRefusal(err error) error {
+	if errors.Is(err, ports.ErrPermissionDenied) || errors.Is(err, ports.ErrRateLimited) {
+		return err // already says exactly what is wrong
+	}
+	low := strings.ToLower(err.Error())
+	if !strings.Contains(low, ": 403 ") && !strings.HasSuffix(low, ": 403") {
+		return err
+	}
+	if strings.Contains(low, "rate limit") || strings.Contains(low, "abuse") {
+		return err // a secondary rate limit is transient, not a scope problem
+	}
+	return fmt.Errorf("the repository token is not allowed to open pull requests — it most "+
+		"likely lacks the `Pull requests: write` permission (`Contents: write` alone is not "+
+		"enough); the forge said: %w", err)
+}
+
+// noteNothingToOpen records the level-2 system line — verbose-only on purpose, because
+// nothing went wrong. A refusal that IS a failure travels back to the scheduler instead,
+// which writes it at level 0 (appendErrorActivity) and onto the run's outcome line; this one
+// is written here because only this file knows what the forge answered.
 func (o *PROpener) noteNothingToOpen(ctx context.Context, runID string, note noOpNote) {
 	a := domain.Activity{
 		RunID: runID, Type: domain.ActivitySystem, Level: 2, GroupKey: "system",

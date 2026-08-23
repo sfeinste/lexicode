@@ -7,6 +7,7 @@ package sched_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -83,6 +85,7 @@ type env struct {
 	providers []ports.ContextProvider
 	sb        *testkit.Sandbox
 	rt        *testkit.Scripted
+	prs       sched.PROpener
 	mcp       *mcpsvc.Server
 	mcpSrv    *httptest.Server
 	sch       *sched.Scheduler
@@ -98,6 +101,9 @@ type options struct {
 	// providers overrides the context-provider set (default: ticket + project). The S34
 	// context tests wire all four.
 	providers []ports.ContextProvider
+	// prs wires the PROpener seam a completed run's pull request goes through. Nil (the
+	// default) disables PR opening, as it does in production.
+	prs sched.PROpener
 }
 
 func newEnv(t *testing.T, o options) *env {
@@ -129,6 +135,7 @@ func newEnv(t *testing.T, o options) *env {
 	e.sb = testkit.NewSandbox(testkit.Script{})
 	e.rt = &testkit.Scripted{Fixture: []byte(o.fixture), Pace: o.pace, ExitCode: o.exitCode}
 	e.providers = o.providers
+	e.prs = o.prs
 
 	var schedRef *sched.Scheduler
 	e.mcp = mcpsvc.New(mcpsvc.Options{
@@ -176,6 +183,7 @@ func newScheduler(t *testing.T, e *env, auditW *audit.Writer, logger *slog.Logge
 		Sandbox: func(string) (ports.Sandbox, error) { return e.sb, nil },
 		Runtime: func(string) (ports.AgentRuntime, error) { return e.rt, nil },
 		Tickets: ticketsSvc,
+		PRs:     e.prs,
 		Providers: func() []ports.ContextProvider {
 			if e.providers != nil {
 				return e.providers
@@ -1028,5 +1036,139 @@ func TestStepCapFailsTheRun(t *testing.T) {
 	final := e.run(run.ID)
 	if final.State != domain.RunFailed || !strings.Contains(final.StateReason, "step cap") {
 		t.Fatalf("state = %s (%q), want failed/step cap", final.State, final.StateReason)
+	}
+}
+
+// ---------------------------------------------------------------- LEXI-7: PR outcome -----
+
+// prOpenerFunc is the PROpener seam as a function, so each case below scripts one answer
+// where production wires runs.PROpener.
+type prOpenerFunc func(ctx context.Context, run domain.Run) (bool, error)
+
+func (f prOpenerFunc) OpenForRun(ctx context.Context, run domain.Run) (bool, error) {
+	return f(ctx, run)
+}
+
+// TestCompletedRunOutcomeStatesPRFailure is LEXI-7. A run that completed but could not open
+// its pull request used to report unqualified success: the reason was recorded as a level-2
+// (verbose-only) activity, so at the default verbosity a user saw a green outcome, no pull
+// request, and no explanation anywhere on screen. The outcome line now carries the reason and
+// the branch that WAS pushed — while the two quiet cases stay quiet: a pull request that
+// opened, and a run with nothing to open (the deliberate no-op PROpener answers (false, nil)
+// for).
+func TestCompletedRunOutcomeStatesPRFailure(t *testing.T) {
+	// What runs.PROpener hands the scheduler for the 403 seen live on run #9: the raw API
+	// error plus the likely cause.
+	forbidden := errors.New("the repository token is not allowed to open pull requests — it " +
+		"most likely lacks the `Pull requests: write` permission (`Contents: write` alone is " +
+		"not enough); the forge said: github: open pull request for acme/payments: " +
+		"POST https://api.github.com/repos/acme/payments/pulls: 403 " +
+		"Resource not accessible by personal access token []")
+
+	cases := []struct {
+		name   string
+		opened bool
+		err    error
+		// want are the substrings the outcome line must carry beyond the agent's own result
+		// text; empty means the outcome must be the result text and nothing more.
+		want []string
+	}{
+		{name: "pull request opened", opened: true},
+		{name: "nothing to open", opened: false},
+		{
+			name: "pull request refused 403",
+			err:  forbidden,
+			want: []string{
+				"The pull request could not be opened",
+				"so the work stays on",
+				"Pull requests: write",
+				"Resource not accessible by personal access token",
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var called atomic.Bool
+			e := newEnv(t, options{
+				fixture: fixtureOK,
+				prs: prOpenerFunc(func(_ context.Context, _ domain.Run) (bool, error) {
+					defer called.Store(true)
+					return c.opened, c.err
+				}),
+			})
+			f := e.seed(1, nil, nil)
+			e.start()
+
+			run, err := e.sch.Enqueue(context.Background(), sched.RunRequest{
+				ProjectID: f.project.ID, AgentID: f.agent.ID, Reason: "test",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "run completed", func() bool { return e.run(run.ID).State.Terminal() })
+			waitFor(t, "the PR opener ran", called.Load)
+			// The outcome-line append lands just after OpenForRun returns; give the negative
+			// assertions something to fail against rather than a race they always win.
+			time.Sleep(100 * time.Millisecond)
+
+			final := e.run(run.ID)
+			if final.State != domain.RunCompleted {
+				t.Fatalf("state = %s (%s), want completed", final.State, final.ErrorMessage)
+			}
+			if final.Branch == nil || *final.Branch == "" {
+				t.Fatal("the completed run has no branch; the outcome line has nothing to name")
+			}
+			if len(c.want) == 0 {
+				if final.ErrorMessage != "all done" {
+					t.Fatalf("outcome line = %q, want the agent's result text alone (%q)",
+						final.ErrorMessage, "all done")
+				}
+			} else {
+				for _, w := range append(c.want, "`"+*final.Branch+"`") {
+					if !strings.Contains(final.ErrorMessage, w) {
+						t.Errorf("outcome line does not carry %q:\n  %s", w, final.ErrorMessage)
+					}
+				}
+				if !strings.HasPrefix(final.ErrorMessage, "all done.") {
+					t.Errorf("outcome line dropped the agent's own result text:\n  %s",
+						final.ErrorMessage)
+				}
+			}
+			t.Logf("outcome line: %s", final.ErrorMessage)
+
+			// The transcript says the same thing, at level 0 — the verbosity a user reads by
+			// default — and nowhere at all when there was nothing to say.
+			acts, err := e.st.Activities().ForRun(context.Background(), run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var errActs []domain.Activity
+			for _, a := range acts {
+				if a.Type == domain.ActivityError {
+					errActs = append(errActs, a)
+				}
+			}
+			if len(c.want) == 0 {
+				if len(errActs) != 0 {
+					t.Fatalf("a quiet case wrote %d error activities: %+v", len(errActs), errActs)
+				}
+				return
+			}
+			if len(errActs) != 1 {
+				t.Fatalf("got %d error activities, want exactly one: %+v", len(errActs), errActs)
+			}
+			a := errActs[0]
+			if a.Level != 0 {
+				t.Errorf("error activity level = %d, want 0 (level 2 is verbose-only)", a.Level)
+			}
+			if a.OK == nil || *a.OK {
+				t.Errorf("the failure is not marked failed: %+v", a)
+			}
+			if !strings.Contains(a.Title, "could not be opened") ||
+				!strings.Contains(a.Title, *final.Branch) {
+				t.Errorf("error activity title = %q, want the reason and the branch", a.Title)
+			}
+		})
 	}
 }
