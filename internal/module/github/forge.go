@@ -10,8 +10,10 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -557,11 +559,22 @@ func (f *Forge) SubmitReview(ctx context.Context, c ports.Creds, r domain.RepoRe
 	if err != nil {
 		return domain.Review{}, err
 	}
-	created, _, err := cl.PullRequests.CreateReview(ctx, r.Owner, r.Name, n, &gh.PullRequestReviewRequest{
+	created, resp, err := cl.PullRequests.CreateReview(ctx, r.Owner, r.Name, n, &gh.PullRequestReviewRequest{
 		Body:  gh.Ptr(withMarker(rev.Body, a)),
 		Event: gh.Ptr(event),
 	})
 	if err != nil {
+		// 422 on a review is GitHub refusing the EVENT, not the request: the canonical case
+		// is REQUEST_CHANGES from the pull request's own author, which under D-9's single
+		// project PAT every agent reviewing another agent's work is. Nothing was written,
+		// and the caller can retry the same body as a COMMENT — so this one status is
+		// classified rather than wrapped, and the caller decides.
+		if resp != nil && resp.StatusCode == http.StatusUnprocessableEntity {
+			return domain.Review{}, &ports.ReviewEventRejectedError{
+				Event:  event,
+				Detail: reviewRejectionDetail(err),
+			}
+		}
 		return domain.Review{}, wrapErr(fmt.Sprintf("submit review on PR #%d", n), r, err)
 	}
 	review := mapReview(created, n)
@@ -569,6 +582,25 @@ func (f *Forge) SubmitReview(ctx context.Context, c ports.Creds, r domain.RepoRe
 		strconv.FormatInt(review.ID, 10), review.URL,
 		fmt.Sprintf("submitted a %s review on PR #%d", event, n))
 	return review, nil
+}
+
+// reviewRejectionDetail pulls GitHub's own words out of a 422 so the run output says why the
+// event was refused rather than just that it was.
+func reviewRejectionDetail(err error) string {
+	var er *gh.ErrorResponse
+	if !errors.As(err, &er) {
+		return ""
+	}
+	parts := make([]string, 0, len(er.Errors)+1)
+	if msg := strings.TrimSpace(er.Message); msg != "" {
+		parts = append(parts, msg)
+	}
+	for _, e := range er.Errors {
+		if m := strings.TrimSpace(e.Message); m != "" {
+			parts = append(parts, m)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // CloneURL implements ports.ForgeProvider: the x-access-token form the container clones with.

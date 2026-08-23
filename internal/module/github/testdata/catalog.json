@@ -294,6 +294,192 @@
       "subject_key": "pr:{{pr.number}}"
     },
     {
+      "kind": "agent_review",
+      "label": "Review submitted by an agent",
+      "activity_types": [
+        {
+          "value": "submitted",
+          "label": "submitted",
+          "help": "Emitted by Lexicode when an agent submits a review through the submit_review tool, with the severities the agent actually reported. GitHub's own event for the same review arrives separately as \"Pull request review\" — a rule listens to one or the other, never both."
+        }
+      ],
+      "filters": [
+        {
+          "key": "branches",
+          "kind": "glob-list",
+          "label": "Branches"
+        },
+        {
+          "key": "labels",
+          "kind": "label-list",
+          "label": "Labels"
+        }
+      ],
+      "fields": [
+        {
+          "path": "review.id",
+          "type": "text"
+        },
+        {
+          "path": "review.author",
+          "type": "text"
+        },
+        {
+          "path": "review.state",
+          "type": "enum",
+          "enum": [
+            "changes_requested",
+            "commented"
+          ]
+        },
+        {
+          "path": "review.intended_state",
+          "type": "enum",
+          "enum": [
+            "changes_requested",
+            "commented"
+          ]
+        },
+        {
+          "path": "review.max_severity",
+          "type": "enum",
+          "enum": [
+            "blocker",
+            "major",
+            "minor",
+            "nit",
+            "none"
+          ]
+        },
+        {
+          "path": "review.findings_count",
+          "type": "number"
+        },
+        {
+          "path": "review.severity_counts.blocker",
+          "type": "number"
+        },
+        {
+          "path": "review.severity_counts.major",
+          "type": "number"
+        },
+        {
+          "path": "review.severity_counts.minor",
+          "type": "number"
+        },
+        {
+          "path": "review.severity_counts.nit",
+          "type": "number"
+        },
+        {
+          "path": "review.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.number",
+          "type": "number"
+        },
+        {
+          "path": "pr.title",
+          "type": "text"
+        },
+        {
+          "path": "pr.author",
+          "type": "text"
+        },
+        {
+          "path": "pr.author_kind",
+          "type": "enum",
+          "enum": [
+            "human",
+            "agent"
+          ]
+        },
+        {
+          "path": "pr.branch",
+          "type": "text"
+        },
+        {
+          "path": "pr.base",
+          "type": "text"
+        },
+        {
+          "path": "pr.draft",
+          "type": "bool"
+        },
+        {
+          "path": "pr.merged",
+          "type": "bool"
+        },
+        {
+          "path": "pr.state",
+          "type": "enum",
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        {
+          "path": "pr.additions",
+          "type": "number"
+        },
+        {
+          "path": "pr.deletions",
+          "type": "number"
+        },
+        {
+          "path": "pr.files_changed",
+          "type": "number"
+        },
+        {
+          "path": "pr.labels",
+          "type": "set"
+        },
+        {
+          "path": "pr.body",
+          "type": "text"
+        },
+        {
+          "path": "pr.url",
+          "type": "text"
+        },
+        {
+          "path": "pr.head_commit_message",
+          "type": "text"
+        },
+        {
+          "path": "repo.owner",
+          "type": "text"
+        },
+        {
+          "path": "repo.name",
+          "type": "text"
+        },
+        {
+          "path": "repo.default_branch",
+          "type": "text"
+        },
+        {
+          "path": "actor.kind",
+          "type": "enum",
+          "enum": [
+            "human",
+            "agent",
+            "external"
+          ]
+        },
+        {
+          "path": "actor.login",
+          "type": "text"
+        },
+        {
+          "path": "actor.agent",
+          "type": "text"
+        }
+      ],
+      "subject_key": "pr:{{pr.number}}"
+    },
+    {
       "kind": "pull_request_review_comment",
       "label": "Review comment",
       "activity_types": [

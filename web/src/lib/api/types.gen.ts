@@ -2633,10 +2633,10 @@ export interface components {
             notification: components["schemas"]["Notification"];
         };
         /**
-         * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
+         * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events, S12's ticket.commented and the agent_review.submitted event the MCP server publishes when a reviewer agent submits a review).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "triage.accepted" | "triage.duplicate" | "triage.declined" | "triage.snoozed" | "triage.woken" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "wiki.created" | "wiki.updated" | "wiki.deleted" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "triage.accepted" | "triage.duplicate" | "triage.declined" | "triage.snoozed" | "triage.woken" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "wiki.created" | "wiki.updated" | "wiki.deleted" | "agent_review.submitted" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;

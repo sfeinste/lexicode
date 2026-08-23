@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/spruce/lexicode/internal/domain"
+	"github.com/spruce/lexicode/internal/kernel/ports"
 )
 
 // ---- submit_review -----------------------------------------------------------------------
@@ -58,6 +60,54 @@ func knownSeverity(s string) bool {
 		}
 	}
 	return false
+}
+
+// severityNone is review.max_severity when a review carries no findings at all — a value, not
+// an absence, so `review.max_severity enum.is_not none` is a condition a user can write.
+const severityNone = "none"
+
+// maxSeverity is the worst severity present, or severityNone.
+func maxSeverity(counts map[string]int) string {
+	for _, sev := range severityOrder {
+		if counts[sev] > 0 {
+			return sev
+		}
+	}
+	return severityNone
+}
+
+// The internal event this tool emits when a review is submitted.
+//
+// Why it exists: the trigger that continues the loop ("changes requested → Dev addresses
+// them") used to key on `review.state` read back from GitHub's API by the poller, and that
+// round-trip loses everything. It loses the structure — the tool has severities, the API has
+// one enum — and under D-9 it loses the verdict itself: every agent shares one project PAT,
+// so a reviewer agent is the pull request's own author to GitHub, and GitHub answers 422 to
+// REQUEST_CHANGES from the author. The review lands as COMMENTED and the chain stops.
+//
+// So the fact "a review with blockers was submitted" is published here, where it is known,
+// as an event of its own kind. A distinct kind (not another activity type of
+// `pull_request_review`) is what makes double-firing structurally impossible: the poller's
+// event for the same review still arrives, and no single trigger can match both, because a
+// trigger names exactly one event kind. Which of the two a rule should use is a choice the
+// user makes in the editor; the bootstrap-suggested rule uses this one.
+//
+// The strings are duplicated in internal/module/github/catalog.go, which catalogs the
+// descriptor for the trigger editor. Service → module is a forbidden import edge
+// (architecture §2.1), so, as elsewhere in this codebase, the string IS the protocol.
+const (
+	agentReviewKind     = "agent_review"
+	agentReviewActivity = "submitted"
+)
+
+// reviewState maps the forge event onto the contracts §4 `review.state` vocabulary — the same
+// lowercase values the poller derives from GitHub's own review state, so a condition written
+// against one event reads the same way against the other.
+func reviewState(event string) string {
+	if event == "REQUEST_CHANGES" {
+		return "changes_requested"
+	}
+	return "commented"
 }
 
 // toolSubmitReview validates the findings, renders the severity-tagged markdown body and
@@ -118,11 +168,39 @@ func (s *Server) toolSubmitReview(ctx context.Context, run domain.Run, raw json.
 	}
 
 	body := renderReview(args.Summary, args.Findings)
+
+	// The intent is recorded before the forge gets a say, because the forge may refuse it.
+	//
+	// REQUEST_CHANGES is still attempted whenever the findings call for it, even though under
+	// D-9's single project PAT GitHub answers 422 today. It costs one API call that fails
+	// closed and writes nothing; it starts working the moment an agent has an identity of its
+	// own (a GitHub App installation, a per-agent PAT) with no code change; and — the reason
+	// that decides it — a run whose output says "commented" when the reviewer demanded changes
+	// is a record that misleads the human reading it. What was intended and what GitHub
+	// accepted are two different facts, and both are kept: `intended_event` and `event` here,
+	// `review.intended_state` and `review.state` on the emitted event.
+	intended := event
 	review, err := s.submitReview(context.WithoutCancel(ctx), run, number, event, body)
+	if err != nil && event == "REQUEST_CHANGES" && errors.Is(err, ports.ErrReviewEventRejected) {
+		s.logger.Info("mcp: the forge refused a REQUEST_CHANGES review; retrying as a comment",
+			slog.String("run", run.ID), slog.Int("pr", number), slog.String("reason", err.Error()))
+		refusal := err
+		event = "COMMENT"
+		review, err = s.submitReview(context.WithoutCancel(ctx), run, number, event, body)
+		if err != nil {
+			// Both attempts failed: report the refusal that started it, not just the retry.
+			return nil, fmt.Errorf("%w (after %v)", err, refusal)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
+	downgraded := event != intended
 
+	verdict := strings.ToLower(strings.ReplaceAll(intended, "_", " "))
+	if downgraded {
+		verdict += ", posted as a comment"
+	}
 	ok := true
 	s.appendActivity(ctx, domain.Activity{
 		RunID:    run.ID,
@@ -131,18 +209,150 @@ func (s *Server) toolSubmitReview(ctx context.Context, run domain.Run, raw json.
 		ToolName: "mcp__lexicode__submit_review",
 		GroupKey: "mcp__lexicode__submit_review",
 		Title: truncTitle(fmt.Sprintf("Reviewed PR #%d: %s (%d findings)",
-			number, strings.ToLower(strings.ReplaceAll(event, "_", " ")), len(args.Findings))),
+			number, verdict, len(args.Findings))),
 		Payload: mustJSON(map[string]any{
-			"pr_number": number, "event": event,
-			"severities": counts, "review_id": review.ID,
+			"pr_number": number, "event": event, "intended_event": intended,
+			"severities": counts, "max_severity": maxSeverity(counts), "review_id": review.ID,
 		}),
 		OK: &ok,
 	})
 
+	s.emitAgentReview(ctx, run, agentReview{
+		prNumber: number, event: event, intended: intended,
+		review: review, body: body, counts: counts, findings: len(args.Findings),
+	})
+
 	return map[string]any{
-		"ok": true, "pr_number": number, "event": event,
+		"ok": true, "pr_number": number, "event": event, "intended_event": intended,
 		"review_id": fmt.Sprint(review.ID), "severities": counts,
+		"max_severity": maxSeverity(counts),
 	}, nil
+}
+
+// agentReview is what emitAgentReview needs to know about a submission that succeeded.
+type agentReview struct {
+	prNumber int
+	event    string // what the forge accepted
+	intended string // what the tool asked for
+	review   domain.Review
+	body     string
+	counts   map[string]int
+	findings int
+}
+
+// emitAgentReview publishes the `agent_review.submitted` event: the reviewing agent is the
+// ACTOR and the pull request is the SUBJECT, so every loop-protection layer treats it exactly
+// like a poller event about the same pull request — actor suppression can recognise the
+// reviewer (and therefore does not suppress a rule that runs somebody else), debounce and
+// cancel-in-progress key on the same "pr:<n>" subject the engine derives for the poller's
+// events, and the depth counter can walk cause_run_id up through the review to the run that
+// produced it.
+//
+// Best-effort, like every other emit on this path: the review is on GitHub and the activity
+// is written by the time this runs, so a failure is logged, never unwound.
+func (s *Server) emitAgentReview(ctx context.Context, run domain.Run, in agentReview) {
+	if s.bus == nil {
+		return
+	}
+	severities := map[string]int{}
+	for _, sev := range severityOrder {
+		severities[sev] = in.counts[sev]
+	}
+	pr, repo, branch := s.prContext(ctx, run, in.prNumber)
+
+	agentName := ""
+	if a, err := s.st.Agents().ByID(ctx, run.AgentID); err == nil {
+		agentName = a.Name
+	}
+	payload := map[string]any{
+		// The review sub-object of contracts §4, extended: the same id/author/state/body an
+		// event from the poller carries, plus the structure only this side of the round-trip
+		// has. `state` is derived from the event the forge accepted rather than read off the
+		// returned row so it is always one of the two §4 values.
+		"review": map[string]any{
+			"id":              fmt.Sprint(in.review.ID),
+			"author":          in.review.AuthorLogin,
+			"state":           reviewState(in.event),
+			"intended_state":  reviewState(in.intended),
+			"body":            in.body,
+			"max_severity":    maxSeverity(in.counts),
+			"severity_counts": severities,
+			"findings_count":  in.findings,
+		},
+		"pr":    pr,
+		"actor": map[string]any{"kind": string(domain.ActorAgent), "login": in.review.AuthorLogin, "agent": agentName},
+	}
+	if repo != nil {
+		payload["repo"] = repo
+	}
+
+	pid, num, runID := run.ProjectID, int64(in.prNumber), run.ID
+	e := domain.Event{
+		ProjectID: &pid, Kind: agentReviewKind, ActivityType: agentReviewActivity,
+		ActorKind: domain.ActorAgent, ActorID: &run.AgentID,
+		SubjectKind: "pr", SubjectNumber: &num,
+		CauseRunID: &runID,
+		Payload:    mustJSON(payload),
+		OccurredAt: domain.FormatTime(s.now()),
+	}
+	if in.review.AuthorLogin != "" {
+		login := in.review.AuthorLogin
+		e.ActorLogin = &login
+	}
+	if branch != "" {
+		b := branch
+		e.SubjectBranch = &b
+	}
+	if err := s.bus.Emit(context.WithoutCancel(ctx), e); err != nil {
+		s.logger.Error("mcp: emit agent_review.submitted failed",
+			slog.String("run", run.ID), slog.String("error", err.Error()))
+	}
+}
+
+// prContext fills the `pr` and `repo` sub-objects of the emitted event from the event that
+// caused this run — for the common case (a reviewer spawned by "pull request opened") that is
+// the poller's own fully-populated pr object, so the follow-on rule can address pr.branch,
+// pr.labels and the rest exactly as it would on a poller event.
+//
+// A review on some OTHER pull request than the one that caused the run yields just the number:
+// honest about what is known, and every unknown path evaluates to nil, which every condition
+// operator has defined behaviour for.
+func (s *Server) prContext(ctx context.Context, run domain.Run, number int) (pr, repo map[string]any, branch string) {
+	pr = map[string]any{"number": number}
+	ev := s.causeEvent(ctx, run)
+	if ev == nil {
+		return pr, nil, ""
+	}
+	var payload struct {
+		PR   map[string]any `json:"pr"`
+		Repo map[string]any `json:"repo"`
+	}
+	if err := json.Unmarshal(ev.Payload, &payload); err == nil {
+		if n, ok := payload.PR["number"].(float64); ok && int(n) == number {
+			pr = payload.PR
+			repo = payload.Repo
+			if b, ok := pr["branch"].(string); ok {
+				branch = strings.TrimSpace(b)
+			}
+		}
+	}
+	if branch == "" && ev.SubjectBranch != nil && ev.SubjectNumber != nil && int(*ev.SubjectNumber) == number {
+		branch = strings.TrimSpace(*ev.SubjectBranch)
+	}
+	return pr, repo, branch
+}
+
+// causeEvent reads the event that caused this run, or nil when there is none or it cannot be
+// read. Best-effort by design: it feeds enrichment, never a decision.
+func (s *Server) causeEvent(ctx context.Context, run domain.Run) *domain.Event {
+	if run.CauseEventID == nil {
+		return nil
+	}
+	ev, err := s.st.Events().ByID(ctx, *run.CauseEventID)
+	if err != nil {
+		return nil
+	}
+	return &ev
 }
 
 // causePRNumber reads pr.number off the event that caused this run — the common case, where

@@ -42,7 +42,7 @@ func TestSuggestedTriggersCarryARealPrompt(t *testing.T) {
 	e.connect(c)
 
 	code, res := e.doJSON(c, "POST", "/api/v1/projects/PAY/bootstrap/apply",
-		`{"triggers": ["agent-pr-review", "ci-failed-fix"]}`)
+		`{"triggers": ["agent-pr-review", "changes-requested", "ci-failed-fix"]}`)
 	if code != 200 {
 		t.Fatalf("apply = %d: %v", code, res)
 	}
@@ -50,8 +50,8 @@ func TestSuggestedTriggersCarryARealPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(trs) != 2 {
-		t.Fatalf("triggers = %d, want 2", len(trs))
+	if len(trs) != 3 {
+		t.Fatalf("triggers = %d, want 3", len(trs))
 	}
 
 	byEvent := map[string]runAgentAction{}
@@ -69,6 +69,19 @@ func TestSuggestedTriggersCarryARealPrompt(t *testing.T) {
 	for _, want := range []string{"{{pr.number}}", "{{pr.branch}}", "submit_review"} {
 		if !strings.Contains(review.Params.Prompt, want) {
 			t.Errorf("the reviewer prompt does not mention %q:\n%s", want, review.Params.Prompt)
+		}
+	}
+
+	address, ok := byEvent["agent_review"]
+	if !ok {
+		t.Fatal("no agent_review rule was created")
+	}
+	if address.Params.AgentName != "Dev" {
+		t.Errorf("agent_name = %q", address.Params.AgentName)
+	}
+	for _, want := range []string{"{{pr.number}}", "{{pr.branch}}", "{{review.max_severity}}", "{{review.body}}"} {
+		if !strings.Contains(address.Params.Prompt, want) {
+			t.Errorf("the address-review prompt does not mention %q:\n%s", want, address.Params.Prompt)
 		}
 	}
 
@@ -105,6 +118,7 @@ func TestSuggestedTriggerPromptsOnlyUseRealPayloadPaths(t *testing.T) {
 
 	for _, tc := range []struct{ kind, prompt string }{
 		{"pull_request", bootstrap.ReviewerPrompt},
+		{"agent_review", bootstrap.AddressReviewPrompt},
 		{"check_suite", bootstrap.CIFixPrompt},
 	} {
 		known, ok := fields[tc.kind]

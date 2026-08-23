@@ -5,11 +5,17 @@ import "github.com/spruce/lexicode/internal/kernel/ports"
 // pollSourceID is the EventSource port ID and events.source of everything the poller emits.
 const pollSourceID = "github.poll"
 
-// Event kinds the poller emits (architecture §7's table). They double as the resource part of
-// the dedupe key.
+// Event kinds this module catalogs. All but one are what the poller emits (architecture §7's
+// table), and those double as the resource part of the dedupe key.
 const (
-	kindPullRequest   = "pull_request"
-	kindReview        = "pull_request_review"
+	kindPullRequest = "pull_request"
+	kindReview      = "pull_request_review"
+	// kindAgentReview is NOT a poller kind: it is the event internal/service/mcp publishes
+	// the moment `submit_review` succeeds, catalogued here because its payload vocabulary is
+	// this module's (pr, repo, actor) and the trigger editor groups event kinds by source.
+	// The string is duplicated in internal/service/mcp/review.go — service → module is a
+	// forbidden import edge (architecture §2.1), so the string IS the protocol.
+	kindAgentReview   = "agent_review"
 	kindReviewComment = "pull_request_review_comment"
 	kindIssueComment  = "issue_comment"
 	kindCheckSuite    = "check_suite"
@@ -66,6 +72,15 @@ func fields(groups ...[]ports.PayloadField) []ports.PayloadField {
 }
 
 // catalog is the github.poll EventCatalog (contracts §2.1): what the trigger editor may offer.
+//
+// It carries one kind the poller does not emit — agent_review, published by the MCP server
+// when a reviewer agent submits a review. A catalog is the editor's menu for a SOURCE, not a
+// list of what one goroutine happens to produce: the rule a user writes about a review on a
+// GitHub pull request belongs under GitHub, addresses this module's pr/repo/actor vocabulary,
+// and is validated against this descriptor. (The engine looks a descriptor up by the event's
+// source when deriving the guard's subject key; an internal event misses that lookup and
+// falls back to its subject columns, which the emitter sets to the same pull request. The two
+// paths agree by construction — see the SubjectKey note on the descriptor.)
 // Activity types are the derived ones from architecture §7 — one per emitted event. A review's
 // approved/changes_requested/commented and a check suite's success/failure are payload state
 // (review.state, check.conclusion), not extra activity types: an event carries exactly one
@@ -101,6 +116,45 @@ func catalog() ports.EventCatalog {
 				{Path: "review.state", Type: "enum", Enum: []string{"approved", "changes_requested", "commented"}},
 				{Path: "review.body", Type: "text"},
 			}, prFields, repoFields, actorFields),
+			SubjectKey: "pr:{{pr.number}}",
+		},
+		{
+			Kind:  kindAgentReview,
+			Label: "Review submitted by an agent",
+			ActivityTypes: []ports.ActivityType{
+				{Value: "submitted", Label: "submitted",
+					Help: "Emitted by Lexicode when an agent submits a review through the " +
+						"submit_review tool, with the severities the agent actually reported. " +
+						"GitHub's own event for the same review arrives separately as " +
+						"\"Pull request review\" — a rule listens to one or the other, never both."},
+			},
+			Filters: []ports.FilterField{branchFilter, labelFilter},
+			Fields: fields([]ports.PayloadField{
+				{Path: "review.id", Type: "text"},
+				{Path: "review.author", Type: "text"},
+				// No `approved`: an agent cannot approve (brief D6), so this kind's state
+				// vocabulary is the two events submit_review can produce.
+				{Path: "review.state", Type: "enum", Enum: []string{"changes_requested", "commented"}},
+				// intended_state is what the reviewer ASKED for; it differs from state when
+				// GitHub refused the request (it rejects REQUEST_CHANGES from the pull
+				// request's own author, which every agent is while they share one token).
+				{Path: "review.intended_state", Type: "enum", Enum: []string{"changes_requested", "commented"}},
+				// max_severity is the field a "changes requested" rule should key on: it is
+				// the reviewer's own verdict, and it survives whatever GitHub did with the
+				// state. "none" is a real value — a review with no findings at all.
+				{Path: "review.max_severity", Type: "enum",
+					Enum: []string{"blocker", "major", "minor", "nit", "none"}},
+				{Path: "review.findings_count", Type: "number"},
+				{Path: "review.severity_counts.blocker", Type: "number"},
+				{Path: "review.severity_counts.major", Type: "number"},
+				{Path: "review.severity_counts.minor", Type: "number"},
+				{Path: "review.severity_counts.nit", Type: "number"},
+				{Path: "review.body", Type: "text"},
+			}, prFields, repoFields, actorFields),
+			// The engine derives the subject from this template only for events whose source
+			// matches this catalog's; an internal event falls back to its subject columns,
+			// which the emitter sets to the same pull request — the two agree, deliberately,
+			// so depth and debounce key one pull request whichever event reaches them.
 			SubjectKey: "pr:{{pr.number}}",
 		},
 		{

@@ -290,10 +290,10 @@ func TestPreviewOffersTwelveCheckedIssues(t *testing.T) {
 		t.Fatalf("frontend.mdc globs = %v", globs)
 	}
 
-	// CI detected → the two pre-filled triggers.
+	// CI detected → the three pre-filled triggers of the canonical chain.
 	triggers, _ := pv["triggers"].([]any)
-	if len(triggers) != 2 {
-		t.Fatalf("triggers = %v, want the two suggestions", pv["triggers"])
+	if len(triggers) != 3 {
+		t.Fatalf("triggers = %v, want the three suggestions", pv["triggers"])
 	}
 
 	// The starter agents.
@@ -329,7 +329,7 @@ func applyBody(issues []int) string {
 			{"path": "AGENTS.md", "scope": "always", "paths": []},
 			{"path": ".cursor/rules/frontend.mdc", "scope": "paths", "paths": ["web/**"]}
 		],
-		"triggers": ["agent-pr-review", "ci-failed-fix"],
+		"triggers": ["agent-pr-review", "changes-requested", "ci-failed-fix"],
 		"agents": ["Dev", "Reviewer"],
 		"overview": "A payment reconciliation service."
 	}`, strings.Join(nums, ","))
@@ -412,13 +412,13 @@ func TestApplyCreatesExactlyTheCheckedSubset(t *testing.T) {
 		t.Fatalf("frontend.mdc page = %+v", fr)
 	}
 
-	// Two triggers, both created disabled.
+	// Three triggers, all created disabled.
 	trs, err := e.st.Triggers().ForProject(ctx, pid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(trs) != 2 {
-		t.Fatalf("triggers = %d, want 2", len(trs))
+	if len(trs) != 3 {
+		t.Fatalf("triggers = %d, want 3", len(trs))
 	}
 	for _, tr := range trs {
 		if tr.Enabled {

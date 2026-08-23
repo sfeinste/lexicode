@@ -4039,8 +4039,9 @@ components:
     StreamEventType:
       type: string
       description: >
-        The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's
-        ticket.commented).
+        The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events, S12's
+        ticket.commented and the agent_review.submitted event the MCP server publishes when a
+        reviewer agent submits a review).
       enum:
         - run.state
         - run.activity
@@ -4076,6 +4077,7 @@ components:
         - wiki.created
         - wiki.updated
         - wiki.deleted
+        - agent_review.submitted
         - provision.step
         - module.degraded
     StreamFrame:

@@ -95,7 +95,7 @@ type Review struct {
 	ID          int64
 	PRNumber    int
 	Author      string
-	State       string // CHANGES_REQUESTED | COMMENTED
+	State       string // COMMENTED (CHANGES_REQUESTED is refused for a self-review; see createReview)
 	Body        string
 	SubmittedAt time.Time
 }
@@ -421,7 +421,7 @@ func (g *GitHub) createPull(w http.ResponseWriter, r *http.Request) {
 	pr := &PullRequest{
 		Number: len(g.prs) + 1, Title: body.Title, Body: body.Body,
 		Head: body.Head, Base: body.Base, State: "open", Draft: body.Draft,
-		Author: "lexicode[bot]", HeadSHA: sha, CreatedAt: now, UpdatedAt: now,
+		Author: reviewAuthor, HeadSHA: sha, CreatedAt: now, UpdatedAt: now,
 	}
 	g.prs = append(g.prs, pr)
 	g.mu.Unlock()
@@ -429,6 +429,12 @@ func (g *GitHub) createPull(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, prJSON(pr, true))
 }
+
+// reviewAuthor is who every review the PRODUCT submits comes from. It is the same login the
+// fixture gives a pull request the product opened, and that is not a shortcut: under D-9 one
+// project token serves every agent, so GitHub sees one user opening the pull request and
+// reviewing it. See createReview's 422.
+const reviewAuthor = "lexicode[bot]"
 
 func (g *GitHub) createReview(w http.ResponseWriter, r *http.Request) {
 	number := atoi(r.PathValue("number"))
@@ -438,6 +444,35 @@ func (g *GitHub) createReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := strings.ToUpper(body.Event)
+
+	// GitHub refuses a "request changes" review from the pull request's own author, with a
+	// 422 and nothing written. This fixture used to accept it, and the acceptance passed for
+	// months on a verdict real GitHub would never have stored: run #15 against real GitHub
+	// posted two [MAJOR] findings as a COMMENTED review, the "changes requested" rule never
+	// fired, and the chain stopped dead. Refusing it here is what makes step 5 prove the
+	// thing it claims to prove — that the chain continues on the reviewer's own verdict
+	// (the agent_review event), not on the state GitHub happened to store.
+	if state == "REQUEST_CHANGES" {
+		g.mu.Lock()
+		author := ""
+		if pr := g.prLocked(number); pr != nil {
+			author = pr.Author
+		}
+		g.mu.Unlock()
+		if author == reviewAuthor {
+			g.logf("fakegithub: 422 — %s cannot request changes on their own PR #%d", author, number)
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			writeJSON(w, map[string]any{
+				"message": "Unprocessable Entity",
+				"errors": []map[string]any{{
+					"resource": "PullRequestReview", "code": "custom", "field": "user_id",
+					"message": "Can not request changes on your own pull request",
+				}},
+			})
+			return
+		}
+	}
+
 	switch state {
 	case "REQUEST_CHANGES":
 		state = "CHANGES_REQUESTED"
@@ -451,7 +486,7 @@ func (g *GitHub) createReview(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	g.mu.Lock()
 	rev := Review{
-		ID: g.id(), PRNumber: number, Author: "lexicode[bot]",
+		ID: g.id(), PRNumber: number, Author: reviewAuthor,
 		State: state, Body: body.Body, SubmittedAt: now,
 	}
 	g.reviews = append(g.reviews, rev)

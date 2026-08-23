@@ -518,6 +518,44 @@ func TestSubmitReviewRequestChanges(t *testing.T) {
 	}
 }
 
+// GitHub's 422 on a self-review is classified, not wrapped: the caller has to be able to tell
+// "the forge refused this EVENT, nothing was written, the same body would be accepted as a
+// comment" from any other failure. Under D-9 this is the normal path, not an edge case — every
+// agent shares one project token, so a reviewer agent is the pull request's own author.
+func TestSubmitReviewRequestChangesRejectedIsClassified(t *testing.T) {
+	h := newHarness(t)
+	h.allowAll()
+	h.mux.HandleFunc("POST /repos/acme/payments/pulls/55/reviews", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = io.WriteString(w, `{"message":"Unprocessable Entity","errors":[{"resource":
+			"PullRequestReview","code":"custom","field":"user_id",
+			"message":"Can not request changes on your own pull request"}]}`)
+	})
+
+	_, err := h.forge.SubmitReview(ctx(), testCreds, testRepo, testActor, 55,
+		ports.ReviewSpec{Event: "REQUEST_CHANGES", Body: "This double-charges."})
+	if !errors.Is(err, ports.ErrReviewEventRejected) {
+		t.Fatalf("SubmitReview = %v; want ErrReviewEventRejected", err)
+	}
+	var rejected *ports.ReviewEventRejectedError
+	if !errors.As(err, &rejected) {
+		t.Fatalf("SubmitReview = %v; want a *ReviewEventRejectedError", err)
+	}
+	if rejected.Event != "REQUEST_CHANGES" {
+		t.Errorf("rejected event = %q", rejected.Event)
+	}
+	// GitHub's own words, so the run's record says WHY rather than only that it failed.
+	if !strings.Contains(rejected.Detail, "your own pull request") {
+		t.Errorf("rejection detail = %q; it should carry GitHub's explanation", rejected.Detail)
+	}
+	// Nothing was written, so nothing is recorded: the retry the caller makes records itself.
+	outputs, audits := h.snapshot()
+	if len(outputs) != 0 || len(audits) != 0 {
+		t.Errorf("a refused review recorded %d outputs and %d audits; want none", len(outputs), len(audits))
+	}
+}
+
 func TestSubmitReviewApproveIsForbidden(t *testing.T) {
 	h := newHarness(t) // no fixtures on purpose: this must not reach the network
 	h.allowAll()       // even with every grant, APPROVE is refused

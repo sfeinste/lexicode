@@ -510,6 +510,18 @@ const (
 		"way your review reaches the pull request. A review written as your final message is " +
 		"never posted, and nobody sees it."
 
+	// AddressReviewPrompt is the "changes requested → run Dev" task (brief §3 step 5). It
+	// names the severities because the rule that fires it is keyed on them: the run exists to
+	// clear the blockers and majors, not to work through the nits.
+	AddressReviewPrompt = "The review on pull request #{{pr.number}} asked for changes: " +
+		"{{review.severity_counts.blocker}} blocker(s) and {{review.severity_counts.major}} " +
+		"major finding(s), worst severity {{review.max_severity}}.\n\n" +
+		"That pull request's branch `{{pr.branch}}` is already checked out in this workspace. " +
+		"Read the review, address every blocker and major finding on this branch — the same " +
+		"branch, not a new one — and commit the fix. Leave the minors and nits unless they are " +
+		"trivial, and say in your final message what you changed and what you left.\n\n" +
+		"The review:\n\n{{review.body}}"
+
 	// CIFixPrompt is the "CI failed → run Dev" task.
 	CIFixPrompt = "The `{{check.name}}` check suite failed on pull request #{{pr.number}}, " +
 		"on branch `{{pr.branch}}`. The failing run is at {{check.url}}.\n\n" +
@@ -518,8 +530,25 @@ const (
 		"run exists to get the checks green, not to revisit the change they are checking."
 )
 
-// suggestedTriggers is the brief's two pre-filled rules, offered only when CI was detected.
-// Both ship with Enabled=false — Apply preserves that.
+// ChangesRequestedConditions is the IF row of the suggested "changes requested" rule, and the
+// point of the whole `agent_review` event: the rule fires on what the REVIEWER found, not on
+// the state GitHub stored.
+//
+// It could not fire on the state. Under D-9 every agent shares one project token, so a
+// reviewer agent is the pull request's own author as far as GitHub is concerned, and GitHub
+// answers 422 to REQUEST_CHANGES from the author. The review lands as COMMENTED, the poller
+// reads back `review.state = commented`, and a rule keyed on `changes_requested` never fires
+// — which is exactly what happened on the live run this rule was written for.
+//
+// Exported so the acceptance harness fires the SHIPPED condition rather than a hand-written
+// stand-in, for the same reason ReviewerPrompt is (see the note above it).
+const ChangesRequestedConditions = `{"all":[{"field":"review.max_severity","op":"enum.in",` +
+	`"value":["blocker","major"]}]}`
+
+// suggestedTriggers is the brief's three pre-filled rules — steps 3, 5 and 6 of the canonical
+// chain. All ship with Enabled=false — Apply preserves that. The set is offered only when CI
+// was detected, which is the S15 gate on the whole trigger section of the checklist, not a
+// statement that each rule needs CI.
 func suggestedTriggers(workflowFiles []string) []TriggerCandidate {
 	if len(workflowFiles) == 0 {
 		return nil
@@ -531,6 +560,17 @@ func suggestedTriggers(workflowFiles []string) []TriggerCandidate {
 			Event:         "pull_request",
 			ActivityTypes: []string{"opened", "ready_for_review"},
 			Description:   "When an agent opens a pull request, run the Reviewer agent on it.",
+			Workflows:     workflowFiles, Checked: true,
+		},
+		{
+			// Keyed on the internal `agent_review` event, not on GitHub's
+			// `pull_request_review`: see ChangesRequestedConditions. Both events exist for
+			// the same review, and a trigger names one event kind, so this rule cannot fire
+			// twice on one review.
+			ID: "changes-requested", Name: "Changes requested → Dev addresses them",
+			Event:         "agent_review",
+			ActivityTypes: []string{"submitted"},
+			Description:   "When a reviewer agent reports a blocker or a major finding, run the Dev agent to address it on the same branch.",
 			Workflows:     workflowFiles, Checked: true,
 		},
 		{
@@ -556,6 +596,9 @@ func triggerRow(cand TriggerCandidate, projectID, createdBy, now string) domain.
 	case "agent-pr-review":
 		conditions = `{"all":[{"field":"pr.author_kind","op":"enum.is","value":"agent"}]}`
 		actions = runAgentAction("Reviewer", ReviewerPrompt)
+	case "changes-requested":
+		conditions = ChangesRequestedConditions
+		actions = runAgentAction("Dev", AddressReviewPrompt)
 	case "ci-failed-fix":
 		conditions = `{"all":[{"field":"check.conclusion","op":"enum.is","value":"failure"}]}`
 		actions = runAgentAction("Dev", CIFixPrompt)

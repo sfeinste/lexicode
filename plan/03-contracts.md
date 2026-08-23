@@ -374,7 +374,13 @@ Adding a field is additive; renaming one breaks users' rules and requires a migr
               "branch": "dev/PAY-14", "base": "main", "draft": false, "merged": false,
               "state": "open|closed", "additions": 142, "deletions": 18,
               "files_changed": 7, "labels": ["…"], "body": "…", "url": "…" },
-  "review": { "id": "…", "author": "…", "state": "approved|changes_requested|commented", "body": "…" },
+  "review": { "id": "…", "author": "…", "state": "approved|changes_requested|commented", "body": "…",
+              // agent_review events only (a review submitted through the submit_review tool):
+              // the reviewer's own verdict, which survives GitHub refusing REQUEST_CHANGES
+              // from an agent that shares the project token with the PR's author (D-9).
+              "intended_state": "changes_requested|commented",
+              "max_severity": "blocker|major|minor|nit|none", "findings_count": 3,
+              "severity_counts": { "blocker": 1, "major": 0, "minor": 1, "nit": 1 } },
   "comment":{ "id": "…", "author": "…", "body": "…", "path": "src/…", "line": 88 },
   "check":  { "suite_id": "…", "name": "CI", "conclusion": "success|failure|…", "url": "…" },
   "ticket": { "key": "PAY-14", "title": "…", "column": "In Review", "category": "review",

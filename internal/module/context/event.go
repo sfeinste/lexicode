@@ -131,7 +131,10 @@ var subObjectLabel = map[string]string{
 var fieldOrder = map[string][]string{
 	"pr": {"number", "title", "author", "author_kind", "branch", "base", "state", "draft",
 		"merged", "files_changed", "additions", "deletions", "labels", "url", "body"},
-	"review":   {"id", "author", "state", "body"},
+	// The severity fields are the agent_review event's (internal/service/mcp/review.go); a
+	// poller review event simply has none of them, and orderedFields skips what is absent.
+	"review": {"id", "author", "state", "intended_state", "max_severity", "findings_count",
+		"severity_counts", "body"},
 	"comment":  {"id", "author", "path", "line", "body"},
 	"check":    {"name", "conclusion", "suite_id", "url"},
 	"ticket":   {"key", "title", "category", "column", "priority", "assignee", "delegate", "labels"},
@@ -154,6 +157,10 @@ var fieldLabel = map[string]string{
 	"url":                 "URL",
 	"id":                  "ID",
 	"suite_id":            "suite ID",
+	"intended_state":      "intended state",
+	"max_severity":        "worst severity",
+	"findings_count":      "findings",
+	"severity_counts":     "findings by severity",
 	"seq":                 "run number",
 }
 

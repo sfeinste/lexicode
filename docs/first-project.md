@@ -129,7 +129,7 @@ Three rules give you the canonical loop:
 | When | If | Then |
 |---|---|---|
 | Pull request **opened** | the actor is an agent | run **Reviewer**, prompt: `Review PR #{{pr.number}} on {{pr.branch}}. Post severity-tagged findings.` |
-| Review **submitted** | `review.state is changes_requested` | run **Dev**, prompt: `Address the findings on PR #{{pr.number}}, branch {{pr.branch}}.` |
+| Review submitted by an agent | `review.max_severity is one of blocker, major` | run **Dev**, prompt: `Address the findings on PR #{{pr.number}}, branch {{pr.branch}}.` |
 | Check suite **completed** | `check.conclusion is failure` | run **Dev**, prompt: `The {{check.name}} suite failed on PR #{{pr.number}}. Fix it on {{pr.branch}}.` |
 
 The editor is generated from the event source's catalog, so the WHEN options, the IF fields and
@@ -137,6 +137,16 @@ their operators are always exactly what the poller can actually produce. `{{...}
 interpolate from the event.
 
 Two notes from building this chain for real:
+
+- **Use "Review submitted by an agent", not "Pull request review", for the middle rule.** Both
+  events happen for the same review: Lexicode publishes the first the moment `submit_review`
+  succeeds, and the poller reads the second back from GitHub a tick later. Only the first
+  carries the severities the reviewer actually reported — and only the first is reliable,
+  because GitHub refuses a "request changes" review from the pull request's own author, which
+  every agent is while they all share one project token. A review full of blockers is stored by
+  GitHub as a plain comment, and a rule keyed on `review.state is changes_requested` never
+  fires. Pick one of the two events per rule; a rule listens to one event kind, so one review
+  can never fire the same rule twice.
 
 - **The CI rule needs actor suppression off.** CI runs on the agent's own branch, so its event
   is attributed to that agent, and loop-protection layer 1 refuses to re-run an agent on its own

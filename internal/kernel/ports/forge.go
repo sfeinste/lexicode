@@ -102,6 +102,33 @@ type ReviewSpec struct {
 var ErrSelfApprovalForbidden = errors.New(
 	"agents cannot approve pull requests: approval is reserved for humans (brief D6)")
 
+// ReviewEventRejectedError is returned by SubmitReview when the forge accepted the request
+// but refused the review EVENT — GitHub answers 422 to REQUEST_CHANGES from the pull
+// request's own author, which under D-9 (one project PAT, so every agent is the same GitHub
+// user) is what a reviewer agent reviewing a Dev agent's pull request always is. Nothing was
+// written; the caller may retry the same body as a COMMENT.
+//
+// It exists so the retry can be conditioned on the forge's actual verdict rather than on a
+// substring of an error message, and so that "what was intended" stays distinguishable from
+// "what GitHub accepted" all the way up to the run output.
+type ReviewEventRejectedError struct {
+	Event  string // the event the forge refused, e.g. "REQUEST_CHANGES"
+	Detail string // the forge's own explanation, when it gave one
+}
+
+func (e *ReviewEventRejectedError) Error() string {
+	msg := fmt.Sprintf("the forge refused a %s review", e.Event)
+	if e.Detail != "" {
+		msg += ": " + e.Detail
+	}
+	return msg
+}
+
+// ErrReviewEventRejected matches any ReviewEventRejectedError under errors.Is.
+var ErrReviewEventRejected = errors.New("forge refused the review event")
+
+func (e *ReviewEventRejectedError) Is(target error) bool { return target == ErrReviewEventRejected }
+
 // PermissionDeniedError is returned by a forge write when the acting agent lacks the named
 // grant. It matches ErrPermissionDenied under errors.Is. The check happens before any network
 // call: a denied write costs nothing and leaks nothing.
