@@ -231,6 +231,29 @@ func TestSchedulerDockerSmoke(t *testing.T) {
 		t.Fatalf("agent session too thin: %d activities", agentActivities)
 	}
 
+	// What the orchestrator SAYS about its push, checked before what the remote holds.
+	//
+	// This ordering is deliberate and was bought with an hour of log archaeology. When this
+	// test failed on CI and passed on a laptop, the whole report was "bare repo lacks branch"
+	// — a symptom with no cause anywhere in the log, because a push that did not land was
+	// recorded only as a clause on the run's message, which nothing printed. Assert the
+	// run's own account first, and print it either way: if the push fails again, the next
+	// person reads git's actual error (dubious ownership, denied, whatever it is) in the
+	// first line of the failure instead of going looking for it.
+	t.Logf("run report: %s", final.ErrorMessage)
+	for _, a := range acts {
+		if a.Type == domain.ActivitySystem && a.Level == 1 {
+			t.Logf("level-1 system warning: %s %s", a.Title, string(a.Payload))
+		}
+	}
+	for _, bad := range []string{"could not be pushed", "could not be preserved",
+		"nothing to preserve", "could not be committed"} {
+		if strings.Contains(final.ErrorMessage, bad) {
+			t.Fatalf("the orchestrator reports the work never reached the remote (%q): %s",
+				bad, final.ErrorMessage)
+		}
+	}
+
 	// The branch the builder minted exists in the local bare repository. The agent never
 	// pushed — it holds no credential and never runs `git push` — so this is the
 	// orchestrator's teardown push, on a run that COMPLETED.

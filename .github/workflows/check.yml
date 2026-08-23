@@ -34,12 +34,29 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.13.1
-          # make check runs golangci-lint itself; this step only installs it.
-          install-mode: binary
-          args: --version
+      # `make check` runs golangci-lint itself, so CI and a laptop run the identical command
+      # and can never disagree about what lint means. This step therefore only has to put the
+      # pinned binary on PATH.
+      #
+      # golangci-lint-action cannot do that: it has no install-only input (v8 takes version,
+      # install-mode, working-directory, github-token, verify, only-new-issues, skip-cache,
+      # skip-save-cache, problem-matchers, args, cache-invalidation-interval) and always ends
+      # by running `golangci-lint run <args>`. The `args: --version` this replaces was an
+      # attempt to make that run a no-op; v2's `run` has no --version flag, so the step
+      # errored ("unknown flag: --version", exit 3) before `make check` was ever reached.
+      #
+      # This is the upstream-documented pinned binary install
+      # (https://golangci-lint.run/docs/welcome/install/local/), which the project also
+      # documents in preference to `go install`.
+      - name: install golangci-lint
+        env:
+          GOLANGCI_LINT_VERSION: v2.13.1
+        run: |
+          set -euo pipefail
+          curl -sSfL https://golangci-lint.run/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" "$GOLANGCI_LINT_VERSION"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/golangci-lint" version
 
       - run: make check
 

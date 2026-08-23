@@ -136,24 +136,54 @@ func (s *Scheduler) preserveAndPush(ctx context.Context, run domain.Run, agent d
 	case report.refusedBaseBranch:
 		out.failure = fmt.Sprintf("the agent's work is on `%s`, the repository's default branch; "+
 			"Lexicode does not push there", out.branch)
-		s.appendWarningActivity(ctx, run.ID, "Refused to push to the default branch", map[string]any{
-			"warning": "push_refused_default_branch", "branch": out.branch,
-		})
+		s.reportPreserveFailure(ctx, run, out.branch,
+			"Refused to push to the default branch", "push_refused_default_branch", out.failure)
 	case report.commitFailed:
 		out.failure = "the uncommitted work in the workspace could not be committed"
+		s.reportPreserveFailure(ctx, run, out.branch,
+			"Partial work could not be committed", "artifact_commit_failed", out.failure)
 	case report.nothing:
 		out.nothing = true
 	case report.pushed:
 		out.pushed = true
 	case report.pushFailed:
 		out.failure = "git push failed: " + firstLine(report.pushError)
+		s.reportPreserveFailure(ctx, run, out.branch,
+			"The run's branch could not be pushed", "artifact_push_failed", out.failure)
 	default:
 		// The script ran but said nothing recognizable — a broken shell, a killed exec.
 		out.failure = fmt.Sprintf("the preserve step exited %d without reporting an outcome", code)
+		s.reportPreserveFailure(ctx, run, out.branch,
+			"The run's branch could not be pushed", "artifact_push_unreported", out.failure)
 	}
 
 	s.verifyAttribution(ctx, run, agent, out.branch, report)
 	return out
+}
+
+// reportPreserveFailure makes an unsuccessful teardown push LOUD, in both of the places
+// somebody looks: the process log and the run's own activity feed.
+//
+// It exists because of a specific afternoon. A push that did not land left a clause in the
+// run's terminal message and absolutely nothing else — no log line, no activity — so a CI
+// run whose only visible symptom was "the branch is not in the remote" could be grepped for
+// push, preserve, denied and warning and come back empty. A push that fails is the
+// difference between a run whose work exists and a run whose work is gone; it does not get
+// to be quiet about it. The one outcome deliberately left silent is `nothing`, which is not
+// a failure: there was no work to push.
+//
+// detail is already redacted — it is built from the redactor-cleaned script output.
+func (s *Scheduler) reportPreserveFailure(ctx context.Context, run domain.Run, branch, title, warning, detail string) {
+	s.logger.Error("sched: "+title,
+		slog.String("run", run.ID),
+		slog.String("branch", branch),
+		slog.String("warning", warning),
+		slog.String("detail", detail))
+	s.appendWarningActivity(ctx, run.ID, title, map[string]any{
+		"warning": warning,
+		"branch":  branch,
+		"error":   detail,
+	})
 }
 
 // preserveScript is the whole teardown push, in one exec. It reports through `lexicode:`

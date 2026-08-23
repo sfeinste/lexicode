@@ -38,7 +38,23 @@ func preserveReply(lines ...string) testkit.ExecResult {
 // returns the terminal row.
 func runToFailure(t *testing.T, side testkit.SideExecFunc) (*env, domain.Run) {
 	t.Helper()
-	e := newEnv(t, options{fixture: fixtureFail})
+	return runWithPreserve(t, fixtureFail, domain.RunFailed, side)
+}
+
+// runToCompletion is runToFailure's counterpart for an agent session that SUCCEEDS. The two
+// differ only in the transcript the fake runtime replays, but the terminal path does not:
+// the teardown push happens for every outcome, and its failures have to surface on a green
+// run exactly as loudly as on a red one.
+func runToCompletion(t *testing.T, side testkit.SideExecFunc) (*env, domain.Run) {
+	t.Helper()
+	return runWithPreserve(t, fixtureOK, domain.RunCompleted, side)
+}
+
+// runWithPreserve enqueues one run whose teardown push is answered by side, waits for it to
+// end in wantState, and returns the terminal row.
+func runWithPreserve(t *testing.T, fixture string, wantState domain.RunState, side testkit.SideExecFunc) (*env, domain.Run) {
+	t.Helper()
+	e := newEnv(t, options{fixture: fixture})
 	e.sb.SideExec = func(argv []string, env map[string]string) (testkit.ExecResult, bool) {
 		if !testkit.IsTeardownPush(argv) {
 			return testkit.ExecResult{}, false
@@ -57,10 +73,26 @@ func runToFailure(t *testing.T, side testkit.SideExecFunc) (*env, domain.Run) {
 	}
 	waitFor(t, "run terminal", func() bool { return e.run(run.ID).State.Terminal() })
 	final := e.run(run.ID)
-	if final.State != domain.RunFailed {
-		t.Fatalf("state = %s, want failed", final.State)
+	if final.State != wantState {
+		t.Fatalf("state = %s (%s), want %s", final.State, final.ErrorMessage, wantState)
 	}
 	return e, final
+}
+
+// pushFailureWarnings returns the level-1 system warnings that say the branch did not reach
+// the remote.
+func pushFailureWarnings(t *testing.T, e *env, runID string) []domain.Activity {
+	t.Helper()
+	var out []domain.Activity
+	for _, a := range systemActivities(t, e, runID) {
+		if a.Level != 1 {
+			continue
+		}
+		if strings.Contains(string(a.Payload), `"warning":"artifact_push_failed"`) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func partialWorkOutputs(t *testing.T, e *env, runID string) []domain.RunOutput {
@@ -151,7 +183,81 @@ func TestArtifactRulePushFailedIsReportedHonestly(t *testing.T) {
 	if rows := partialWorkOutputs(t, e, final.ID); len(rows) != 0 {
 		t.Fatalf("a failed push wrote a partial_work row anyway: %+v", rows)
 	}
-	t.Logf("push failed: %s", msg)
+	warnings := pushFailureWarnings(t, e, final.ID)
+	if len(warnings) != 1 {
+		t.Fatalf("want exactly one level-1 push-failure warning; got %d", len(warnings))
+	}
+	if !strings.Contains(string(warnings[0].Payload), "Permission to acme/payments.git denied") {
+		t.Fatalf("the warning does not carry git's reason: %s", warnings[0].Payload)
+	}
+	t.Logf("push failed: %s\nwarning: %s %s", msg, warnings[0].Title, warnings[0].Payload)
+}
+
+// Case 5, and the reason this file grew: a run that COMPLETES and whose push does not land.
+//
+// Every case above ends in RunFailed, where the terminal message is the thing a human reads
+// anyway. The green run is the dangerous one. Its message is the agent's own success text,
+// the branch is simply absent from the remote, and until this test the ONLY trace of the
+// failure was a clause appended to that message — no log line, no activity, nothing a CI log
+// or a support transcript would show. That is exactly the shape of the docker smoke test's
+// Linux failure: "the run completed, the bare repo has no branch, and the log says nothing."
+//
+// A push that does not land is the difference between a run whose work exists and a run
+// whose work is gone. It must be loud on a green run too.
+func TestCompletedRunWithAFailedPushSaysSoLoudly(t *testing.T) {
+	const sha = "5555555555555555555555555555555555555555"
+	e, final := runToCompletion(t, func(_ []string, env map[string]string) (testkit.ExecResult, bool) {
+		return preserveReply(
+			"lexicode: branch "+env["LEXICODE_BRANCH"],
+			"lexicode: commit "+sha+" "+env["GIT_AUTHOR_EMAIL"],
+			"lexicode: trailed "+sha,
+			"lexicode: push-failed",
+			"lexicode: error fatal: detected dubious ownership in repository at '/fixtures/fixture.git'",
+		), true
+	})
+
+	msg := final.ErrorMessage
+	if !strings.Contains(msg, "could not be pushed") {
+		t.Errorf("a completed run's report does not mention the failed push: %q", msg)
+	}
+	if !strings.Contains(msg, "dubious ownership") {
+		t.Errorf("a completed run's report does not name git's reason: %q", msg)
+	}
+	// The part that would have saved an hour of log archaeology.
+	warnings := pushFailureWarnings(t, e, final.ID)
+	if len(warnings) != 1 {
+		t.Fatalf("a completed run's failed push recorded %d level-1 warnings, want 1 — "+
+			"this is the silence the whole file is about", len(warnings))
+	}
+	if !strings.Contains(string(warnings[0].Payload), "dubious ownership") {
+		t.Errorf("the warning does not carry git's reason: %s", warnings[0].Payload)
+	}
+	if rows := partialWorkOutputs(t, e, final.ID); len(rows) != 0 {
+		t.Errorf("a failed push wrote a partial_work row anyway: %+v", rows)
+	}
+	t.Logf("completed, push failed: %s\nwarning: %s %s",
+		msg, warnings[0].Title, warnings[0].Payload)
+}
+
+// The counterpart, so the assertion above cannot pass by warning on everything: a push that
+// works is silent. A warning that fires on success is a warning people learn to ignore.
+func TestCompletedRunWithASuccessfulPushWarnsAboutNothing(t *testing.T) {
+	const sha = "6666666666666666666666666666666666666666"
+	e, final := runToCompletion(t, func(_ []string, env map[string]string) (testkit.ExecResult, bool) {
+		return preserveReply(
+			"lexicode: branch "+env["LEXICODE_BRANCH"],
+			"lexicode: commit "+sha+" "+env["GIT_AUTHOR_EMAIL"],
+			"lexicode: trailed "+sha,
+			"lexicode: pushed",
+		), true
+	})
+
+	if strings.Contains(final.ErrorMessage, "could not be pushed") {
+		t.Errorf("a successful push is reported as a failure: %q", final.ErrorMessage)
+	}
+	if n := len(pushFailureWarnings(t, e, final.ID)); n != 0 {
+		t.Errorf("a successful push recorded %d push-failure warning(s)", n)
+	}
 }
 
 // Case 3: nothing to commit and nothing to push. The run says so rather than claiming a
