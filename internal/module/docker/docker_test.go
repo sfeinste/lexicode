@@ -417,6 +417,78 @@ func TestOrphanSweep(t *testing.T) {
 	}
 }
 
+// LEXI-8: a second Lexicode on the same machine — the product next to an acceptance run — must
+// not have its containers reaped. Its runs are unknown to this database by definition, which is
+// exactly what an orphan looks like; only the owner label tells the two apart. Two sandboxes
+// with different owners (two data dirs) stand in for the two instances.
+func TestSweepSparesAnotherInstancesContainers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+
+	// Each instance knows only its own run, and neither knows the other's.
+	newInstance := func(runID string, state domain.RunState) *Sandbox {
+		t.Helper()
+		sb := newTestSandbox(t)
+		sb.owner = ownerID(t.TempDir())
+		sb.runState = func(_ context.Context, id string) (domain.RunState, bool, error) {
+			if id == runID {
+				return state, true, nil
+			}
+			return "", false, nil
+		}
+		return sb
+	}
+
+	// Mine is terminal, so my own sweep is entitled to remove it: the sweep really does run and
+	// really does remove something, which is what makes the survival below meaningful.
+	mine := newInstance("run-lexi8-mine", domain.RunCompleted)
+	theirs := newInstance("run-lexi8-theirs", domain.RunRunning)
+
+	prepare := func(sb *Sandbox, runID string) ports.Instance {
+		t.Helper()
+		inst, err := sb.Prepare(ctx, ports.SandboxSpec{
+			RunID:     runID,
+			ProjectID: "proj-lexi8",
+			Network:   ports.NetworkPolicy{Mode: ports.NetworkOpen},
+		}, newTestSink(t))
+		if err != nil {
+			t.Fatalf("Prepare(%s): %v", runID, err)
+		}
+		return inst
+	}
+
+	other := prepare(theirs, "run-lexi8-theirs")
+	defer destroyQuietly(t, other)
+	own := prepare(mine, "run-lexi8-mine")
+
+	removed, err := mine.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("Sweep removed %d containers, want exactly my own orphan", removed)
+	}
+	if _, err := mine.Reattach(ctx, own.Ref()); !errors.Is(err, ports.ErrInstanceGone) {
+		t.Errorf("my own orphan survived my sweep: err = %v", err)
+	}
+	if _, err := theirs.Reattach(ctx, other.Ref()); err != nil {
+		t.Errorf("another instance's live container was swept: %v", err)
+	}
+
+	// ...and symmetrically: their sweep leaves mine alone. (Mine is already gone; what this
+	// asserts is that their sweep finds nothing of mine to remove.)
+	removed, err = theirs.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep (other instance): %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("the other instance's sweep removed %d containers, want 0", removed)
+	}
+	if _, err := theirs.Reattach(ctx, other.Ref()); err != nil {
+		t.Errorf("the other instance swept its own live run: %v", err)
+	}
+}
+
 // The none/allowlist plumbing S18 slots into: the container joins the internal network and has
 // no default route out.
 func TestInternalNetworkHasNoEgress(t *testing.T) {
