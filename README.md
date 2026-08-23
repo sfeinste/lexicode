@@ -163,3 +163,21 @@ scripts/s39-acceptance.sh   # the brief §3 chain, all eight steps, with the tim
 ```
 
 Both need Docker and a few minutes. Shared fixture code is in [`e2e/harness`](e2e/harness).
+
+### CI
+
+[`.github/workflows/check.yml`](.github/workflows/check.yml) runs the whole test suite on every
+pull request — `make check` on Linux and macOS, plus the `-tags docker` sandbox tests on Linux —
+and funnels the lot into one job, **`tests passed`**, which is red unless every other job is
+green.
+
+That job is the check branch protection requires, so a pull request with a failing test cannot be
+merged. The rule lives in repository settings rather than in the tree; apply it, or re-apply it
+after an edit, with:
+
+```sh
+scripts/setup-branch-protection.sh          # needs `gh`, authenticated with admin on the repo
+```
+
+It is idempotent, and the rule it applies is [`.github/rulesets/require-tests-to-merge.json`](.github/rulesets/require-tests-to-merge.json),
+which can also be imported by hand under *Settings → Rules → Rulesets → Import a ruleset*.
