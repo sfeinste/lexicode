@@ -371,3 +371,58 @@ func TestAutoStartColumnAuditsAndStartsNothing(t *testing.T) {
 		t.Fatalf("scheduler seam saw %d requests after a plain move, want still 1", got)
 	}
 }
+
+// TestDelegateToDisabledAgentIsRefusedInWords pins the honesty rule the delegate surfaces
+// depend on: starting is stricter than setting the field. A disabled agent stays SETTABLE
+// through PATCH (history and auto-start columns keep pointing at it) but cannot be started,
+// and the refusal is a 400 naming the field — not the generic 500 the scheduler's untyped
+// "agent is disabled" error would otherwise produce, and never a silent no-op.
+func TestDelegateToDisabledAgentIsRefusedInWords(t *testing.T) {
+	e := newEnv(t)
+	c, _ := e.owner()
+	e.createProject(c, "DIS")
+	ctx := context.Background()
+
+	p, err := e.st.Projects().ByKey(ctx, "DIS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID := e.addAgent(p.ID, "dev")
+	a, err := e.st.Agents().ByID(ctx, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Enabled = false
+	if err := e.st.Agents().Update(ctx, &a); err != nil {
+		t.Fatal(err)
+	}
+
+	tk := e.createTicket(c, "DIS", "work", "")
+	id := tk["id"].(string)
+
+	// The field editor still accepts it.
+	status, _ := e.doJSON(c, "PATCH", "/api/v1/tickets/"+id,
+		fmt.Sprintf(`{"delegate_agent_id":%q}`, agentID))
+	if status != http.StatusOK {
+		t.Fatalf("PATCH delegate_agent_id = %d, want 200 (the field stays settable)", status)
+	}
+
+	// Starting does not.
+	status, body := e.doJSON(c, "POST", "/api/v1/tickets/"+id+"/delegate",
+		fmt.Sprintf(`{"agent_id":%q}`, agentID))
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST delegate = %d, want 400: %v", status, body)
+	}
+	errs, _ := body["errors"].([]any)
+	if len(errs) != 1 {
+		t.Fatalf("problem errors = %v, want one field error", body["errors"])
+	}
+	fe, _ := errs[0].(map[string]any)
+	if fe["field"] != "agent_id" || fe["message"] != "This agent is disabled." {
+		t.Fatalf("field error = %v, want agent_id / This agent is disabled.", fe)
+	}
+	// Refused before the scheduler was ever asked.
+	if got := e.rec.requestCount(); got != 0 {
+		t.Fatalf("scheduler seam saw %d requests, want 0", got)
+	}
+}

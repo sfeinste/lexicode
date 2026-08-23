@@ -21,6 +21,7 @@ import {
   type UpdateTicketRequest,
 } from "../../../lib/api/client";
 import { useColumnsQuery } from "../../../lib/api/columnQueries";
+import { runKeys } from "../../../lib/api/runQueries";
 
 export const ticketKeys = {
   all: (projectKey: string) => ["ticket", projectKey] as const,
@@ -97,6 +98,26 @@ export function usePatchTicket(projectKey: string) {
     mutationFn: ({ id, body }: { id: string; body: UpdateTicketRequest }) =>
       ticketsApi.update(id, body),
     onSuccess: invalidate,
+  });
+}
+
+/**
+ * The Run button (UI spec §5.3: "Starting is `D` (delegate), the Run button on the ticket,
+ * or a trigger"). Deliberately NOT usePatchTicket: this posts to the delegate endpoint,
+ * which records the delegate AND enqueues a run. The sidebar's delegate <select> stays a
+ * plain PATCH — it answers "who WOULD run", which is what makes auto_start_delegate columns
+ * and trigger-driven runs meaningful; this answers "run now".
+ */
+export function useRunDelegate(projectKey: string) {
+  const invalidate = useInvalidateTicket(projectKey);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, agentId }: { id: string; agentId: string }) =>
+      ticketsApi.delegate(id, { agent_id: agentId }),
+    onSuccess: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: runKeys.list(projectKey) });
+    },
   });
 }
 

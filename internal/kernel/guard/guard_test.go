@@ -448,6 +448,35 @@ func TestHumanActionResetsDepth(t *testing.T) {
 	}
 }
 
+// TestBotActionDoesNotResetDepth is the other half of the reset, and the reason the poller
+// does not simply relabel every non-agent forge actor `human`. `external` is what an actor we
+// cannot show to be a person gets — a bot, an unrecognized user type, an event the poller
+// derived with no API actor at all (an unattributed agent push). None of those is an
+// intervention, so none of them clears the chain's exhausted depth budget.
+func TestBotActionDoesNotResetDepth(t *testing.T) {
+	f := newFix(t)
+	tr := f.mkTrigger(`{"actor_suppression":false,"debounce_seconds":0,"cancel_in_progress":false}`)
+	e4 := f.chain(tr)
+
+	rec := &recorder{st: f.st}
+	if v := f.eval(rec).Evaluate(f.ctx, f.input(tr, e4)); v.Proceed || v.Outcome != domain.FiringLoopStopped {
+		t.Fatalf("pre-reset verdict = %+v", v)
+	}
+
+	// A bot comments on the same subject, at the same point in the timeline where a human
+	// comment resets the chain (TestHumanActionResetsDepth).
+	f.mkEvent("issue_comment", "created", domain.ActorExternal, nil, nil, stamp(7))
+	r3ID := *e4.CauseRunID
+	e5 := f.mkEvent("pull_request", "synchronize", domain.ActorAgent, &f.agent.ID, &r3ID, stamp(8))
+	v := f.eval(rec).Evaluate(f.ctx, f.input(tr, e5))
+	if v.Proceed {
+		t.Fatalf("a bot event reset the depth counter: verdict = %+v", v)
+	}
+	if v.Outcome != domain.FiringLoopStopped {
+		t.Fatalf("post-bot outcome = %s (%s), want loop_stopped", v.Outcome, v.Reason)
+	}
+}
+
 func TestManualRunBreaksChain(t *testing.T) {
 	f := newFix(t)
 	tr := f.mkTrigger(`{"actor_suppression":false,"debounce_seconds":0,"cancel_in_progress":false}`)

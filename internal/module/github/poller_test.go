@@ -32,6 +32,7 @@ type ghPR struct {
 	Draft                              bool
 	MergedAt                           string // non-empty → merged
 	Login                              string
+	Type                               string // GitHub's user.type: "User" | "Bot" | "" (unreported)
 	HeadRef, HeadSHA, BaseRef          string
 	Labels                             []string
 	Additions, Deletions, ChangedFiles int
@@ -42,6 +43,7 @@ type ghReview struct {
 	ID                 int64
 	PR                 int
 	Login, State, Body string
+	Type               string // GitHub's user.type: "User" | "Bot" | "" (unreported)
 	SubmittedAt        string
 }
 
@@ -49,8 +51,9 @@ type ghComment struct {
 	ID                   int64
 	Subject              int // PR/issue number
 	Login, Body, Path    string
+	Type                 string // GitHub's user.type: "User" | "Bot" | "" (unreported)
+	ReviewID             int64  // the review this comment belongs to; 0 = a lone comment
 	Line                 int
-	ReviewID             int64 // review comments: the review the comment was submitted with
 	CreatedAt, UpdatedAt string
 }
 
@@ -62,6 +65,26 @@ type ghSuite struct {
 	UpdatedAt           string
 }
 
+// ghUser renders the API's `user` object. An empty type is a user object without a `type`
+// key at all — the "the forge did not tell us" case, which must not read as a person.
+func ghUser(login, userType string) map[string]any {
+	u := map[string]any{"login": login}
+	if userType != "" {
+		u["type"] = userType
+	}
+	return u
+}
+
+// ghFault makes one poll endpoint answer with an error status instead of data, so a test can
+// put exactly one of the five passes into the 403 or the 500 and watch what the other four do
+// (LEXI-9). hits counts the requests it actually served, which is how "the disabled resource
+// stopped being asked" is asserted.
+type ghFault struct {
+	status int
+	body   string
+	hits   int
+}
+
 type snapshotGH struct {
 	mu             sync.Mutex
 	prs            []ghPR
@@ -71,6 +94,39 @@ type snapshotGH struct {
 	suites         []ghSuite
 	commitEmails   map[string]string // head sha → author email
 	commitMessages map[string]string // head sha → full commit message (trailers included)
+	faults         map[string]*ghFault
+}
+
+// failWith arms a fault on one poll resource (a resXxx constant).
+func (g *snapshotGH) failWith(resource string, status int, body string) {
+	defer g.lock()()
+	g.faults[resource] = &ghFault{status: status, body: body}
+}
+
+func (g *snapshotGH) clearFault(resource string) {
+	defer g.lock()()
+	delete(g.faults, resource)
+}
+
+func (g *snapshotGH) faultHits(resource string) int {
+	defer g.lock()()
+	if f := g.faults[resource]; f != nil {
+		return f.hits
+	}
+	return 0
+}
+
+// faulted serves an armed fault. Callers already hold g.mu.
+func (g *snapshotGH) faulted(w http.ResponseWriter, resource string) bool {
+	f := g.faults[resource]
+	if f == nil {
+		return false
+	}
+	f.hits++
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(f.status)
+	_, _ = w.Write([]byte(f.body))
+	return true
 }
 
 func (g *snapshotGH) lock() func() { g.mu.Lock(); return g.mu.Unlock }
@@ -93,7 +149,7 @@ func (g *snapshotGH) prJSON(pr ghPR, detail bool) map[string]any {
 	}
 	m := map[string]any{
 		"number": pr.Number, "title": pr.Title, "body": pr.Body, "state": pr.State,
-		"draft": pr.Draft, "user": map[string]any{"login": pr.Login},
+		"draft": pr.Draft, "user": ghUser(pr.Login, pr.Type),
 		"head":       map[string]any{"ref": pr.HeadRef, "sha": pr.HeadSHA},
 		"base":       map[string]any{"ref": pr.BaseRef},
 		"labels":     labels,
@@ -122,6 +178,9 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET "+base+"/pulls", func(w http.ResponseWriter, _ *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resPulls) {
+			return
+		}
 		prs := append([]ghPR(nil), g.prs...)
 		// sort=updated&direction=desc, which the forge's since-cutoff relies on
 		for i := 0; i < len(prs); i++ {
@@ -139,11 +198,15 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET "+base+"/pulls/comments", func(w http.ResponseWriter, _ *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resReviewComments) {
+			return
+		}
 		out := make([]map[string]any, 0, len(g.reviewComments))
 		for _, c := range g.reviewComments {
 			out = append(out, map[string]any{
-				"id": c.ID, "user": map[string]any{"login": c.Login}, "body": c.Body,
-				"path": c.Path, "line": c.Line, "pull_request_review_id": c.ReviewID,
+				"id": c.ID, "user": ghUser(c.Login, c.Type), "body": c.Body,
+				"pull_request_review_id": c.ReviewID,
+				"path":                   c.Path, "line": c.Line,
 				"pull_request_url": fmt.Sprintf("https://api.github.example%s/pulls/%d", base, c.Subject),
 				"html_url":         fmt.Sprintf("https://github.example/acme/payments/pull/%d#discussion", c.Subject),
 				"created_at":       c.CreatedAt, "updated_at": c.UpdatedAt,
@@ -163,11 +226,14 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET "+base+"/pulls/{n}/reviews", func(w http.ResponseWriter, r *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resReviews) {
+			return
+		}
 		out := make([]map[string]any, 0)
 		for _, rev := range g.reviews {
 			if fmt.Sprint(rev.PR) == r.PathValue("n") {
 				out = append(out, map[string]any{
-					"id": rev.ID, "user": map[string]any{"login": rev.Login},
+					"id": rev.ID, "user": ghUser(rev.Login, rev.Type),
 					"state": rev.State, "body": rev.Body,
 					"html_url":     fmt.Sprintf("https://github.example/acme/payments/pull/%d#review-%d", rev.PR, rev.ID),
 					"submitted_at": rev.SubmittedAt,
@@ -178,10 +244,13 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET "+base+"/issues/comments", func(w http.ResponseWriter, _ *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resIssueComments) {
+			return
+		}
 		out := make([]map[string]any, 0, len(g.issueComments))
 		for _, c := range g.issueComments {
 			out = append(out, map[string]any{
-				"id": c.ID, "user": map[string]any{"login": c.Login}, "body": c.Body,
+				"id": c.ID, "user": ghUser(c.Login, c.Type), "body": c.Body,
 				"issue_url":  fmt.Sprintf("https://api.github.example%s/issues/%d", base, c.Subject),
 				"html_url":   fmt.Sprintf("https://github.example/acme/payments/pull/%d#comment", c.Subject),
 				"created_at": c.CreatedAt, "updated_at": c.UpdatedAt,
@@ -191,6 +260,9 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET "+base+"/commits/{sha}/check-suites", func(w http.ResponseWriter, r *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resCheckSuites) {
+			return
+		}
 		suites := make([]map[string]any, 0)
 		for _, s := range g.suites {
 			if s.HeadSHA == r.PathValue("sha") {
@@ -262,6 +334,7 @@ func newPollHarness(t *testing.T) *pollHarness {
 		gh: &snapshotGH{
 			commitEmails:   map[string]string{},
 			commitMessages: map[string]string{},
+			faults:         map[string]*ghFault{},
 		},
 		clock: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
 	}
@@ -664,7 +737,7 @@ func TestPollerActorAttribution(t *testing.T) {
 		CreatedAt: at(12, 1), UpdatedAt: at(12, 1),
 	}
 	ph.gh.upsertPR(pr)
-	ph.tick() // pr.opened — human branch, no marker: external actor
+	ph.tick() // pr.opened — no marker, no branch match, no reported user type: external
 
 	// Marker comment (signal 1): agent + run straight from the marker.
 	marker := domain.Actor{AgentID: ph.agent.ID, RunID: markerRun.ID}.Marker()
@@ -738,10 +811,11 @@ func TestPollerActorAttribution(t *testing.T) {
 		t.Fatalf("branch-prefix pr.author_kind = %v, want agent", p["pr"])
 	}
 
-	// The earlier human-branch opened event stayed external.
+	// The earlier unattributed open, whose author carried no reported user type, stayed
+	// external — unknown is not human (see actorKindFor).
 	first := events[0]
 	if first.ActivityType != "opened" || first.ActorKind != domain.ActorExternal {
-		t.Fatalf("human PR opened actor = %s (%s)", first.ActorKind, first.ActivityType)
+		t.Fatalf("untyped PR opened actor = %s (%s)", first.ActorKind, first.ActivityType)
 	}
 }
 
@@ -936,6 +1010,135 @@ func eventKinds(events []domain.Event) []string {
 		out = append(out, e.Kind+"."+e.ActivityType)
 	}
 	return out
+}
+
+// TestPollerReviewActorKindFollowsUserType is the fix for the bug that made the loop guard's
+// depth reset dead code for anything happening on the forge: every non-agent actor was
+// stamped `external`, and `NewestHumanActionAt` matches `human`, so commenting on a
+// loop-stopped pull request left the next agent event still loop-stopped.
+//
+// GitHub reports `user.type` on reviews, comments and issues. A non-agent "User" is a person
+// (`human`, which resets the depth counter and satisfies `actor.is_human`); a "Bot" — and an
+// unreported type — stays `external`. Agent attribution still runs first and still wins, run
+// id included: relabelling an unattributed agent as human is exactly the weakening this must
+// not do.
+func TestPollerReviewActorKindFollowsUserType(t *testing.T) {
+	ph := newPollHarness(t)
+	ph.tick() // baseline over an empty repo
+
+	agentRun := ph.run(domain.RunCompleted, "dev/pay-5-keys", nil)
+	pr := ghPR{
+		Number: 5, Title: "Add keys", Body: "adds keys", State: "open",
+		Login: "svc-bot", HeadRef: "feature/pay", HeadSHA: "sha5a", BaseRef: "main",
+		CreatedAt: at(12, 1), UpdatedAt: at(12, 1),
+	}
+	ph.gh.upsertPR(pr)
+	ph.tick()
+
+	// Three reviews on one pull request, differing only in who submitted them.
+	marker := domain.Actor{AgentID: ph.agent.ID, RunID: agentRun.ID}.Marker()
+	ph.gh.reviews = append(ph.gh.reviews,
+		ghReview{ID: 901, PR: 5, Login: "ada", Type: "User", State: "COMMENTED",
+			Body: "Two things here.", SubmittedAt: at(12, 10)},
+		ghReview{ID: 902, PR: 5, Login: "dependabot[bot]", Type: "Bot", State: "COMMENTED",
+			Body: "Bumped a dependency.", SubmittedAt: at(12, 11)},
+		ghReview{ID: 903, PR: 5, Login: "svc-bot", Type: "User", State: "COMMENTED",
+			Body: "Reviewed.\n\n" + marker, SubmittedAt: at(12, 12)},
+	)
+	pr.UpdatedAt = at(12, 12)
+	ph.gh.upsertPR(pr)
+	ph.tick()
+
+	byID := map[string]domain.Event{}
+	for _, e := range ph.collected() {
+		if e.Kind != kindReview {
+			continue
+		}
+		byID[ph.payload(e)["review"].(map[string]any)["id"].(string)] = e
+	}
+	if len(byID) != 3 {
+		t.Fatalf("review events = %d, want 3: %v", len(byID), byID)
+	}
+
+	// A person: human, with the login recorded and NO actor id — the kind is what we learned,
+	// the identity is still unknowable (a GitHub login is not a workspace user, D-9/S25).
+	human := byID["901"]
+	if human.ActorKind != domain.ActorHuman {
+		t.Fatalf("human review actor_kind = %s, want human", human.ActorKind)
+	}
+	if human.ActorID != nil {
+		t.Fatalf("human review actor_id = %v, want nil — the login does not identify a user", *human.ActorID)
+	}
+	if human.ActorLogin == nil || *human.ActorLogin != "ada" {
+		t.Fatalf("human review actor_login = %v, want ada", human.ActorLogin)
+	}
+	// The payload's actor sub-object is what `actor.is_human` reads (it is not the column),
+	// so the two have to agree.
+	if got := ph.payload(human)["actor"]; !reflect.DeepEqual(got,
+		map[string]any{"kind": "human", "login": "ada", "agent": ""}) {
+		t.Fatalf("human review payload actor = %v", got)
+	}
+
+	// A bot: external. It must not reset the depth counter, and `actor.is_human` must not
+	// match it.
+	bot := byID["902"]
+	if bot.ActorKind != domain.ActorExternal {
+		t.Fatalf("bot review actor_kind = %s, want external", bot.ActorKind)
+	}
+	if got := ph.payload(bot)["actor"].(map[string]any)["kind"]; got != "external" {
+		t.Fatalf("bot review payload actor.kind = %v, want external", got)
+	}
+
+	// One of ours: agent, with the run the marker names — user.type says "User" here too,
+	// because every agent writes through the project's shared PAT (D-9). Attribution wins.
+	agent := byID["903"]
+	if agent.ActorKind != domain.ActorAgent || agent.ActorID == nil || *agent.ActorID != ph.agent.ID {
+		t.Fatalf("agent review actor = %s/%v, want agent %s", agent.ActorKind, agent.ActorID, ph.agent.ID)
+	}
+	if agent.CauseRunID == nil || *agent.CauseRunID != agentRun.ID {
+		t.Fatalf("agent review cause_run = %v, want %s", agent.CauseRunID, agentRun.ID)
+	}
+	if got := ph.payload(agent)["actor"]; !reflect.DeepEqual(got,
+		map[string]any{"kind": "agent", "login": "svc-bot", "agent": "Dev"}) {
+		t.Fatalf("agent review payload actor = %v", got)
+	}
+}
+
+// TestPollerDerivedPushStaysExternal pins the other half of the decision: an event the poller
+// DERIVES from state diffing has no API actor to ask, so it gets no user type and stays
+// external. Calling it human would let an unattributed agent push reset the depth counter,
+// which is the loop guard failing open — the opposite of the point.
+func TestPollerDerivedPushStaysExternal(t *testing.T) {
+	ph := newPollHarness(t)
+	ph.tick()
+
+	pr := ghPR{
+		Number: 6, Title: "Tidy", Body: "no marker", State: "open",
+		Login: "ada", Type: "User", HeadRef: "tidy", HeadSHA: "sha6a", BaseRef: "main",
+		CreatedAt: at(12, 1), UpdatedAt: at(12, 1),
+	}
+	ph.gh.upsertPR(pr)
+	ph.tick()
+
+	// The open names its author, and that author is a person.
+	opened := ph.lastEvent(kindPullRequest, "opened")
+	if opened.ActorKind != domain.ActorHuman {
+		t.Fatalf("opened actor_kind = %s, want human", opened.ActorKind)
+	}
+
+	// The push does not: no endpoint says who pushed, and the commit read attributes nothing.
+	pr.HeadSHA = "sha6b"
+	pr.UpdatedAt = at(12, 30)
+	ph.gh.upsertPR(pr)
+	ph.tick()
+
+	sync := ph.lastEvent(kindPullRequest, "synchronize")
+	if sync.ActorKind != domain.ActorExternal {
+		t.Fatalf("synchronize actor_kind = %s, want external", sync.ActorKind)
+	}
+	if got := ph.payload(sync)["actor"].(map[string]any)["kind"]; got != "external" {
+		t.Fatalf("synchronize payload actor.kind = %v, want external", got)
+	}
 }
 
 // TestPollerReviewCommentCarriesItsReview: every inline comment of a review says which review

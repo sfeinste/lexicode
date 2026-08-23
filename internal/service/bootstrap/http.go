@@ -18,6 +18,7 @@ import (
 //	POST   /api/v1/projects/{key}/repo                 connect / reconnect
 //	GET    /api/v1/projects/{key}/repo                 connection status
 //	DELETE /api/v1/projects/{key}/repo                 disconnect (imported data stays)
+//	PATCH  /api/v1/projects/{key}/repo                 setup script + branch template
 //	PATCH  /api/v1/projects/{key}/repo/network         network policy + allowlist (S18)
 //	POST   /api/v1/projects/{key}/bootstrap/preview    the one-payload checklist; writes nothing
 //	POST   /api/v1/projects/{key}/bootstrap/apply      creates exactly the checked subset
@@ -28,6 +29,7 @@ func (s *Service) Routes(mux httpx.Registrar, a *auth.Service) {
 	mux.Handle("POST /api/v1/projects/{key}/repo", member(s.handleConnect))
 	mux.Handle("GET /api/v1/projects/{key}/repo", member(s.handleStatus))
 	mux.Handle("DELETE /api/v1/projects/{key}/repo", member(s.handleDisconnect))
+	mux.Handle("PATCH /api/v1/projects/{key}/repo", member(s.handleUpdateSettings))
 	mux.Handle("POST /api/v1/projects/{key}/repo/token", member(s.handleRotateToken))
 	mux.Handle("PATCH /api/v1/projects/{key}/repo/network", member(s.handleUpdateNetwork))
 	mux.Handle("POST /api/v1/projects/{key}/bootstrap/preview", member(s.handlePreview))
@@ -49,6 +51,11 @@ type repoBody struct {
 	ConnectedAt   *string `json:"connected_at"`
 	LastSyncedAt  *string `json:"last_synced_at"`
 	HasToken      bool    `json:"has_token"`
+	// The repo-settings PATCH's fields: the setup script the sandbox runs during
+	// provisioning ("" = no script, and the step is skipped entirely) and the branch
+	// template override (null = inherit the workspace default).
+	SetupScript    string  `json:"setup_script"`
+	BranchTemplate *string `json:"branch_template"`
 	// The S18 network settings: the nullable override (null = inherit), the allowlist, and
 	// the live workspace default so the UI's InheritedField line never recomputes inheritance.
 	NetworkPolicy          *string  `json:"network_policy"`
@@ -71,7 +78,8 @@ func (s *Service) repoBody(ctx context.Context, rp domain.Repo) (repoBody, error
 		Provider: rp.Provider, Owner: rp.Owner, Name: rp.Name,
 		DefaultBranch: rp.DefaultBranch, HeadSHA: rp.HeadSHA, HeadMessage: rp.HeadMessage,
 		ConnectedAt: rp.ConnectedAt, LastSyncedAt: rp.LastSyncedAt,
-		HasToken:      rp.TokenSecretID != nil,
+		HasToken:    rp.TokenSecretID != nil,
+		SetupScript: rp.SetupScript, BranchTemplate: rp.BranchTemplate,
 		NetworkPolicy: rp.NetworkPolicy, NetworkAllowlist: allow,
 		WorkspaceNetworkPolicy: ws.DefaultNetworkPolicy,
 	}, nil
@@ -142,6 +150,24 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"connected": true, "repo": rb,
 	})
+}
+
+func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	body, ok := httpx.DecodeJSON[RepoSettingsInput](w, r)
+	if !ok {
+		return
+	}
+	rp, err := s.UpdateRepoSettings(r.Context(), r.PathValue("key"), body)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	rb, err := s.repoBody(r.Context(), rp)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, rb)
 }
 
 func (s *Service) handleUpdateNetwork(w http.ResponseWriter, r *http.Request) {

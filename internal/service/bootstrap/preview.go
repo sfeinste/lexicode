@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -482,8 +483,104 @@ func readmeFirstSection(readme string) string {
 	return out
 }
 
-// suggestedTriggers is the brief's two pre-filled rules, offered only when CI was detected.
-// Both ship with Enabled=false — Apply preserves that.
+// The prompt overrides the two suggested rules ship with (contracts §4 `{{...}}`
+// interpolation, evaluated against the normalized event payload by service/triggers).
+//
+// They are not decoration. A trigger-spawned run has no ticket, so the prompt override is the
+// only thing that can put a "# Task" section in its prompt: with an empty override — which is
+// what these rules used to carry — the agent was handed its directive, its project guidance
+// and nothing whatsoever about what it was supposed to do. It then did something plausible and
+// unrelated. The `event` context provider now supplies the facts of the occurrence; these
+// strings supply the instruction, which is a different thing and still has to be said.
+//
+// Both are exported so the acceptance harness can fire the SHIPPED rule rather than a
+// hand-written stand-in — the drift that let a broken default pass a green acceptance.
+const (
+	// ReviewerPrompt is the "agent PR opened → run Reviewer" task. It names the tool because
+	// a review that is not submitted through `submit_review` is not posted anywhere: it ends
+	// as the run's final message, which is exactly the failure this default exists to stop.
+	ReviewerPrompt = "Review pull request #{{pr.number}} — \"{{pr.title}}\" — on branch " +
+		"`{{pr.branch}}`, opened against `{{pr.base}}` by {{pr.author}}.\n\n" +
+		"That head branch is already checked out in this workspace, so read the diff against " +
+		"`{{pr.base}}` and review the change on its merits: correctness first, then the " +
+		"tests, then anything a maintainer would have to fix later.\n\n" +
+		"Post your findings with the `submit_review` tool (`mcp__lexicode__submit_review`): a " +
+		"short summary, plus one severity-tagged finding per problem — `blocker`, `major`, " +
+		"`minor` or `nit` — each with the file and line it is on. That tool call is the only " +
+		"way your review reaches the pull request. A review written as your final message is " +
+		"never posted, and nobody sees it."
+
+	// AddressReviewPrompt is the "changes requested → run Dev" task (brief §3 step 5). It
+	// names the severities because the rule that fires it is keyed on them: the run exists to
+	// clear the blockers and majors, not to work through the nits.
+	AddressReviewPrompt = "The review on pull request #{{pr.number}} asked for changes: " +
+		"{{review.severity_counts.blocker}} blocker(s) and {{review.severity_counts.major}} " +
+		"major finding(s), worst severity {{review.max_severity}}.\n\n" +
+		"That pull request's branch `{{pr.branch}}` is already checked out in this workspace. " +
+		"Read the review, address every blocker and major finding on this branch — the same " +
+		"branch, not a new one — and commit the fix. Leave the minors and nits unless they are " +
+		"trivial, and say in your final message what you changed and what you left.\n\n" +
+		"The review:\n\n{{review.body}}"
+
+	// CIFixPrompt is the "CI failed → run Dev" task.
+	CIFixPrompt = "The `{{check.name}}` check suite failed on pull request #{{pr.number}}, " +
+		"on branch `{{pr.branch}}`. The failing run is at {{check.url}}.\n\n" +
+		"That branch is already checked out in this workspace. Work out why the suite failed, " +
+		"fix it on this branch, and commit the fix. Keep it to what the failure needs — this " +
+		"run exists to get the checks green, not to revisit the change they are checking."
+
+	// HumanReviewPrompt is the "a person reviewed the PR → run Dev" task. Unlike
+	// AddressReviewPrompt it cannot name severities: this fires on GitHub's own review event,
+	// which carries prose and a state, not the structured findings `submit_review` produces.
+	// So the instruction is to read the review and do what it asks.
+	HumanReviewPrompt = "{{review.author}} reviewed pull request #{{pr.number}} — " +
+		"\"{{pr.title}}\" — on branch `{{pr.branch}}`. GitHub recorded the review as " +
+		"`{{review.state}}`, which says less than the review itself does: read the text.\n\n" +
+		"That branch is already checked out in this workspace. Address what the review asks " +
+		"for on this branch — the same branch, not a new one — and commit the fix. If a point " +
+		"is wrong or you disagree, say so in your final message rather than changing the code " +
+		"around it. If the review asks for nothing at all, change nothing and say that.\n\n" +
+		"The review:\n\n{{review.body}}"
+)
+
+// ChangesRequestedConditions is the IF row of the suggested "changes requested" rule, and the
+// point of the whole `agent_review` event: the rule fires on what the REVIEWER found, not on
+// the state GitHub stored.
+//
+// It could not fire on the state. Under D-9 every agent shares one project token, so a
+// reviewer agent is the pull request's own author as far as GitHub is concerned, and GitHub
+// answers 422 to REQUEST_CHANGES from the author. The review lands as COMMENTED, the poller
+// reads back `review.state = commented`, and a rule keyed on `changes_requested` never fires
+// — which is exactly what happened on the live run this rule was written for.
+//
+// Exported so the acceptance harness fires the SHIPPED condition rather than a hand-written
+// stand-in, for the same reason ReviewerPrompt is (see the note above it).
+const ChangesRequestedConditions = `{"all":[{"field":"review.max_severity","op":"enum.in",` +
+	`"value":["blocker","major"]}]}`
+
+// HumanReviewConditions is the IF row of the suggested "human review" rule: the acting
+// identity is a person, and nothing else.
+//
+// It has to be the actor rather than the review state. Every agent shares the project's one
+// PAT (D-9), so the user reviewing their own agent's pull request is, to GitHub, its author —
+// and GitHub answers 422 to REQUEST_CHANGES from the author. Their review lands as
+// COMMENTED, exactly like an agent's, and a rule keyed on the state cannot tell the two
+// apart. The actor can: the poller reads GitHub's `user.type` and stamps a non-agent "User"
+// as `human` (see internal/module/github's actorKindFor), and the marker attribution that
+// makes an agent's review `agent` runs first.
+//
+// The `actor.is_human` operator takes no field — it defaults to the payload's actor
+// sub-object (contracts §4.1, internal/service/triggers/conditions.go).
+//
+// Exported so the acceptance harness fires the SHIPPED condition rather than a hand-written
+// stand-in, for the same reason ReviewerPrompt is (see the note above it).
+const HumanReviewConditions = `{"all":[{"op":"actor.is_human"}]}`
+
+// suggestedTriggers is the brief's three pre-filled rules — steps 3, 5 and 6 of the canonical
+// chain — plus the human-review rule, which is the way back IN for the person watching the
+// chain. All ship with Enabled=false — Apply preserves that. The set is offered only when CI
+// was detected, which is the S15 gate on the whole trigger section of the checklist, not a
+// statement that each rule needs CI.
 func suggestedTriggers(workflowFiles []string) []TriggerCandidate {
 	if len(workflowFiles) == 0 {
 		return nil
@@ -498,6 +595,17 @@ func suggestedTriggers(workflowFiles []string) []TriggerCandidate {
 			Workflows:     workflowFiles, Checked: true,
 		},
 		{
+			// Keyed on the internal `agent_review` event, not on GitHub's
+			// `pull_request_review`: see ChangesRequestedConditions. Both events exist for
+			// the same review, and a trigger names one event kind, so this rule cannot fire
+			// twice on one review.
+			ID: "changes-requested", Name: "Changes requested → Dev addresses them",
+			Event:         "agent_review",
+			ActivityTypes: []string{"submitted"},
+			Description:   "When a reviewer agent reports a blocker or a major finding, run the Dev agent to address it on the same branch.",
+			Workflows:     workflowFiles, Checked: true,
+		},
+		{
 			// No loop_config override: the guard exempts check_suite events from actor
 			// suppression (a CI result is a machine verdict about the agent's work, not the
 			// agent acting), so this rule fires on the agent's own branch under the shipped
@@ -506,6 +614,22 @@ func suggestedTriggers(workflowFiles []string) []TriggerCandidate {
 			Event:         "check_suite",
 			ActivityTypes: []string{"completed"},
 			Description:   "When a check suite completes with a failure on an agent branch, run the Dev agent to fix it.",
+			Workflows:     workflowFiles, Checked: true,
+		},
+		{
+			// Keyed on GitHub's own `pull_request_review`, not on the internal
+			// `agent_review`: this is the rule for a PERSON reviewing, and a person's
+			// review only ever reaches Lexicode through the poller.
+			//
+			// No loop_config override, and none is needed: actor suppression keys on "the
+			// event's actor IS the agent this rule would run", and a human is not Dev. The
+			// depth counter is likewise not in the way — a human action on the subject
+			// RESETS it (architecture §9), so this rule is exactly how a person unsticks a
+			// chain that stopped on the depth limit.
+			ID: "human-review-address", Name: "Human review → Dev addresses it",
+			Event:         "pull_request_review",
+			ActivityTypes: []string{"submitted"},
+			Description:   "When a person submits a review on a pull request, run the Dev agent to address it on the same branch.",
 			Workflows:     workflowFiles, Checked: true,
 		},
 	}
@@ -519,10 +643,16 @@ func triggerRow(cand TriggerCandidate, projectID, createdBy, now string) domain.
 	switch cand.ID {
 	case "agent-pr-review":
 		conditions = `{"all":[{"field":"pr.author_kind","op":"enum.is","value":"agent"}]}`
-		actions = `[{"action_id":"run_agent","params":{"agent_name":"Reviewer","prompt":""}}]`
+		actions = runAgentAction("Reviewer", ReviewerPrompt)
+	case "changes-requested":
+		conditions = ChangesRequestedConditions
+		actions = runAgentAction("Dev", AddressReviewPrompt)
 	case "ci-failed-fix":
 		conditions = `{"all":[{"field":"check.conclusion","op":"enum.is","value":"failure"}]}`
-		actions = `[{"action_id":"run_agent","params":{"agent_name":"Dev","prompt":""}}]`
+		actions = runAgentAction("Dev", CIFixPrompt)
+	case "human-review-address":
+		conditions = HumanReviewConditions
+		actions = runAgentAction("Dev", HumanReviewPrompt)
 	}
 	var by *string
 	if createdBy != "" {
@@ -536,6 +666,21 @@ func triggerRow(cand TriggerCandidate, projectID, createdBy, now string) domain.
 		LoopConfig: domain.DefaultLoopConfig(),
 		CreatedBy:  by, CreatedAt: now, UpdatedAt: now,
 	}
+}
+
+// runAgentAction renders the one-action list a suggested rule carries. json.Marshal, not a
+// hand-built string: the prompts contain quotes and newlines, and a rule whose actions column
+// is invalid JSON fires nothing.
+func runAgentAction(agentName, prompt string) string {
+	b, err := json.Marshal([]map[string]any{{
+		"action_id": "run_agent",
+		"params":    map[string]any{"agent_name": agentName, "prompt": prompt},
+	}})
+	if err != nil {
+		// Unreachable: the inputs are strings and maps of strings.
+		return `[]`
+	}
+	return string(b)
 }
 
 func jsonArr(ss []string) (string, error) {

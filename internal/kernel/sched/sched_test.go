@@ -76,11 +76,21 @@ func (stubSpecs) Build(_ context.Context, in sched.SpecInput) (sched.SpecResult,
 	}, nil
 }
 
+// specBuilder is the env's SpecBuilder: the options override if there is one, else the
+// deterministic stub.
+func (e *env) specBuilder() sched.SpecBuilder {
+	if e.specs != nil {
+		return e.specs
+	}
+	return stubSpecs{}
+}
+
 type env struct {
 	t         *testing.T
 	st        *store.Store
 	bus       *bus.Bus
 	providers []ports.ContextProvider
+	specs     sched.SpecBuilder
 	sb        *testkit.Sandbox
 	rt        *testkit.Scripted
 	mcp       *mcpsvc.Server
@@ -98,6 +108,8 @@ type options struct {
 	// providers overrides the context-provider set (default: ticket + project). The S34
 	// context tests wire all four.
 	providers []ports.ContextProvider
+	// specs overrides the SpecBuilder stand-in. Nil means stubSpecs.
+	specs sched.SpecBuilder
 }
 
 func newEnv(t *testing.T, o options) *env {
@@ -129,6 +141,7 @@ func newEnv(t *testing.T, o options) *env {
 	e.sb = testkit.NewSandbox(testkit.Script{})
 	e.rt = &testkit.Scripted{Fixture: []byte(o.fixture), Pace: o.pace, ExitCode: o.exitCode}
 	e.providers = o.providers
+	e.specs = o.specs
 
 	var schedRef *sched.Scheduler
 	e.mcp = mcpsvc.New(mcpsvc.Options{
@@ -185,7 +198,7 @@ func newScheduler(t *testing.T, e *env, auditW *audit.Writer, logger *slog.Logge
 				contextmod.NewProjectProvider(e.st),
 			}
 		},
-		Specs:         stubSpecs{},
+		Specs:         e.specBuilder(),
 		Tokens:        e.mcp,
 		SandboxID:     "fake",
 		AdmitInterval: 25 * time.Millisecond,
@@ -252,7 +265,8 @@ func (e *env) seed(agentCap int64, wip *int64, dailyCap *int64) fixtures {
 	a := domain.Agent{
 		ID: domain.NewID(), ProjectID: p.ID, Name: "Dev", Role: "developer",
 		Color: "#888888", RuntimeID: "scripted", Model: "fake-model", Effort: "medium",
-		Autonomy: domain.AutonomyAuto, Permissions: domain.AgentPermissions{ReadFiles: true, EditFiles: true, RunCommands: true},
+		Autonomy: domain.AutonomyAuto, Permissions: domain.AgentPermissions{ReadFiles: true, EditFiles: true,
+			RunCommands: true, PushBranches: true},
 		GitAuthorName: "Dev", GitAuthorEmail: "dev@agents.lexicode.local",
 		ConcurrencyCap: agentCap, DailyCapCents: dailyCap,
 		MaxWallClockSeconds: 300, MaxSteps: 100, Enabled: true,
@@ -600,12 +614,14 @@ func TestForcedFailureLeavesPartialWork(t *testing.T) {
 		t.Fatalf("no partial_work output naming %s; outputs = %+v", branch, outputs)
 	}
 
-	// The fake sandbox recorded the §10.5 push exec.
+	// The fake sandbox recorded the §10.5 push exec. The branch is no longer in the argv —
+	// it, the wip message and the credential all travel in the exec's environment, so that
+	// nothing an agent can read (`/proc/<pid>/cmdline`) carries them. That the right branch
+	// was pushed is asserted above, off the outcome the exec reported.
 	var pushed bool
 	for _, argv := range e.sb.Instances()[0].Execs() {
 		joined := strings.Join(argv, " ")
-		if strings.Contains(joined, "git add -A") && strings.Contains(joined, "git push origin") &&
-			strings.Contains(joined, branch) {
+		if strings.Contains(joined, "git add -A") && strings.Contains(joined, "git push origin") {
 			pushed = true
 			t.Logf("artifact exec: %v", argv)
 		}
@@ -654,6 +670,10 @@ func TestHappyPathElicitationUsageAndTicketCoupling(t *testing.T) {
 		"# Agent directive", "You are Dev.",
 		"# Project guidance", "Prefer small, reviewable changes.",
 		"# Ticket " + tk.Key, "Acceptance criteria", "retries do not double-charge",
+		// The delivery section: guidance about a mechanism, not an enforcement control —
+		// the enforcement is the absent credential (see internal/kernel/sched/preserve.go).
+		"# How your work is delivered", "Commit your work locally",
+		"this container holds no credential for the repository",
 		"# Task", "Focus on the charge endpoint.",
 	} {
 		if !strings.Contains(run.Prompt, want) {

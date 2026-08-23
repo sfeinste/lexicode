@@ -373,6 +373,7 @@ func mapReviewComment(cm *gh.PullRequestComment, subjectNumber int) domain.Comme
 		ID:            cm.GetID(),
 		SubjectNumber: number,
 		AuthorLogin:   cm.GetUser().GetLogin(),
+		AuthorType:    cm.GetUser().GetType(),
 		Body:          cm.GetBody(),
 		Path:          cm.GetPath(),
 		Line:          commentLine(cm),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -257,4 +258,91 @@ func mustWrite(t *testing.T, w io.Writer, s string) {
 	if _, err := io.WriteString(w, s); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
+}
+
+// TestToolProgressIsNotAnUnhandledMessage is the regression for the bug that made a parked
+// ask_human look like a dead run: the CLI's 30-second tool_progress heartbeats landed as
+// "unhandled message: tool_progress" at level 2 and told a reader nothing. They must render
+// as a named, elapsed-counting wait on ONE row per tool call, and that row must be gone from
+// the "unhandled" bucket entirely.
+func TestToolProgressIsNotAnUnhandledMessage(t *testing.T) {
+	const ask = "mcp__lexicode__ask_human"
+	progress := func(elapsed int) string {
+		return `{"type":"tool_progress","tool_use_id":"tu1","tool_name":"` + ask +
+			`","parent_tool_use_id":null,"elapsed_time_seconds":` +
+			strconv.Itoa(elapsed) + `,"heartbeat":true,"session_id":"s"}` + "\n"
+	}
+	fixture := initLine +
+		toolUseLine("tu1", ask, `{"questions":[]}`) +
+		progress(30) + progress(60) + progress(185) +
+		toolResultLine("tu1", `"{\"answers\":{}}"`, false) +
+		resultLine
+
+	acts := runFixture(t, fixture).final()
+
+	for _, a := range acts {
+		if strings.Contains(a.Title, "unhandled message") {
+			t.Fatalf("tool_progress still lands as an unhandled message: %q", a.Title)
+		}
+	}
+
+	var rows []domain.Activity
+	for _, a := range acts {
+		if strings.HasPrefix(a.GroupKey, "tool_progress:") {
+			rows = append(rows, a)
+		}
+	}
+	if len(rows) != 1 {
+		t.Fatalf("tool_progress rows = %d, want 1 (heartbeats update one row); titles: %v",
+			len(rows), titles(acts))
+	}
+	row := rows[0]
+	if row.Type != domain.ActivitySystem || row.Level != 2 {
+		t.Errorf("tool_progress row = type %s level %d, want system level 2", row.Type, row.Level)
+	}
+	if row.GroupKey != "tool_progress:tu1" {
+		t.Errorf("GroupKey = %q, want tool_progress:tu1", row.GroupKey)
+	}
+	// The last heartbeat wins, and it says what is actually being waited on.
+	if want := "waiting on you to answer — 3m5s elapsed"; row.Title != want {
+		t.Errorf("title = %q, want %q", row.Title, want)
+	}
+	var payload struct {
+		ToolUseID string  `json:"tool_use_id"`
+		ToolName  string  `json:"tool_name"`
+		ElapsedS  float64 `json:"elapsed_s"`
+		Heartbeat bool    `json:"heartbeat"`
+	}
+	if err := json.Unmarshal(row.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.ToolUseID != "tu1" || payload.ToolName != ask ||
+		payload.ElapsedS != 185 || !payload.Heartbeat {
+		t.Errorf("payload = %+v", payload)
+	}
+
+	// The call it was reporting on still completes normally.
+	if last := acts[len(acts)-1]; last.Type != domain.ActivityResponse {
+		t.Errorf("last activity = %s, want response", last.Type)
+	}
+}
+
+// TestToolProgressForAnUnknownToolStillReads: a heartbeat whose tool_use_id the adapter never
+// saw (a reattach resuming mid-call) names the tool from the message itself rather than
+// dropping to a bare id.
+func TestToolProgressForAnUnknownToolStillReads(t *testing.T) {
+	fixture := initLine +
+		`{"type":"tool_progress","tool_use_id":"orphan","tool_name":"Bash",` +
+		`"elapsed_time_seconds":42,"heartbeat":true,"session_id":"s"}` + "\n" +
+		resultLine
+
+	for _, a := range runFixture(t, fixture).final() {
+		if a.GroupKey == "tool_progress:orphan" {
+			if want := "Bash still running — 42s elapsed"; a.Title != want {
+				t.Fatalf("title = %q, want %q", a.Title, want)
+			}
+			return
+		}
+	}
+	t.Fatal("no tool_progress activity for the orphan heartbeat")
 }

@@ -148,6 +148,26 @@ export function NetworkPolicyField({
         )}
       </p>
 
+      <p className={styles.quiet}>
+        Reachable right now:{" "}
+        {effective === "open"
+          ? "every host — the container joins the default Docker network with no proxy."
+          : effective === "allowlist" && allowlist.length > 0
+            ? `the Anthropic API, this repository's git host, and ${allowlist.length} listed ${
+                allowlist.length === 1 ? "domain" : "domains"
+              }.`
+            : "the Anthropic API and this repository's git host, and nothing else."}
+      </p>
+
+      {effective === "allowlist" && allowlist.length === 0 && (
+        <p className={styles.warning} role="status">
+          <strong>This allowlist is empty, so it currently behaves exactly like None.</strong>{" "}
+          Only the Anthropic API and this repository's git host are reachable. Package installs
+          (<code>npm</code>, <code>pip</code>, Go modules) will fail with a proxy denial until a
+          domain is added below. The denials are recorded in each run's verbose activities.
+        </p>
+      )}
+
       {effective === "allowlist" && (
         <label className={styles.field}>
           Allowed domains (one per line)

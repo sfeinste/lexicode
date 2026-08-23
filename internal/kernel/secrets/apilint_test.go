@@ -65,6 +65,13 @@ func TestNoAPIHandlerTouchesSecretValues(t *testing.T) {
 		// tool (a container-facing endpoint that never echoes the value), not from an API
 		// handler, and no response body carries the token.
 		filepath.Join("service", "runs", "review.go"): true,
+		// The orchestrator-owned push (D-9 amendment): the same pattern a fourth time. The
+		// container holds no repository credential at all now, so the token has to be
+		// resolved here and handed to exactly one exec's environment at teardown. Its Get
+		// feeds sched.PushAuth.Env and PushAuth.Secrets (the run redactor) and nothing
+		// else; the scheduler is the only caller, no HTTP handler reaches the file, and the
+		// value never appears in argv, in .git/config or in a response body.
+		filepath.Join("service", "runs", "push.go"): true,
 	}
 	forbiddenWords := []string{"ciphertext", "plaintext", "nonce"}
 

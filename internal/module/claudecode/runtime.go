@@ -15,7 +15,9 @@ const runtimeID = "claude-code"
 
 // pidFile is where the launch wrapper records the agent's PID inside the container, so Stop
 // can signal a process this adapter never sees directly (it only holds exec streams). /tmp is
-// tmpfs in the agent container; the read-only rootfs does not apply there.
+// writable in the agent container under every posture — it was a tmpfs while the rootfs was
+// read-only, and an ordinary directory on the writable rootfs the POC ships (see the
+// "Container posture" block in module/docker's sandbox.go).
 const pidFile = "/tmp/lexicode-agent.pid"
 
 // Workspace paths fixed by contracts §3.1; S19's workspace preparation materialises both files.

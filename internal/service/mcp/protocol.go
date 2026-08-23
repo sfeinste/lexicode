@@ -119,6 +119,13 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request, runID string) 
 	case "tools/list":
 		resp.Result = map[string]any{"tools": toolDescriptors()}
 	case "tools/call":
+		// A call the client asked for progress on, from a client that accepts an SSE
+		// stream, is answered on one — notifications while it blocks, then the response
+		// (see progress.go). Everything else answers with one JSON body.
+		if token, ok := progressTokenOf(req.Params); ok && acceptsSSE(r) {
+			s.callToolStreaming(w, r, runID, req, token)
+			return
+		}
 		result, rpcErr := s.callTool(r, runID, req.Params)
 		resp.Result, resp.Error = result, rpcErr
 	default:
@@ -284,7 +291,11 @@ func toolDescriptors() []map[string]any {
 				"Severities: blocker, major, minor, nit. `event` defaults to request_changes " +
 				"when any blocker or major finding is present and comment otherwise. " +
 				"Agents cannot approve — approval is reserved for humans. " +
-				"pr_number defaults to the pull request whose event started this run.",
+				"pr_number defaults to the pull request whose event started this run. " +
+				"Tag findings honestly: the severities you report are what continues the " +
+				"workflow, and GitHub may store a request_changes review as a plain comment " +
+				"when the reviewer and the author share an account — the result then says " +
+				"event=COMMENT with intended_event=REQUEST_CHANGES, and that is not a failure.",
 			"inputSchema": obj(map[string]any{
 				"pr_number": num,
 				"event": map[string]any{

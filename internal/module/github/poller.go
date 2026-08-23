@@ -49,6 +49,10 @@ const (
 	resReviewComments = "review_comments"
 	resIssueComments  = "issue_comments"
 	resCheckSuites    = "check_suites"
+	// resReviews has no poll_cursors row — reviews ride per-PR cursors in poll_pr_state
+	// (§7 table row 3). It exists so the reviews pass has a health identity of its own
+	// (pollhealth.go), the same as the four cursored resources.
+	resReviews = "reviews"
 )
 
 // Interval policy: workspace_settings.poll_interval_seconds, default 30, floor 10
@@ -59,9 +63,10 @@ const (
 	floorPollSeconds   = 10
 )
 
-// maxErrorBackoff bounds the exponential backoff a failing worker applies on top of the
-// configured interval (rate limits and API outages; the transport additionally marks the
-// module degraded, S14).
+// maxErrorBackoff bounds the exponential backoff applied on top of the configured interval
+// after a transient failure (rate limits and API outages; the transport additionally marks the
+// module degraded, S14). It applies per resource, and to a whole tick that could not even
+// begin — never to a worker whose resources are merely partly unreadable (LEXI-9).
 const maxErrorBackoff = 15 * time.Minute
 
 // errNoRepo tells a worker its project no longer has a connected repo; the worker exits.
@@ -77,6 +82,10 @@ type Poller struct {
 	creds func(ctx context.Context, rp domain.Repo) (ports.Creds, error)
 	now   func() time.Time
 
+	// after is the worker's sleep, seamed so a test can assert the cadence a resource
+	// failure leaves the worker on without waiting out real minutes.
+	after func(time.Duration) <-chan time.Time
+
 	mu      sync.Mutex
 	emit    ports.Emit
 	baseCtx context.Context
@@ -84,16 +93,29 @@ type Poller struct {
 	workers map[string]context.CancelFunc
 	started bool
 	wg      sync.WaitGroup
+
+	// mh composes this module's kernel state; rmu guards per-project resource health
+	// (pollhealth.go). Both are separate from mu, which guards the worker registry.
+	mh        *moduleHealth
+	rmu       sync.Mutex
+	resources map[string]map[string]*resourceState
 }
 
 // newPoller builds the poller around the module's forge. Store, creds and logger are wired in
 // Module.Init (or directly by tests).
 func newPoller(f *Forge) *Poller {
+	mh := newModuleHealth(nil)
+	if f != nil && f.mh != nil {
+		mh = f.mh
+	}
 	return &Poller{
-		forge:   f,
-		logger:  slog.Default(),
-		now:     time.Now,
-		workers: make(map[string]context.CancelFunc),
+		forge:     f,
+		logger:    slog.Default(),
+		now:       time.Now,
+		after:     time.After,
+		workers:   make(map[string]context.CancelFunc),
+		mh:        mh,
+		resources: make(map[string]map[string]*resourceState),
 	}
 }
 
@@ -162,17 +184,23 @@ func (p *Poller) Stop(ctx context.Context) error {
 // (module boot, and the repo.connected bus event).
 func (p *Poller) EnsureWorker(projectID string) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if !p.started {
+		p.mu.Unlock()
 		return // Start's repo listing will pick the project up
 	}
 	if _, ok := p.workers[projectID]; ok {
+		p.mu.Unlock()
+		// A running worker plus a repo.connected event is a RECONNECT — the fast path back
+		// for a user who has just fixed the token that got a resource disabled. Re-probe on
+		// the next tick instead of waiting out deniedRecheck.
+		p.forgetResources(projectID)
 		return
 	}
 	wctx, cancel := context.WithCancel(p.baseCtx)
 	p.workers[projectID] = cancel
 	p.wg.Add(1)
 	go p.runWorker(wctx, projectID)
+	p.mu.Unlock()
 	p.logger.Info("github.poll: worker started", slog.String("project", projectID))
 }
 
@@ -187,6 +215,7 @@ func (p *Poller) RemoveWorker(ctx context.Context, projectID string) {
 		cancel()
 		p.logger.Info("github.poll: worker stopped", slog.String("project", projectID))
 	}
+	p.forgetResources(projectID)
 	if p.store == nil {
 		return
 	}
@@ -224,8 +253,15 @@ func (p *Poller) interval(ctx context.Context) time.Duration {
 }
 
 // runWorker is one project's poll loop: tick, sleep the configured interval (re-read every
-// loop so a settings change applies without restart), exponential backoff on consecutive
-// failures, exit when the repo is disconnected or the context ends.
+// loop so a settings change applies without restart), exit when the repo is disconnected or
+// the context ends.
+//
+// The backoff here is for a tick that could not START — no repo row readable, credentials
+// unresolvable, the baseline pass failing. It is deliberately NOT reached by a resource that
+// merely cannot be polled: those back off individually inside tick (pollhealth.go), because a
+// worker that slows every resource down to the pace of its least readable one is the LEXI-9
+// bug — a token missing "Checks: read" put a 30-second poll on a 15-minute cadence and left
+// every trigger in the workspace quarter-hours late.
 func (p *Poller) runWorker(ctx context.Context, projectID string) {
 	defer p.wg.Done()
 	failures := 0
@@ -241,7 +277,7 @@ func (p *Poller) runWorker(ctx context.Context, projectID string) {
 			return
 		case err != nil:
 			failures++
-			p.logger.Warn("github.poll: tick failed", slog.String("project", projectID),
+			p.logger.Warn("github.poll: tick could not run", slog.String("project", projectID),
 				slog.Int("consecutive", failures), slog.String("error", err.Error()))
 		default:
 			failures = 0
@@ -249,23 +285,12 @@ func (p *Poller) runWorker(ctx context.Context, projectID string) {
 
 		wait := p.interval(ctx)
 		if failures > 0 {
-			backoff := wait << min(failures, 10)
-			if backoff > maxErrorBackoff {
-				backoff = maxErrorBackoff
-			}
-			wait = backoff
-			var rl *ports.RateLimitedError
-			if errors.As(err, &rl) {
-				// Sleeping past the reset beats hammering a dead budget.
-				if until := time.Until(rl.Reset); until > wait && until < maxErrorBackoff {
-					wait = until
-				}
-			}
+			wait = backoffFor(wait, failures, p.now(), err)
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(wait):
+		case <-p.after(wait):
 		}
 	}
 }
@@ -325,19 +350,57 @@ func (p *Poller) tick(ctx context.Context, projectID string) error {
 		return p.baseline(ctx, t)
 	}
 
-	if err := p.pollPulls(ctx, t, pulls); err != nil {
-		return err
+	return p.runPasses(ctx, t, pulls)
+}
+
+// runPasses is the five resource passes of one tick, run independently (LEXI-9).
+//
+// They were a chain of early returns, which made the tick as readable as its least readable
+// resource: one 403 and the other four never ran, their cursors never advanced, and the whole
+// worker backed off. Now each pass owns its own outcome. A pass that succeeds advances its
+// cursor and emits its events whatever the others did; a pass that fails is classified —
+// permanently refused, or merely transient — and marked accordingly, and only that pass pays.
+//
+// Order still matters and is unchanged: pulls fills tickState.touched and .prState, which
+// reviews and checks read. When pulls is the pass that failed those two see an empty touched
+// set and simply have nothing to do this tick, which is the correct degradation and not an
+// error of their own.
+//
+// The tick itself returns an error only for something that ends the WORKER: a cancelled
+// context. Everything else has been recorded against the resource it belongs to, so a tick in
+// which some passes worked is not a failed tick.
+func (p *Poller) runPasses(ctx context.Context, t *tickState, pulls domain.PollCursor) error {
+	base := p.interval(ctx)
+	passes := []struct {
+		res pollResource
+		run func() error
+	}{
+		{resourcePulls, func() error { return p.pollPulls(ctx, t, pulls) }},
+		{resourceReviews, func() error { return p.pollReviews(ctx, t) }},
+		{resourceReviewComments, func() error { return p.pollComments(ctx, t, resReviewComments) }},
+		{resourceIssueComments, func() error { return p.pollComments(ctx, t, resIssueComments) }},
+		{resourceCheckSuites, func() error { return p.pollChecks(ctx, t) }},
 	}
-	if err := p.pollReviews(ctx, t); err != nil {
-		return err
+	for _, pass := range passes {
+		if !p.resourceDue(t.projectID, pass.res.key, t.now) {
+			continue
+		}
+		err := pass.run()
+		switch {
+		case err == nil:
+			p.resourceOK(t.projectID, pass.res)
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return err
+		default:
+			var fe *ports.ForbiddenError
+			if errors.As(err, &fe) {
+				p.resourceDenied(t.projectID, pass.res, t.repo.Ref(), fe, t.now)
+			} else {
+				p.resourceTransient(t.projectID, pass.res, err, t.now, base)
+			}
+		}
 	}
-	if err := p.pollComments(ctx, t, resReviewComments); err != nil {
-		return err
-	}
-	if err := p.pollComments(ctx, t, resIssueComments); err != nil {
-		return err
-	}
-	return p.pollChecks(ctx, t)
+	return nil
 }
 
 // baseline is the cold-start pass (architecture §7): record every listed PR's state, seed all
@@ -538,18 +601,21 @@ func (p *Poller) emitPREvent(ctx context.Context, t *tickState, pr domain.PullRe
 	}
 
 	occurred := pr.UpdatedAt
-	login := ""
+	// Polling only knows who *authored* the PR. For a push, a ready-for-review or a close —
+	// activities DERIVED from state diffing — it cannot name the acting login, and it has no
+	// user type to read either: the zero forgeUser leaves both empty, which keeps the event
+	// `external` (see actorKindFor) rather than guessing the author. That is what stops an
+	// unattributed agent push from resetting the depth counter.
+	var who forgeUser
 	if act == "opened" {
-		// Polling only knows who *authored* the PR; for pushes, ready and close it cannot
-		// name the acting login — that field stays empty rather than guessing the author.
-		login = pr.AuthorLogin
+		who = forgeUser{login: pr.AuthorLogin, userType: pr.AuthorType}
 		if !pr.CreatedAt.IsZero() {
 			occurred = pr.CreatedAt
 		}
 	}
 	e := p.newEvent(ctx, t, kindPullRequest, act, pr,
 		dedupe(t.projectID, kindPullRequest, strconv.Itoa(pr.Number), act+":"+pr.HeadSHA),
-		occurred, att, ok, login)
+		occurred, att, ok, who)
 	prMap := p.prBody(pr, t)
 	if headMessage != "" {
 		prMap["head_commit_message"] = headMessage
@@ -557,7 +623,7 @@ func (p *Poller) emitPREvent(ctx context.Context, t *tickState, pr domain.PullRe
 	e.Payload = mustPayload(map[string]any{
 		"pr":    prMap,
 		"repo":  repoBody(t.repo),
-		"actor": actorBody(att, ok, login),
+		"actor": actorBody(att, ok, who),
 	})
 	return p.publish(ctx, e)
 }
@@ -586,9 +652,10 @@ func (p *Poller) pollReviews(ctx context.Context, t *tickState) error {
 				maxSeen = rev.SubmittedAt
 			}
 			att, ok := attributeBody(rev.Body, t.agents)
+			who := forgeUser{login: rev.AuthorLogin, userType: rev.AuthorType}
 			e := p.newEvent(ctx, t, kindReview, "submitted", pr,
 				dedupe(t.projectID, kindReview, strconv.FormatInt(rev.ID, 10), ""),
-				rev.SubmittedAt, att, ok, rev.AuthorLogin)
+				rev.SubmittedAt, att, ok, who)
 			e.Payload = mustPayload(map[string]any{
 				"review": map[string]any{
 					"id":     strconv.FormatInt(rev.ID, 10),
@@ -598,7 +665,7 @@ func (p *Poller) pollReviews(ctx context.Context, t *tickState) error {
 				},
 				"pr":    p.prBody(pr, t),
 				"repo":  repoBody(t.repo),
-				"actor": actorBody(att, ok, rev.AuthorLogin),
+				"actor": actorBody(att, ok, who),
 			})
 			if err := p.publish(ctx, e); err != nil {
 				return err
@@ -672,14 +739,15 @@ func (p *Poller) pollComments(ctx context.Context, t *tickState, resource string
 			}
 		}
 		att, ok := attributeBody(cm.Body, t.agents)
+		who := forgeUser{login: cm.AuthorLogin, userType: cm.AuthorType}
 		pr, hasPR := t.findPR(int64(cm.SubjectNumber))
 		e := p.newEvent(ctx, t, kind, "created", pr,
 			dedupe(t.projectID, kind, strconv.FormatInt(cm.ID, 10), ""),
-			cm.CreatedAt, att, ok, cm.AuthorLogin)
+			cm.CreatedAt, att, ok, who)
 		payload := map[string]any{
 			"comment": body,
 			"repo":    repoBody(t.repo),
-			"actor":   actorBody(att, ok, cm.AuthorLogin),
+			"actor":   actorBody(att, ok, who),
 		}
 		if hasPR {
 			payload["pr"] = p.prBody(pr, t)
@@ -754,6 +822,10 @@ func (p *Poller) pollChecks(ctx context.Context, t *tickState) error {
 				branch = pr.HeadRef
 			}
 			att, ok := attributeBranch(branch, t.template, t.agents)
+			// A check suite's "login" is the CI app's name, not a forge user: no user type,
+			// so an unattributed suite stays `external`. CI is a machine, and a machine's
+			// verdict must not reset a chain's depth counter.
+			who := forgeUser{login: s.App}
 			occurred := s.UpdatedAt
 			if occurred.IsZero() {
 				occurred = t.now
@@ -761,7 +833,7 @@ func (p *Poller) pollChecks(ctx context.Context, t *tickState) error {
 			e := p.newEvent(ctx, t, kindCheckSuite, "completed", pr,
 				dedupe(t.projectID, kindCheckSuite, strconv.FormatInt(s.ID, 10),
 					s.Status+":"+s.Conclusion),
-				occurred, att, ok, s.App)
+				occurred, att, ok, who)
 			if !hasPR {
 				e.SubjectNumber = &n
 				b := branch
@@ -777,7 +849,7 @@ func (p *Poller) pollChecks(ctx context.Context, t *tickState) error {
 					"url":        s.URL,
 				},
 				"repo":  repoBody(t.repo),
-				"actor": actorBody(att, ok, s.App),
+				"actor": actorBody(att, ok, who),
 			}
 			if hasPR {
 				payload["pr"] = p.prBody(pr, t)
@@ -797,9 +869,41 @@ func (p *Poller) pollChecks(ctx context.Context, t *tickState) error {
 
 // --------------------------------------------------------------------------- helpers -----
 
+// forgeUser is the API-reported acting identity behind one event: the login, and the forge's
+// own answer to "person or machine" (GitHub's `user.type`). Both are empty for an event the
+// poller DERIVES from state diffing — a push seen only as a head-sha change, a close, a
+// ready-for-review — where no endpoint names who acted.
+type forgeUser struct {
+	login    string
+	userType string
+}
+
+// actorKindFor is the actor_kind of an event whose actor did NOT attribute to one of our
+// agents (D-9 marker, commit identity, branch template).
+//
+// GitHub reports `user.type` as "User" or "Bot" on reviews, comments, issues and pull
+// requests, and that is the honest reading of it: a non-agent "User" is a person, so the
+// event is `human` and the loop guard's depth reset (architecture §9) fires for it. Anything
+// else — "Bot", an unrecognized type, or no reported type at all (a derived push) — stays
+// `external`.
+//
+// The default is deliberately not human. An unattributed agent push relabelled human would
+// reset the depth counter on the agent's own chain, which weakens the very guard the reset
+// exists to serve. `external` says what we actually know: someone who is not one of our
+// agents, and not demonstrably a person.
+//
+// What this does NOT claim is identity: a GitHub login still does not map to a workspace user
+// (D-9, S25), so a human forge event carries actor_login and no actor_id.
+func actorKindFor(who forgeUser) domain.ActorKind {
+	if who.userType == domain.UserTypeUser {
+		return domain.ActorHuman
+	}
+	return domain.ActorExternal
+}
+
 // newEvent fills the envelope every poll event shares. The payload is the caller's.
 func (p *Poller) newEvent(ctx context.Context, t *tickState, kind, act string, pr domain.PullRequest,
-	dedupeKey string, occurred time.Time, att attribution, attributed bool, login string,
+	dedupeKey string, occurred time.Time, att attribution, attributed bool, who forgeUser,
 ) domain.Event {
 	pid := t.projectID
 	e := domain.Event{
@@ -807,7 +911,7 @@ func (p *Poller) newEvent(ctx context.Context, t *tickState, kind, act string, p
 		Source:       pollSourceID,
 		Kind:         kind,
 		ActivityType: act,
-		ActorKind:    domain.ActorExternal,
+		ActorKind:    actorKindFor(who),
 		SubjectKind:  "pr",
 		DedupeKey:    dedupeKey,
 		OccurredAt:   domain.FormatTime(occurred),
@@ -820,8 +924,8 @@ func (p *Poller) newEvent(ctx context.Context, t *tickState, kind, act string, p
 			e.SubjectBranch = &b
 		}
 	}
-	if login != "" {
-		l := login
+	if who.login != "" {
+		l := who.login
 		e.ActorLogin = &l
 	}
 	if attributed && att.agent != nil {
@@ -910,9 +1014,16 @@ func repoBody(rp domain.Repo) map[string]any {
 	return map[string]any{"owner": rp.Owner, "name": rp.Name, "default_branch": branch}
 }
 
-// actorBody renders the contracts §4 `actor` sub-object.
-func actorBody(att attribution, attributed bool, login string) map[string]any {
-	out := map[string]any{"kind": string(domain.ActorExternal), "login": login, "agent": ""}
+// actorBody renders the contracts §4 `actor` sub-object. Its kind agrees with the event's
+// actor_kind column by construction — the `actor.is_human` / `actor.is_agent` operators read
+// THIS object, not the column (internal/service/triggers/conditions.go), so the two must not
+// be allowed to drift.
+func actorBody(att attribution, attributed bool, who forgeUser) map[string]any {
+	out := map[string]any{
+		"kind":  string(actorKindFor(who)),
+		"login": who.login,
+		"agent": "",
+	}
 	if attributed && att.agent != nil {
 		out["kind"] = string(domain.ActorAgent)
 		out["agent"] = att.agent.Name

@@ -440,6 +440,33 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+    patch:
+      operationId: updateRepoSettings
+      summary: >
+        Update the repo settings that are neither the connection nor the network stance:
+        setup_script and branch_template. An absent field is left unchanged. The setup script
+        runs in the workspace during provisioning on every run, after the clone and before the
+        agent starts; its output becomes a step in the run's provisioning checklist, a
+        non-zero exit fails the run with that output in the failure message, and an empty
+        script is skipped entirely. branch_template null reverts to inheriting the workspace
+        default.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateRepoSettingsRequest" }
+      responses:
+        "200":
+          description: The repo with its updated settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /projects/{key}/repo/token:
     post:
       operationId: rotateRepoToken
@@ -1103,7 +1130,10 @@ paths:
         Delegate the ticket to an agent (S22): records the agent as the ticket's delegate and
         enqueues a run through the kernel scheduler (D-14). A nil error means "queued", not
         "running" — admission control (§10.2) decides when it starts, and the run's
-        `hold_reason` says in words which limit is holding it.
+        `hold_reason` says in words which limit is holding it. Starting is stricter than
+        setting the field: a disabled agent is a 400 naming `agent_id`, even though the same
+        agent stays settable through PATCH so history and auto-start columns keep pointing
+        at it.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -2608,8 +2638,8 @@ components:
       description: A connected repository. The token never appears — only that one is stored.
       required:
         [provider, owner, name, default_branch, head_sha, head_message, connected_at,
-         last_synced_at, has_token, network_policy, network_allowlist,
-         workspace_network_policy]
+         last_synced_at, has_token, setup_script, branch_template, network_policy,
+         network_allowlist, workspace_network_policy]
       properties:
         provider: { type: string }
         owner: { type: string }
@@ -2620,6 +2650,14 @@ components:
         connected_at: { type: [string, "null"] }
         last_synced_at: { type: [string, "null"] }
         has_token: { type: boolean }
+        setup_script:
+          type: string
+          description: >
+            Shell run in the workspace during provisioning on every run, after the clone and
+            before the agent starts. Empty means no script — the step is skipped entirely.
+        branch_template:
+          type: [string, "null"]
+          description: The project's branch-template override. Null inherits the workspace default.
         network_policy:
           type: [string, "null"]
           enum: [none, allowlist, open, null]
@@ -2632,6 +2670,18 @@ components:
           type: string
           enum: [none, allowlist, open]
           description: The live workspace default, for the settings pane's inheritance line.
+    UpdateRepoSettingsRequest:
+      type: object
+      description: >
+        Both fields are optional; an absent field is left unchanged. setup_script null or ""
+        clears the script (there is nothing to inherit — a repo either has one or does not).
+        branch_template null reverts to inheriting the workspace default.
+      properties:
+        setup_script:
+          type: [string, "null"]
+          maxLength: 65536
+        branch_template:
+          type: [string, "null"]
     UpdateRepoNetworkRequest:
       type: object
       description: >
@@ -3989,8 +4039,9 @@ components:
     StreamEventType:
       type: string
       description: >
-        The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's
-        ticket.commented).
+        The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events, S12's
+        ticket.commented and the agent_review.submitted event the MCP server publishes when a
+        reviewer agent submits a review).
       enum:
         - run.state
         - run.activity
@@ -4026,6 +4077,7 @@ components:
         - wiki.created
         - wiki.updated
         - wiki.deleted
+        - agent_review.submitted
         - provision.step
         - module.degraded
     StreamFrame:

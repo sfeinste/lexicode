@@ -39,6 +39,18 @@ func (s *Service) Delegate(ctx context.Context, ticketID string, in DelegateInpu
 	if err != nil || len(ferr) > 0 {
 		return "", ferr, err
 	}
+	// resolveDelegate is the FIELD rule (same project, not archived): a since-disabled agent
+	// stays settable so history and auto-start columns keep pointing at it. Starting is a
+	// stricter question, and the scheduler answers it with an untyped error that would land
+	// as a generic 500 — so refuse it here, as the validation problem it is, with the same
+	// sentence the free-floating run endpoint uses. Silent no-ops are the bug this closes.
+	agent, err := s.st.Agents().ByID(ctx, *delegate)
+	if err != nil {
+		return "", nil, err
+	}
+	if !agent.Enabled {
+		return "", []httpx.FieldError{{Field: "agent_id", Message: "This agent is disabled."}}, nil
+	}
 
 	// Delegating from the picker also records the delegate on the ticket (D1's agent axis),
 	// exactly as the field editor would.

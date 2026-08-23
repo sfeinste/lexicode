@@ -86,14 +86,19 @@ func New(opts Options) *Module {
 	} else {
 		f.setLogger(slog.Default())
 	}
+	// Both the transport's rate-limit policy (S14) and the poller's denied-resource policy
+	// (LEXI-9) degrade this module, and they can be outstanding at the same time. They go
+	// through one composer so neither clears the other's reason on recovery.
+	f.mh = newModuleHealth(func(state kernel.ModuleState, reason string) { f.health(state, reason) })
 	f.transport.onExhausted = func(reset time.Time) {
 		f.logger.Warn("github: rate limit exhausted; module degraded",
 			slog.Time("reset", reset))
-		f.health(kernel.StateDegraded, degradedReason(reset))
+		f.mh.degrade(rateLimitKey, degradedReason(reset))
 	}
 	f.transport.onHealthy = func() {
-		f.logger.Info("github: rate limit recovered; module ready")
-		f.health(kernel.StateReady, "")
+		if f.mh.recover(rateLimitKey) {
+			f.logger.Info("github: rate limit recovered")
+		}
 	}
 	m := &Module{forge: f}
 	m.poller = newPoller(f)

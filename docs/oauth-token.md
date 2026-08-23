@@ -9,8 +9,9 @@ exactly one for the whole workspace.
 claude setup-token
 ```
 
-Copy the whole thing it prints — it starts with `sk-ant-` — and paste it into
-**Settings → Credentials → Claude Code OAuth token**. That is the entire setup.
+Copy the whole thing it prints — it starts with `sk-ant-` — and paste it into the avatar menu
+at the top right → **Workspace settings → Credentials → Claude Code OAuth token**. That is the
+entire setup.
 
 ## What that token is
 
@@ -21,8 +22,8 @@ asked to authenticate again, and no browser flow happens inside a container.
 
 ## Importing an existing login
 
-If you already use Claude Code on this machine and its login sits in a file, Settings →
-Credentials offers **Import from `~/.claude/.credentials.json`** — the button appears only when
+If you already use Claude Code on this machine and its login sits in a file, Workspace
+settings → Credentials offers **Import from `~/.claude/.credentials.json`** — the button appears only when
 that file is actually there. On macOS the CLI keeps its login in the system keychain instead,
 so there is nothing to import and `claude setup-token` is the path.
 
@@ -71,8 +72,8 @@ failed run, with the provider's own message on the run's activity stream.
 
 ## Rotating or removing it
 
-Settings → Credentials → paste a new one, or **Clear**. Runs already in flight keep the
-credential they started with; the next run picks up the new one.
+Workspace settings → Credentials → paste a new one, or **Clear**. Runs already in flight keep
+the credential they started with; the next run picks up the new one.
 
 ## What it costs
 

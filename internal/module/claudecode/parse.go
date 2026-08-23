@@ -12,7 +12,7 @@ import (
 
 // streamLine is the envelope of one NDJSON line on stdout.
 type streamLine struct {
-	Type      string `json:"type"`    // "system" | "assistant" | "user" | "result"
+	Type      string `json:"type"`    // "system" | "assistant" | "user" | "result" | "tool_progress"
 	Subtype   string `json:"subtype"` // system: "init"; result: "success" | "error_*"
 	SessionID string `json:"session_id"`
 
@@ -23,6 +23,17 @@ type streamLine struct {
 
 	// assistant / user wrapper.
 	Message *apiMessage `json:"message"`
+
+	// tool_progress fields (SDKToolProgressMessage). The CLI emits one of these every 30
+	// seconds while a tool call in the main conversation is still running, carrying the
+	// call's id, the tool's name and how long it has been going. For an ask_human that is
+	// parked on a human it is the only thing on the stream, which is why the adapter shows
+	// it rather than filing it as an unhandled message.
+	ToolUseID          string  `json:"tool_use_id"`
+	ToolName           string  `json:"tool_name"`
+	ParentToolUseID    *string `json:"parent_tool_use_id"`
+	ElapsedTimeSeconds float64 `json:"elapsed_time_seconds"`
+	Heartbeat          bool    `json:"heartbeat"`
 
 	// result fields.
 	IsError       bool            `json:"is_error"`

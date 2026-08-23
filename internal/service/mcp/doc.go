@@ -15,6 +15,12 @@
 // 200 no-op — the server is stateless per request, authenticated purely by the run token in
 // the path. Claude Code's client is happy with exactly this subset.
 //
+// One exception to "one JSON response": a tools/call that carries a `progressToken` in
+// `params._meta`, from a client whose Accept header offers text/event-stream, is answered as
+// an SSE stream instead — progress notifications while the call blocks, then the response
+// (progress.go). That is the transport's own provision for a long call, and without it a
+// blocked ask_human looks indistinguishable from a hung server to the client.
+//
 // # Reachability (the decision S19 deferred)
 //
 // The endpoint is mounted twice:
@@ -62,6 +68,16 @@
 // elicitation's channel bounded by the agent's wall-clock limit. Responding flips the run
 // back to running and returns the answer as the MCP tool's *result* (contracts §3.4), which
 // is what makes the agent resume exactly where it asked.
+//
+// How long "blocks" may be is not this server's decision alone, and for a while it was not
+// this server's decision at all: Claude Code abandons a call to an HTTP MCP server after 60
+// seconds unless MCP_TOOL_TIMEOUT raises it, and after an idle window with no response and no
+// progress notification. Every question therefore died at about a minute — the same moment
+// S24's escalation ticker was raising it with a human. Three things now hold it open, and
+// they agree by construction: S19 writes MCP_TOOL_TIMEOUT and CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT
+// into the container from the same wall-clock limit ceilingFor derives from, and this server
+// streams progress while the row is pending. The run's own wall clock, meanwhile, stops while
+// it is parked — see D-12 — so a slow answer no longer eats the budget for acting on it.
 //
 // If the orchestrator restarts while a call is blocked, the row survives but the HTTP
 // response can never be written (the connection died with the process). Claude Code sees a

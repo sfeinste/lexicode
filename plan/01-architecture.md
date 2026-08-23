@@ -96,7 +96,7 @@ the dashboard from loading.
 | `module/docker` | `Sandbox` | Docker SDK, embedded Dockerfile, egress proxy. |
 | `module/claudecode` | `AgentRuntime` | stream-json parse, steering, permission wiring. |
 | `module/actions` | `TriggerAction` ×5 | `run_agent`, `create_ticket`, `move_ticket`, `post_comment`, `notify`. |
-| `module/context` | `ContextProvider` ×4 | `project`, `wiki`, `repofiles`, `ticket`. |
+| `module/context` | `ContextProvider` ×5 | `project`, `wiki`, `event`, `ticket`, `repofiles`. |
 | `module/notify` | `Notifier` | in-app only in V1. |
 | `module/testkit` | `Sandbox`, `AgentRuntime`, `EventSource` | fakes, built under a `testkit` tag; the reason the engine is testable without Docker. |
 
@@ -420,14 +420,28 @@ The steering composer is **enabled during provisioning** and queues input, per t
 ### 10.5 Teardown, and the failure-artifact rule
 
 Interaction rule 5: **a failed run never leaves nothing behind.** On any terminal state, before the
-container is destroyed:
+container is destroyed, the orchestrator commits anything uncommitted and pushes the branch:
 
 ```
-git add -A && git commit -m "wip: <run summary> [lexicode run <id>]" || true
-git push origin <branch> || true
+git add -A && git commit --no-verify -m "wip: <run summary> [lexicode run <id>]"
+git push origin HEAD:refs/heads/<branch>
 ```
 
-The pushed branch is recorded as a run output and named in the failure message: *"Failed after 6
+Two amendments to the original shape, both recorded under D-9 in
+[00-decisions.md](00-decisions.md):
+
+- **The orchestrator runs this, for every outcome — not just failures.** The container holds no
+  repository credential (the clone step points `origin` at a tokenless URL as soon as the fetch is
+  done), so a completed run's branch also reaches the remote here, and the pull request is opened
+  from it. The credential is supplied in this one exec's environment.
+- **Neither command is `|| true`.** The old version swallowed both failures and then reported
+  *"Partial work pushed"* whatever happened. The step now reports which of three things occurred —
+  committed and pushed, committed but the push failed (with the error), or nothing to commit — and
+  the run's `partial_work` output row is written only in the first case, so the row and the message
+  cannot disagree. An exec that could not start at all (a container the agent killed from inside)
+  is recorded on the run as a level-1 warning rather than vanishing.
+
+A successful push is recorded as a run output and named in the failure message: *"Failed after 6
 steps. Partial work pushed to `dev/PAY-14-idempotency-keys`."* Then the container is removed and
 the workspace volume dropped.
 
@@ -474,6 +488,7 @@ subsequent run on the same ticket: *"A human took over and changed X."*
 |---|---|---|---|
 | `project` | 10 | Project-wide agent guidance from settings | `project guidance` |
 | `wiki` | 20 | `always` pages; `paths` pages whose globs match; `auto` pages by title/tag keyword match against the task | `always` / `matched path infra/deploy.ts` / `retrieved for "deployment"` |
+| `event` | 25 | The occurrence that caused a trigger-spawned run — what happened, to what subject, by which actor — rendered from the normalized payload (contracts §4) | `the pull_request opened event that started this run (pr #219)` |
 | `ticket` | 30 | Title, description, acceptance criteria, parent/sub-tickets | `ticket PAY-14` |
 | `repofiles` | 40 | Enumerates `AGENTS.md`, `CLAUDE.md`, `.cursor/rules/*` present in the checkout — **listed, not injected** (Claude Code reads them itself) | `repo file` |
 

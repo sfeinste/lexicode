@@ -10,8 +10,10 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -46,7 +48,10 @@ type Forge struct {
 	record   OutputRecorder
 	auditRec AuditRecorder
 	health   func(state kernel.ModuleState, reason string)
-	now      func() string
+	// mh composes the module's single kernel state out of every cause that can degrade it
+	// at once — the rate limit and each denied poll resource (health.go).
+	mh  *moduleHealth
+	now func() string
 }
 
 // setLogger wraps l in the token-redacting handler; every line this module emits goes through
@@ -84,9 +89,53 @@ func (f *Forge) client(c ports.Creds) (*gh.Client, error) {
 }
 
 // wrapErr adds context to an API error while keeping the typed errors (*ports.RateLimitedError
-// in particular) reachable through errors.Is / errors.As.
+// in particular) reachable through errors.Is / errors.As. It is also the module's one error
+// boundary, so it is where a permission refusal becomes typed: see denied.
 func wrapErr(action string, r domain.RepoRef, err error) error {
+	if d := denied(err); d != nil {
+		return fmt.Errorf("github: %s for %s: %w", action, r, d)
+	}
 	return fmt.Errorf("github: %s for %s: %w", action, r, err)
+}
+
+// denied classifies "the token cannot see this" the way the transport classifies "the budget
+// is spent" (story S14): by type, never by matching on GitHub's prose. A 403 without
+// X-RateLimit-Remaining: 0 has already passed the transport's rate-limit gate, so what is left
+// is a permission refusal — the exact shape a PAT missing a fine-grained permission returns.
+// A 404 belongs here too: GitHub answers 404 rather than 403 for resources a token may not
+// even know exist, and for a repository that is gone; both are permanent for a poller.
+//
+// Secondary rate limits are 403s that ARE transient, and go-github types them
+// (*gh.AbuseRateLimitError) — they are excluded here so that backing off, not disabling, stays
+// the response to them. nil means "not a permission refusal"; the caller keeps the original.
+func denied(err error) *ports.ForbiddenError {
+	var (
+		rl    *ports.RateLimitedError
+		abuse *gh.AbuseRateLimitError
+		prim  *gh.RateLimitError
+	)
+	if errors.As(err, &rl) || errors.As(err, &abuse) || errors.As(err, &prim) {
+		return nil
+	}
+	var er *gh.ErrorResponse
+	if !errors.As(err, &er) || er.Response == nil {
+		return nil
+	}
+	switch er.Response.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+	default:
+		return nil
+	}
+	resource := ""
+	if er.Response.Request != nil && er.Response.Request.URL != nil {
+		resource = er.Response.Request.URL.Path
+	}
+	return &ports.ForbiddenError{
+		Resource: resource,
+		Status:   er.Response.StatusCode,
+		Detail:   strings.TrimSpace(er.Message),
+		Err:      err,
+	}
 }
 
 // ------------------------------------------------------------------------------ Verify -----
@@ -266,7 +315,8 @@ func (f *Forge) ListReviewComments(ctx context.Context, c ports.Creds, r domain.
 		for _, cm := range comments {
 			// mapReviewComment (reviewthreads.go) carries the review, reply and diff-hunk
 			// fields too: the poller puts the review id on the event so a review's comment
-			// fragments can be reassembled into one whole (LEXI-10).
+			// fragments can be reassembled into one whole (LEXI-10). It also carries
+			// AuthorType, which is how a person is told from a bot.
 			out = append(out, mapReviewComment(cm, 0))
 		}
 		if resp.NextPage == 0 {
@@ -299,6 +349,7 @@ func (f *Forge) ListIssueComments(ctx context.Context, c ports.Creds, r domain.R
 				ID:            cm.GetID(),
 				SubjectNumber: trailingNumber(cm.GetIssueURL()),
 				AuthorLogin:   cm.GetUser().GetLogin(),
+				AuthorType:    cm.GetUser().GetType(),
 				Body:          cm.GetBody(),
 				URL:           cm.GetHTMLURL(),
 				CreatedAt:     cm.GetCreatedAt().Time,
@@ -369,6 +420,7 @@ func (f *Forge) ListOpenIssues(ctx context.Context, c ports.Creds, r domain.Repo
 				Title:       is.GetTitle(),
 				Body:        is.GetBody(),
 				AuthorLogin: is.GetUser().GetLogin(),
+				AuthorType:  is.GetUser().GetType(),
 				URL:         is.GetHTMLURL(),
 				CreatedAt:   is.GetCreatedAt().Time,
 				UpdatedAt:   is.GetUpdatedAt().Time,
@@ -518,6 +570,7 @@ func (f *Forge) CommentOnPullRequest(ctx context.Context, c ports.Creds, r domai
 		ID:            created.GetID(),
 		SubjectNumber: n,
 		AuthorLogin:   created.GetUser().GetLogin(),
+		AuthorType:    created.GetUser().GetType(),
 		Body:          created.GetBody(),
 		URL:           created.GetHTMLURL(),
 		CreatedAt:     created.GetCreatedAt().Time,
@@ -550,11 +603,22 @@ func (f *Forge) SubmitReview(ctx context.Context, c ports.Creds, r domain.RepoRe
 	if err != nil {
 		return domain.Review{}, err
 	}
-	created, _, err := cl.PullRequests.CreateReview(ctx, r.Owner, r.Name, n, &gh.PullRequestReviewRequest{
+	created, resp, err := cl.PullRequests.CreateReview(ctx, r.Owner, r.Name, n, &gh.PullRequestReviewRequest{
 		Body:  gh.Ptr(withMarker(rev.Body, a)),
 		Event: gh.Ptr(event),
 	})
 	if err != nil {
+		// 422 on a review is GitHub refusing the EVENT, not the request: the canonical case
+		// is REQUEST_CHANGES from the pull request's own author, which under D-9's single
+		// project PAT every agent reviewing another agent's work is. Nothing was written,
+		// and the caller can retry the same body as a COMMENT — so this one status is
+		// classified rather than wrapped, and the caller decides.
+		if resp != nil && resp.StatusCode == http.StatusUnprocessableEntity {
+			return domain.Review{}, &ports.ReviewEventRejectedError{
+				Event:  event,
+				Detail: reviewRejectionDetail(err),
+			}
+		}
 		return domain.Review{}, wrapErr(fmt.Sprintf("submit review on PR #%d", n), r, err)
 	}
 	review := mapReview(created, n)
@@ -562,6 +626,25 @@ func (f *Forge) SubmitReview(ctx context.Context, c ports.Creds, r domain.RepoRe
 		strconv.FormatInt(review.ID, 10), review.URL,
 		fmt.Sprintf("submitted a %s review on PR #%d", event, n))
 	return review, nil
+}
+
+// reviewRejectionDetail pulls GitHub's own words out of a 422 so the run output says why the
+// event was refused rather than just that it was.
+func reviewRejectionDetail(err error) string {
+	var er *gh.ErrorResponse
+	if !errors.As(err, &er) {
+		return ""
+	}
+	parts := make([]string, 0, len(er.Errors)+1)
+	if msg := strings.TrimSpace(er.Message); msg != "" {
+		parts = append(parts, msg)
+	}
+	for _, e := range er.Errors {
+		if m := strings.TrimSpace(e.Message); m != "" {
+			parts = append(parts, m)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // CloneURL implements ports.ForgeProvider: the x-access-token form the container clones with.
@@ -665,6 +748,7 @@ func mapPullRequest(pr *gh.PullRequest) domain.PullRequest {
 		Draft:        pr.GetDraft(),
 		Merged:       pr.GetMerged() || pr.MergedAt != nil,
 		AuthorLogin:  pr.GetUser().GetLogin(),
+		AuthorType:   pr.GetUser().GetType(),
 		HeadRef:      pr.GetHead().GetRef(),
 		HeadSHA:      pr.GetHead().GetSHA(),
 		BaseRef:      pr.GetBase().GetRef(),
@@ -684,6 +768,7 @@ func mapReview(rev *gh.PullRequestReview, prNumber int) domain.Review {
 		ID:          rev.GetID(),
 		PRNumber:    prNumber,
 		AuthorLogin: rev.GetUser().GetLogin(),
+		AuthorType:  rev.GetUser().GetType(),
 		State:       rev.GetState(),
 		Body:        rev.GetBody(),
 		URL:         rev.GetHTMLURL(),

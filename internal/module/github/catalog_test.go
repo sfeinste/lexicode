@@ -6,7 +6,10 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"github.com/spruce/lexicode/internal/kernel/ports"
 )
 
 // -update rewrites the golden catalog snapshot. The snapshot is the compatibility surface the
@@ -42,8 +45,8 @@ func TestCatalogSnapshot(t *testing.T) {
 // on, independent of the snapshot bytes.
 func TestCatalogShape(t *testing.T) {
 	c := catalog()
-	if len(c.Events) != 5 {
-		t.Fatalf("catalog has %d event kinds, want 5", len(c.Events))
+	if len(c.Events) != 6 {
+		t.Fatalf("catalog has %d event kinds, want 6", len(c.Events))
 	}
 	byKind := map[string][]string{}
 	for _, d := range c.Events {
@@ -60,6 +63,7 @@ func TestCatalogShape(t *testing.T) {
 	want := map[string][]string{
 		"pull_request":                {"opened", "synchronize", "ready_for_review", "closed"},
 		"pull_request_review":         {"submitted"},
+		"agent_review":                {"submitted"},
 		"pull_request_review_comment": {"created"},
 		"issue_comment":               {"created"},
 		"check_suite":                 {"completed"},
@@ -76,5 +80,66 @@ func TestCatalogShape(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// TestAgentReviewFieldsAreOfferedToTheEditor pins the IF-row menu for the agent_review kind.
+// The trigger editor is generated from this catalog and nothing else: a field that is not
+// here cannot be selected in a dropdown, whatever the event's payload actually carries. The
+// severity fields exist so a "changes requested" rule can key on what the reviewer found
+// rather than on the state GitHub stored, so their paths, their operator families and — for
+// the enums — their values are the contract.
+func TestAgentReviewFieldsAreOfferedToTheEditor(t *testing.T) {
+	var desc *ports.EventDescriptor
+	for i, d := range catalog().Events {
+		if d.Kind == kindAgentReview {
+			desc = &catalog().Events[i]
+		}
+	}
+	if desc == nil {
+		t.Fatal("the catalog offers no agent_review event kind")
+	}
+
+	byPath := map[string]ports.PayloadField{}
+	for _, f := range desc.Fields {
+		byPath[f.Path] = f
+	}
+	want := []ports.PayloadField{
+		{Path: "review.id", Type: "text"},
+		{Path: "review.author", Type: "text"},
+		{Path: "review.body", Type: "text"},
+		{Path: "review.findings_count", Type: "number"},
+		{Path: "review.severity_counts.blocker", Type: "number"},
+		{Path: "review.severity_counts.major", Type: "number"},
+		{Path: "review.severity_counts.minor", Type: "number"},
+		{Path: "review.severity_counts.nit", Type: "number"},
+		{Path: "review.state", Type: "enum", Enum: []string{"changes_requested", "commented"}},
+		{Path: "review.intended_state", Type: "enum", Enum: []string{"changes_requested", "commented"}},
+		{Path: "review.max_severity", Type: "enum",
+			Enum: []string{"blocker", "major", "minor", "nit", "none"}},
+		// The pull request the review is on: a rule addresses it exactly as it would on a
+		// poller event, and the run the rule starts checks pr.branch out.
+		{Path: "pr.number", Type: "number"},
+		{Path: "pr.branch", Type: "text"},
+		{Path: "actor.agent", Type: "text"},
+	}
+	for _, w := range want {
+		got, ok := byPath[w.Path]
+		if !ok {
+			t.Errorf("%s is not offered to the editor", w.Path)
+			continue
+		}
+		if got.Type != w.Type {
+			t.Errorf("%s type = %q, want %q", w.Path, got.Type, w.Type)
+		}
+		if len(w.Enum) > 0 && !slices.Equal(got.Enum, w.Enum) {
+			t.Errorf("%s enum = %v, want %v", w.Path, got.Enum, w.Enum)
+		}
+	}
+
+	// An agent cannot approve (brief D6), so "approved" must not be selectable here — unlike
+	// on pull_request_review, where a human's approval is a real event.
+	if slices.Contains(byPath["review.state"].Enum, "approved") {
+		t.Error("review.state offers `approved` on an event only an agent can produce (brief D6)")
 	}
 }

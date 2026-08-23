@@ -457,6 +457,48 @@
 }
 
 /* Assignee (human) vs delegate (agent): visibly distinct rows, never one polymorphic field. */
+/* The Run button block (§5.3's "Run button on the ticket"). It sits above the delegate row
+   and is styled as an action, not a field, so the two never read as duplicates. */
+.runRow {
+  border-left: 2px solid var(--running);
+  padding-left: 8px;
+}
+
+.runBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.runButton {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: #fff;
+  background: var(--running);
+  border: 1px solid var(--running);
+  border-radius: 5px;
+  transition: opacity var(--ease-state);
+}
+
+.runButton:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.runButton:disabled {
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+.runHint,
+.fieldHint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
 .personRow {
   border-left: 2px solid var(--accent);
   padding-left: 8px;

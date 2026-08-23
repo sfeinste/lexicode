@@ -66,8 +66,8 @@ lexicode doctor — 1.0.0
                          fix: nothing to do — the first run builds it from the embedded
                               Dockerfile (a few minutes)
   warn  Claude token     no database yet at /Users/you/.lexicode/lexicode.db
-                         fix: run `lexicode serve` once; then paste `claude setup-token`
-                              output into Settings → Credentials
+                         fix: run `lexicode serve` once; then paste `claude setup-token` output into
+                              the avatar menu → Workspace settings → Credentials
 ```
 
 `doctor` exits non-zero if any check **fails**; warnings are things that resolve themselves.

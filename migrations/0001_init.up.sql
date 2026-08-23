@@ -510,7 +510,7 @@ CREATE TABLE run_context_items (               -- the Context panel; also the ag
   id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL REFERENCES runs(id),
   provider TEXT NOT NULL,                      -- ContextProvider ID
-  source_kind TEXT NOT NULL,                   -- 'wiki'|'repo_file'|'project'|'ticket'
+  source_kind TEXT NOT NULL,                   -- 'wiki'|'repo_file'|'project'|'ticket'|'event'
   source_ref TEXT NOT NULL,                    -- slug or path
   title TEXT NOT NULL,
   reason TEXT NOT NULL,                        -- 'always' | 'matched path infra/**' | 'repo file'

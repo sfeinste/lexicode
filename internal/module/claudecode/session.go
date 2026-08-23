@@ -24,6 +24,15 @@ var ErrRespondUnrouted = errors.New(
 // ErrSessionEnded is returned by Steer once the agent process has exited.
 var ErrSessionEnded = errors.New("claudecode: session has ended")
 
+// ErrStdinClosed is returned by Steer in the window between the agent's last turn and its
+// exit: the final result arrived with nothing queued, so the adapter closed stdin and the CLI
+// is on its way out. Nothing can reach the agent any more, and saying so is the honest
+// answer — the caller keeps the message queued rather than believing it was delivered. It
+// wraps ErrSessionEnded so callers that only care "can I still steer this run?" need one
+// errors.Is.
+var ErrStdinClosed = fmt.Errorf(
+	"%w: the agent's final result arrived and its input stream is closed", ErrSessionEnded)
+
 // RespondFunc routes an elicitation answer to whatever is holding the blocking MCP call.
 type RespondFunc func(ctx context.Context, runID, elicitationID string, r ports.Response) error
 
@@ -60,13 +69,14 @@ type AttachOptions struct {
 // tool_result. queued_ms is not derivable from the stream and stays null.
 func Attach(spec ports.RunSpec, st ports.Streams, sink ports.RunSink, opts AttachOptions) ports.Handle {
 	s := &session{
-		spec:     spec,
-		st:       st,
-		sink:     sink,
-		opts:     opts,
-		inFlight: map[string]*action{},
-		lastDone: map[string]finished{},
-		done:     make(chan struct{}),
+		spec:        spec,
+		st:          st,
+		sink:        sink,
+		opts:        opts,
+		inFlight:    map[string]*action{},
+		lastDone:    map[string]finished{},
+		progressSeq: map[string]int64{},
+		done:        make(chan struct{}),
 	}
 	if s.opts.Grace <= 0 {
 		s.opts.Grace = defaultGrace
@@ -120,14 +130,16 @@ type session struct {
 	seq         int64
 	inFlight    map[string]*action
 	lastDone    map[string]finished
-	queue       []string // steering messages awaiting a gap between tool calls
+	progressSeq map[string]int64 // tool_use_id → the seq of its tool_progress row
+	queue       []string         // steering messages awaiting a gap between tool calls
 	stopped     bool
 	stopReason  string
 	ended       bool
 	lastEventAt time.Time
 	lastUsageID string            // message id whose usage was already counted
 	usageTotal  domain.UsageDelta // everything emitted through sink.Usage so far
-	resultLine  *streamLine       // the final "result" message, if one arrived
+	resultLine  *streamLine       // the most recent "result" message, if one arrived
+	stdinClosed bool              // stdin has been closed; nothing more can reach the agent
 
 	done    chan struct{}
 	result  ports.Result
@@ -203,6 +215,8 @@ func (s *session) handleLine(raw []byte) {
 		s.handleUserLocked(&line, now)
 	case "result":
 		s.handleResultLocked(&line, now)
+	case "tool_progress":
+		s.handleToolProgressLocked(&line, now)
 	default:
 		s.emitLocked(domain.Activity{
 			Type:    domain.ActivitySystem,
@@ -247,6 +261,63 @@ func (s *session) handleSystemLocked(line *streamLine, raw []byte, now time.Time
 		Title:   truncateLine("system: " + line.Subtype),
 		Payload: mustJSON(map[string]any{"line": cappedString(raw)}),
 	}, now)
+}
+
+// handleToolProgressLocked renders a tool_progress heartbeat. The CLI emits one every 30
+// seconds while a tool call is still outstanding; for a parked ask_human they are the only
+// thing on the stream between the question and the answer, and filing them as "unhandled
+// message" is how a run waiting on a human came to look like a run that had gone quiet.
+//
+// One row per call, re-emitted under its own Seq as the heartbeats arrive, so the transcript
+// gains a line that counts up rather than a line per thirty seconds. Level 2: the wait is
+// already a level-0 elicitation row and the run header's own state; this is the verbose-mode
+// evidence that the call is alive.
+func (s *session) handleToolProgressLocked(line *streamLine, now time.Time) {
+	tool := line.ToolName
+	if act, ok := s.inFlight[line.ToolUseID]; ok && tool == "" {
+		tool = act.tool
+	}
+	if tool == "" {
+		tool = "a tool"
+	}
+	elapsed := time.Duration(line.ElapsedTimeSeconds * float64(time.Second)).Round(time.Second)
+
+	a := domain.Activity{
+		Type:     domain.ActivitySystem,
+		Level:    2,
+		ToolName: line.ToolName,
+		GroupKey: "tool_progress:" + line.ToolUseID,
+		Title:    truncateLine(progressTitle(tool, elapsed)),
+		Payload: mustJSON(map[string]any{
+			"tool_use_id":        line.ToolUseID,
+			"tool_name":          line.ToolName,
+			"elapsed_s":          line.ElapsedTimeSeconds,
+			"heartbeat":          line.Heartbeat,
+			"parent_tool_use_id": line.ParentToolUseID,
+		}),
+	}
+	if seq, ok := s.progressSeq[line.ToolUseID]; ok {
+		a.Seq = seq
+		s.emitAtLocked(a, now)
+		return
+	}
+	s.progressSeq[line.ToolUseID] = s.emitLocked(a, now)
+}
+
+// progressTitle words the heartbeat. The two Lexicode tools that park a run are named for
+// what is actually happening — a human has not answered yet — because "still running" reads
+// like a hung tool and this is the opposite of one.
+func progressTitle(tool string, elapsed time.Duration) string {
+	switch tool {
+	case "mcp__lexicode__ask_human":
+		return fmt.Sprintf("waiting on you to answer — %s elapsed", elapsed)
+	case "mcp__lexicode__request_approval":
+		return fmt.Sprintf("waiting on you to approve — %s elapsed", elapsed)
+	}
+	if server, name, ok := splitMCPTool(tool); ok {
+		tool = server + ": " + name
+	}
+	return fmt.Sprintf("%s still running — %s elapsed", tool, elapsed)
 }
 
 func (s *session) handleAssistantLocked(line *streamLine, now time.Time) {
@@ -363,6 +434,7 @@ func (s *session) handleUserLocked(line *streamLine, now time.Time) {
 			continue
 		}
 		delete(s.inFlight, block.ToolUseID)
+		delete(s.progressSeq, block.ToolUseID)
 
 		mergeResult(act.tool, act.payload, block)
 		toolMS := now.Sub(act.started).Milliseconds()
@@ -442,15 +514,58 @@ func (s *session) handleResultLocked(line *streamLine, now time.Time) {
 			}),
 			CostCents: delta.CostCents,
 		}, now)
+	} else {
+		s.emitLocked(domain.Activity{
+			Type:      domain.ActivityResponse,
+			Level:     0,
+			Title:     truncateLine(line.Result),
+			Payload:   mustJSON(map[string]any{"text": line.Result}),
+			CostCents: delta.CostCents,
+		}, now)
+	}
+	s.turnEndedLocked()
+}
+
+// turnEndedLocked applies what a `result` actually means to the session's lifetime.
+//
+// Under `--input-format stream-json` (contracts §3.1) the CLI does not exit when it emits a
+// result: it flushes the turn and blocks reading stdin for the next user message. A result is
+// therefore the end of a *turn*, and the end of the session only when nobody has anything
+// left to say. Two cases:
+//
+//   - Steering is still queued. The agent has more to do, so deliver it here and let the
+//     session run on. A turn boundary is the widest possible gap "between tool calls", which
+//     is exactly the seam contracts §3.4 promises delivery on.
+//   - Nothing is queued. Close stdin. The CLI exits, stdout reaches EOF, the pumps return and
+//     finish() publishes the result — which is what runs the scheduler's terminal path: the
+//     push, the pull request, the ticket move. Without this close nothing ever ends the
+//     process: a run that had finished its work sat in `running` until its wall clock fired.
+//
+// mu held.
+func (s *session) turnEndedLocked() {
+	if len(s.queue) > 0 {
+		s.flushQueueLocked()
+		if len(s.queue) == 0 {
+			return // the agent has a new instruction; the session continues
+		}
+		// stdin refused the write, so there is nothing to continue with. Fall through and
+		// close; finish() reports what could not be delivered.
+	}
+	s.closeStdinLocked()
+}
+
+// closeStdinLocked closes the agent's input stream exactly once. Both the last turn and Stop
+// come through here, so the two paths cannot double-close (a docker exec's stdin is a
+// half-closed hijacked connection; closing it twice is an error) and cannot race — the flag
+// and the close are both under mu. mu held.
+func (s *session) closeStdinLocked() {
+	if s.stdinClosed {
 		return
 	}
-	s.emitLocked(domain.Activity{
-		Type:      domain.ActivityResponse,
-		Level:     0,
-		Title:     truncateLine(line.Result),
-		Payload:   mustJSON(map[string]any{"text": line.Result}),
-		CostCents: delta.CostCents,
-	}, now)
+	s.stdinClosed = true
+	if s.st.Stdin != nil {
+		_ = s.st.Stdin.Close()
+	}
 }
 
 // emitLocked assigns the next adapter sequence number and sends the activity. mu held.
@@ -527,6 +642,12 @@ func (s *session) Steer(_ context.Context, msg string) error {
 	if s.ended {
 		return ErrSessionEnded
 	}
+	if s.stdinClosed {
+		// The agent's last turn ended and its input stream is gone. Queueing here would be a
+		// lie — nothing drains the queue after this point — so refuse and let the caller
+		// keep the message (see ErrStdinClosed).
+		return ErrStdinClosed
+	}
 	if len(s.inFlight) > 0 {
 		s.queue = append(s.queue, msg)
 		return nil
@@ -551,16 +672,13 @@ func (s *session) Stop(ctx context.Context, reason string) error {
 		s.stopped = true
 		s.stopReason = reason
 	}
-	stdin := s.st.Stdin
+	// Idempotent, and shared with the last turn's close: whichever gets there first wins and
+	// the other is a no-op.
+	s.closeStdinLocked()
 	s.mu.Unlock()
 
-	if !already {
-		if stdin != nil {
-			_ = stdin.Close()
-		}
-		if s.opts.Kill != nil {
-			_ = s.opts.Kill(ctx, "TERM")
-		}
+	if !already && s.opts.Kill != nil {
+		_ = s.opts.Kill(ctx, "TERM")
 	}
 
 	select {
@@ -609,6 +727,9 @@ func (s *session) flushQueueLocked() {
 func (s *session) writeUserLocked(text string) error {
 	if s.st.Stdin == nil {
 		return errors.New("claudecode: no stdin attached")
+	}
+	if s.stdinClosed {
+		return ErrStdinClosed
 	}
 	_, err := s.st.Stdin.Write(userMessage(text))
 	return err

@@ -5,8 +5,9 @@
  *
  * Mutations are optimistic (drag must feel instant): onMutate rewrites the cached ticket
  * list, onError restores the snapshot, onSettled refetches so the server's canonical
- * ordering wins. Drag never starts a run (interaction rule 2) — these call the move/patch
- * endpoints and nothing else.
+ * ordering wins. Drag never starts a run (interaction rule 2) — the drag mutations call the
+ * move/patch endpoints and nothing else. Starting a run is a separate, deliberate mutation
+ * (useDelegateTicket, the `D` picker) that no drag path reaches.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -21,6 +22,7 @@ import {
   type TicketListResponse,
   type UpdateTicketRequest,
 } from "../../../lib/api/client";
+import { runKeys } from "../../../lib/api/runQueries";
 
 export const boardKeys = {
   all: (projectKey: string) => ["board", projectKey] as const,
@@ -152,6 +154,31 @@ function applyPatch(t: Ticket, body: UpdateTicketRequest): Ticket {
   if (body.assignee_id !== undefined) next.assignee_id = body.assignee_id;
   if (body.delegate_agent_id !== undefined) next.delegate_agent_id = body.delegate_agent_id;
   return next;
+}
+
+/**
+ * `D` — the START action (UI spec §5.3). NOT a PATCH: the delegate endpoint records the
+ * agent on the ticket AND enqueues a run through the scheduler, which is the whole reason
+ * the spec lists `D` alongside the Run button and triggers as one of the three ways a run
+ * begins. Clearing the delegate is not this mutation — clearing a field starts nothing.
+ *
+ * Optimistic on the delegate field only; the run itself is the server's answer (a run id,
+ * queued), so the runs list is invalidated and the caller renders the run's real state.
+ */
+export function useDelegateTicket(projectKey: string) {
+  const opt = useOptimisticTickets(projectKey);
+  return useMutation({
+    mutationFn: ({ id, agentId }: { id: string; agentId: string }) =>
+      ticketsApi.delegate(id, { agent_id: agentId }),
+    onMutate: ({ id, agentId }) =>
+      opt.begin((t) => (t.id === id ? { ...t, delegate_agent_id: agentId } : t)),
+    onError: (_err, _vars, snap) => opt.rollback(snap),
+    onSettled: () => {
+      opt.settle();
+      void opt.qc.invalidateQueries({ queryKey: boardKeys.needsYou(projectKey) });
+      void opt.qc.invalidateQueries({ queryKey: runKeys.list(projectKey) });
+    },
+  });
 }
 
 /** Label attach/detach (drag between label groups, the L picker). */

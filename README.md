@@ -37,8 +37,9 @@ lexicode doctor
 lexicode serve                 # http://127.0.0.1:7717
 ```
 
-Create the owner account on the first screen, paste a `claude setup-token` into
-Settings → Credentials, connect a repository, write a ticket, press **D**.
+Create the owner account on the first screen, then open the avatar menu at the top right →
+**Workspace settings → Credentials** and paste a `claude setup-token`. Connect a repository,
+write a ticket, press **D**.
 
 Just want to look around?
 
@@ -60,9 +61,14 @@ seeds an empty database.
 - **Agents** with a directive (guidance), permissions and a network policy (enforcement, checked
   in the adapter, never in a prompt). Dragging a card never starts a run; starting one is always
   an explicit act.
-- **Runs in real containers**: read-only rootfs, non-root, per-run credentials, a provisioning
-  checklist instead of a spinner, a live activity stream, and steer / stop / take-over at any
-  point. A failed run still leaves an artifact.
+- **Runs in real containers**: one per run, destroyed with it, with per-run credentials, a
+  provisioning checklist instead of a spinner, a live activity stream, and steer / stop /
+  take-over at any point. A failed run still leaves an artifact — and says honestly whether the
+  push landed. The container never holds your repository token: the agent commits, Lexicode
+  pushes and opens the pull request. The POC ships the container otherwise unrestricted —
+  writable rootfs, root, `open` network by default — so a run can install the toolchain it
+  needs; [docs/docker.md](docs/docker.md) says what that gives up and how to put the hardening
+  back.
 - **Triggers** with a generated editor, a backtest that replays against real history before you
   enable anything, and eight named outcomes per firing — including the ones where nothing
   happened.
@@ -100,8 +106,9 @@ minutes, which an API-call timer cannot answer. The end-to-end 42 seconds is the
 most content in it: it is a real chain of six runs in six containers, gated by a real poller.
 
 The agent in the acceptance run is a scripted stand-in, not a language model. It does real work
-through real seams — it clones, commits and pushes over git, calls the real MCP server, submits
-reviews through the real forge adapter — but it does not think, so run durations here are floor
+through real seams — it clones and commits over real git (the orchestrator does the pushing),
+calls the real MCP server, submits reviews through the real forge adapter — but it does not
+think, so run durations here are floor
 values for the orchestration, not estimates of a real agent's work.
 
 ---
@@ -163,3 +170,12 @@ scripts/s39-acceptance.sh   # the brief §3 chain, all eight steps, with the tim
 ```
 
 Both need Docker and a few minutes. Shared fixture code is in [`e2e/harness`](e2e/harness).
+
+`make check` also runs on every pull request and on pushes to `main`, on Linux and macOS
+([`.github/workflows/check.yml`](.github/workflows/check.yml)). Its `all checks passed` job is the
+single status check merging is gated on. The gate itself is repository state rather than a file
+GitHub reads from the branch, so it is committed as a ruleset and applied with:
+
+```sh
+scripts/protect-main.sh     # applies .github/rulesets/main.json (needs gh, and admin on the repo)
+```

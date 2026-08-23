@@ -409,7 +409,8 @@ the permission checkboxes and the directive are unmistakably different controls 
   share one build (singleflight).
 - Container create/start with labels `lexicode.run`, `lexicode.instance`, `lexicode.project`;
   resource limits (cpu, memory, pids); `--init`; read-only root with writable `/workspace` and
-  `/tmp`.
+  `/tmp`. **Superseded post-S39** — the POC ships a writable rootfs and runs as root; the
+  resource limits stay. See the D-7 amendment in [00-decisions.md](00-decisions.md).
 - `Exec` returning attached stdin/stdout/stderr and a `Wait`; `ReadFile`; `Destroy` (remove
   container + anonymous volume).
 - `Reattach(InstanceRef)` for crash recovery, reading the container's log stream from an offset.

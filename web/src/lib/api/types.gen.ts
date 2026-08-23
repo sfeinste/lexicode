@@ -297,7 +297,8 @@ export interface paths {
         delete: operations["disconnectRepo"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update the repo settings that are neither the connection nor the network stance: setup_script and branch_template. An absent field is left unchanged. The setup script runs in the workspace during provisioning on every run, after the clone and before the agent starts; its output becomes a step in the run's provisioning checklist, a non-zero exit fails the run with that output in the failure message, and an empty script is skipped entirely. branch_template null reverts to inheriting the workspace default. */
+        patch: operations["updateRepoSettings"];
         trace?: never;
     };
     "/projects/{key}/repo/token": {
@@ -659,7 +660,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Delegate the ticket to an agent (S22): records the agent as the ticket's delegate and enqueues a run through the kernel scheduler (D-14). A nil error means "queued", not "running" — admission control (§10.2) decides when it starts, and the run's `hold_reason` says in words which limit is holding it. */
+        /** Delegate the ticket to an agent (S22): records the agent as the ticket's delegate and enqueues a run through the kernel scheduler (D-14). A nil error means "queued", not "running" — admission control (§10.2) decides when it starts, and the run's `hold_reason` says in words which limit is holding it. Starting is stricter than setting the field: a disabled agent is a 400 naming `agent_id`, even though the same agent stays settable through PATCH so history and auto-start columns keep pointing at it. */
         post: operations["delegateTicket"];
         delete?: never;
         options?: never;
@@ -1679,6 +1680,10 @@ export interface components {
             connected_at: string | null;
             last_synced_at: string | null;
             has_token: boolean;
+            /** @description Shell run in the workspace during provisioning on every run, after the clone and before the agent starts. Empty means no script — the step is skipped entirely. */
+            setup_script: string;
+            /** @description The project's branch-template override. Null inherits the workspace default. */
+            branch_template: string | null;
             /**
              * @description The project's network policy override (S18, D-10). Null inherits the workspace default.
              * @enum {string|null}
@@ -1691,6 +1696,11 @@ export interface components {
              * @enum {string}
              */
             workspace_network_policy: "none" | "allowlist" | "open";
+        };
+        /** @description Both fields are optional; an absent field is left unchanged. setup_script null or "" clears the script (there is nothing to inherit — a repo either has one or does not). branch_template null reverts to inheriting the workspace default. */
+        UpdateRepoSettingsRequest: {
+            setup_script?: string | null;
+            branch_template?: string | null;
         };
         /** @description Both fields are optional; an absent field is left unchanged. network_policy null reverts to inheriting the workspace default. Allowlist entries are bare domains, optionally with a `*.` wildcard prefix — never URLs. */
         UpdateRepoNetworkRequest: {
@@ -2623,10 +2633,10 @@ export interface components {
             notification: components["schemas"]["Notification"];
         };
         /**
-         * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events and S12's ticket.commented).
+         * @description The SSE `event:` names (contracts §5.1, plus the S10 ticket/label events, S12's ticket.commented and the agent_review.submitted event the MCP server publishes when a reviewer agent submits a review).
          * @enum {string}
          */
-        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "triage.accepted" | "triage.duplicate" | "triage.declined" | "triage.snoozed" | "triage.woken" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "wiki.created" | "wiki.updated" | "wiki.deleted" | "provision.step" | "module.degraded";
+        StreamEventType: "run.state" | "run.activity" | "run.step" | "run.usage" | "run.elicitation" | "run.message" | "ticket.created" | "ticket.updated" | "ticket.commented" | "ticket.moved" | "ticket.archived" | "ticket.unarchived" | "agent.created" | "agent.updated" | "agent.archived" | "label.created" | "label.updated" | "label.deleted" | "board.updated" | "triage.created" | "triage.accepted" | "triage.duplicate" | "triage.declined" | "triage.snoozed" | "triage.woken" | "trigger.fired" | "trigger.created" | "trigger.updated" | "trigger.deleted" | "notification.updated" | "wiki.proposed" | "wiki.created" | "wiki.updated" | "wiki.deleted" | "agent_review.submitted" | "provision.step" | "module.degraded";
         /** @description The `data:` payload of every SSE frame. */
         StreamFrame: {
             topic: string;
@@ -3455,6 +3465,36 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    updateRepoSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRepoSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description The repo with its updated settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repo"];
+                };
+            };
+            400: components["responses"]["Problem"];
             401: components["responses"]["Problem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];

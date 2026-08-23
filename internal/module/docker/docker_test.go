@@ -118,6 +118,13 @@ func execOutput(t *testing.T, inst ports.Instance, argv ...string) (int, string)
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	return execOutputCtx(ctx, t, inst, argv...)
+}
+
+// execOutputCtx is execOutput with the caller's deadline — an apt or npm install needs longer
+// than the one-minute default.
+func execOutputCtx(ctx context.Context, t *testing.T, inst ports.Instance, argv ...string) (int, string) {
+	t.Helper()
 	st, err := inst.Exec(ctx, argv, ports.ExecOpts{})
 	if err != nil {
 		t.Fatalf("Exec %v: %v", argv, err)
@@ -231,16 +238,17 @@ func TestPrepareExecReadFileDestroy(t *testing.T) {
 		t.Errorf("setup.txt = %q", got)
 	}
 
-	// The substrate the spec promised: read-only rootfs, writable workspace and /tmp,
-	// non-root user.
-	if code, _ := execOutput(t, inst, "/bin/sh", "-c", "touch /usr/local/nope 2>/dev/null"); code == 0 {
-		t.Error("rootfs is writable; want read-only")
+	// The substrate the spec promised. The POC posture (see the "Container posture" block in
+	// sandbox.go) is a writable rootfs and uid 0; TestPOCContainerIsUsable proves the
+	// consequences, this only pins the two settings so a silent revert is a failing test.
+	if code, out := execOutput(t, inst, "/bin/sh", "-c", "touch /usr/local/nope && touch /etc/nope"); code != 0 {
+		t.Errorf("rootfs is not writable: exit %d, out %q", code, out)
 	}
 	if code, _ := execOutput(t, inst, "/bin/sh", "-c", "touch /tmp/ok && touch /workspace/ok"); code != 0 {
 		t.Error("/tmp or /workspace not writable")
 	}
-	if code, out := execOutput(t, inst, "id", "-un"); code != 0 || strings.TrimSpace(out) != "agent" {
-		t.Errorf("container user: exit %d, out %q (want agent)", code, out)
+	if code, out := execOutput(t, inst, "id", "-un"); code != 0 || strings.TrimSpace(out) != "root" {
+		t.Errorf("container user: exit %d, out %q (want root)", code, out)
 	}
 
 	// Destroy is idempotent.
@@ -414,6 +422,78 @@ func TestOrphanSweep(t *testing.T) {
 	}
 	if _, err := sb.Reattach(ctx, live.Ref()); err != nil {
 		t.Errorf("live run's container was swept: %v", err)
+	}
+}
+
+// LEXI-8: a second Lexicode on the same machine — the product next to an acceptance run — must
+// not have its containers reaped. Its runs are unknown to this database by definition, which is
+// exactly what an orphan looks like; only the owner label tells the two apart. Two sandboxes
+// with different owners (two data dirs) stand in for the two instances.
+func TestSweepSparesAnotherInstancesContainers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+
+	// Each instance knows only its own run, and neither knows the other's.
+	newInstance := func(runID string, state domain.RunState) *Sandbox {
+		t.Helper()
+		sb := newTestSandbox(t)
+		sb.owner = ownerID(t.TempDir())
+		sb.runState = func(_ context.Context, id string) (domain.RunState, bool, error) {
+			if id == runID {
+				return state, true, nil
+			}
+			return "", false, nil
+		}
+		return sb
+	}
+
+	// Mine is terminal, so my own sweep is entitled to remove it: the sweep really does run and
+	// really does remove something, which is what makes the survival below meaningful.
+	mine := newInstance("run-lexi8-mine", domain.RunCompleted)
+	theirs := newInstance("run-lexi8-theirs", domain.RunRunning)
+
+	prepare := func(sb *Sandbox, runID string) ports.Instance {
+		t.Helper()
+		inst, err := sb.Prepare(ctx, ports.SandboxSpec{
+			RunID:     runID,
+			ProjectID: "proj-lexi8",
+			Network:   ports.NetworkPolicy{Mode: ports.NetworkOpen},
+		}, newTestSink(t))
+		if err != nil {
+			t.Fatalf("Prepare(%s): %v", runID, err)
+		}
+		return inst
+	}
+
+	other := prepare(theirs, "run-lexi8-theirs")
+	defer destroyQuietly(t, other)
+	own := prepare(mine, "run-lexi8-mine")
+
+	removed, err := mine.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("Sweep removed %d containers, want exactly my own orphan", removed)
+	}
+	if _, err := mine.Reattach(ctx, own.Ref()); !errors.Is(err, ports.ErrInstanceGone) {
+		t.Errorf("my own orphan survived my sweep: err = %v", err)
+	}
+	if _, err := theirs.Reattach(ctx, other.Ref()); err != nil {
+		t.Errorf("another instance's live container was swept: %v", err)
+	}
+
+	// ...and symmetrically: their sweep leaves mine alone. (Mine is already gone; what this
+	// asserts is that their sweep finds nothing of mine to remove.)
+	removed, err = theirs.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep (other instance): %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("the other instance's sweep removed %d containers, want 0", removed)
+	}
+	if _, err := theirs.Reattach(ctx, other.Ref()); err != nil {
+		t.Errorf("the other instance swept its own live run: %v", err)
 	}
 }
 

@@ -573,6 +573,14 @@
   background: var(--surface-2);
 }
 
+/* The one line that tells you a picker DOES something beyond setting a field — `D` starts
+   a run, so the picker says so before you press Enter. */
+.pickerHint {
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  padding: 0 0 6px;
+}
+
 .pickerEmpty {
   font-size: var(--fs-body);
   color: var(--text-3);

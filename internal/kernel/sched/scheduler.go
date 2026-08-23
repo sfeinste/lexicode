@@ -33,7 +33,11 @@ type SpecInput struct {
 	Agent     domain.Agent
 	Ticket    *domain.Ticket // nil for a ticketless run
 	Run       domain.Run
-	RunToken  string
+	// CauseEvent is the event that spawned the run (runs.cause_event_id), when it had one:
+	// nil for a manual delegation. The builder reads the pull request's head branch off it,
+	// so a run whose subject is a pull request is prepared ON that pull request.
+	CauseEvent *domain.Event
+	RunToken   string
 }
 
 // SpecResult is a SpecBuilder's product.
@@ -79,6 +83,34 @@ type PROpener interface {
 	OpenForRun(ctx context.Context, run domain.Run) (bool, error)
 }
 
+// PushCredentials supplies what the orchestrator needs to push a run's branch itself, after
+// the agent process has exited (§10.5, and the D-9 amendment: the push is orchestrator-owned).
+//
+// The container never holds the repository credential — the clone step points `origin` at a
+// tokenless URL as soon as the fetch is done — so the token has to come back at teardown, for
+// exactly one command, in exactly one exec's environment. The service layer implements this
+// (it needs the repo row and the secret store, which the kernel does not touch); nil means
+// the orchestrator pushes with whatever the remote already authorizes, which is what the
+// docker-tagged fixtures with `file://` remotes rely on.
+type PushCredentials interface {
+	ForRun(ctx context.Context, run domain.Run) (PushAuth, error)
+}
+
+// PushAuth is one run's push authorization.
+type PushAuth struct {
+	// Env is merged into the push exec's environment and nowhere else. The GitHub shape is
+	// git's config-via-environment carrying an `http.extraheader` basic credential — never
+	// argv (`/proc/<pid>/cmdline` is world-readable inside the container) and never
+	// `.git/config` (it would outlive the command).
+	Env map[string]string
+	// Secrets is every value in Env that must never reach a log or an activity row.
+	Secrets []string
+	// BaseBranch is the repository's default branch. The orchestrator refuses to push to it:
+	// an agent that checked out `main` and committed there must not have that pushed on its
+	// behalf (brief D6 — no agent writes a protected branch).
+	BaseBranch string
+}
+
 // Options configures New. Store, Bus and Audit are required; the seams degrade individually
 // (a nil Tokens mints nothing, a nil Proxy registers nothing, a nil Tickets moves nothing) so
 // tests wire exactly what they exercise.
@@ -101,6 +133,7 @@ type Options struct {
 	Proxy   ProxyRegistrar
 	Tickets TicketMover
 	PRs     PROpener
+	Pushes  PushCredentials
 
 	// SandboxID is which sandbox runs execute in ("docker" in production, "fake" in tests).
 	// Empty means "docker".
@@ -148,6 +181,16 @@ type supervisor struct {
 	stopKind domain.RunState // canceled | timed_out | failed — what Stop was for
 	stopWhy  string
 	steer    chan struct{}
+
+	// The wall-clock pause (D-12). A run parked on a human is not working, and the wall
+	// clock exists to bound work, so the supervisor stops charging it while the run sits in
+	// needs_input / awaiting_approval. parked says whether it is stopped right now,
+	// parkedSince is when it stopped, and parkedTotal is everything credited back so far;
+	// the supervise loop re-derives its timer from them whenever park nudges it.
+	parked      bool
+	parkedSince time.Time
+	parkedTotal time.Duration
+	park        chan struct{}
 }
 
 // New builds a scheduler. Call Start to begin reconciliation and admission.

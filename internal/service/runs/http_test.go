@@ -188,7 +188,7 @@ func (e *env) seed() {
 	e.agent = domain.Agent{
 		ID: domain.NewID(), ProjectID: e.project.ID, Name: "Dev", Color: "#888888",
 		RuntimeID: "scripted", Model: "fake-model", Effort: "medium",
-		Autonomy: domain.AutonomyAuto, Permissions: domain.AgentPermissions{ReadFiles: true},
+		Autonomy: domain.AutonomyAuto, Permissions: domain.AgentPermissions{ReadFiles: true, PushBranches: true},
 		GitAuthorName: "Dev", GitAuthorEmail: "dev@agents.lexicode.local",
 		ConcurrencyCap: 1, MaxWallClockSeconds: 300, MaxSteps: 100, Enabled: true,
 		CreatedAt: now, UpdatedAt: now,

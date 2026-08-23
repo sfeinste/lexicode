@@ -7,7 +7,8 @@
 //  2. Dev runs in a container, opens a pull request, the ticket moves to the review column;
 //  3. the "pull request opened by an agent" trigger spawns Reviewer;
 //  4. Reviewer posts a severity-tagged review;
-//  5. the "changes requested" trigger spawns Dev on the same branch;
+//  5. the "changes requested" trigger — on the reviewer's own verdict, since GitHub refuses a
+//     request-changes review from the pull request's author — spawns Dev on the same branch;
 //  6. the "CI failed" trigger spawns Dev to fix;
 //  7. the loop guard stops the cycle at depth 3 and the chain renders;
 //  8. a human merges — and nothing else can.
@@ -43,6 +44,7 @@ import (
 
 	"github.com/spruce/lexicode/e2e/harness"
 	"github.com/spruce/lexicode/internal/kernel/ports"
+	"github.com/spruce/lexicode/internal/service/bootstrap"
 )
 
 const (
@@ -146,6 +148,12 @@ func run(port, proxyPort, ghPort int) (*timings, error) {
 	// -- fake GitHub: REST + git smart-HTTP on one listener ------------------------------
 	gh := &harness.GitHub{
 		Root: filepath.Join(work, "git"), Owner: "acme", Name: "payments", Branch: "main",
+		// The git endpoints demand the repository token, as a private repository does.
+		// That is what makes this harness a proof of the credential design rather than a
+		// rehearsal of it: the container, whose `origin` is tokenless from the moment the
+		// clone finishes, is refused, and the orchestrator's teardown push — the token in
+		// that one exec's environment as `http.extraheader` — is not.
+		Token: repoToken,
 	}
 	if err := os.MkdirAll(filepath.Join(gh.Root, gh.Owner), 0o755); err != nil {
 		return t, err
@@ -423,16 +431,73 @@ func run(port, proxyPort, ghPort int) (*timings, error) {
 
 	// -- step 4: the severity-tagged review ------------------------------------------------
 	step(4, "Reviewer posts a severity-tagged review")
+	headBeforeReview := gh.Head(pr.Head)
 	if err := waitCompleted(c, run2, "the reviewer run"); err != nil {
 		return t, err
 	}
+
+	// The reviewer's workspace WAS the pull request, and the run owns no branch. Both are
+	// visible from outside the container, which is the only place this can be proved
+	// honestly: the provisioning checklist has a clone step and no `branch` step, and
+	// runs.branch is null. (Inside the container the fixture asserts the change under review
+	// is actually in the workspace, and fails the run if it is not — see e2e/s39's
+	// fakeClaude reviewer role.)
+	revChecklist, err := provisionSteps(c, run2)
+	if err != nil {
+		return t, err
+	}
+	log.Printf("reviewer provisioning checklist: %s", strings.Join(revChecklist, ", "))
+	if !contains(revChecklist, "clone") {
+		return t, fmt.Errorf("the reviewer run has no successful clone step: %v", revChecklist)
+	}
+	if contains(revChecklist, "branch") {
+		return t, fmt.Errorf(
+			"the reviewer run cut a branch of its own; a run whose subject is a pull request "+
+				"works on that pull request's head and creates nothing: %v", revChecklist)
+	}
+	run2Body, err := c.Run(run2)
+	if err != nil {
+		return t, err
+	}
+	if b, _ := run2Body["branch"].(string); b != "" {
+		return t, fmt.Errorf("the reviewer run's branch = %q, want none", b)
+	}
+	// And nothing of the reviewer's reached the pull request author's branch.
+	if after := gh.Head(pr.Head); after != headBeforeReview {
+		return t, fmt.Errorf(
+			"the reviewer run moved %s from %s to %s — a review must never push to the pull "+
+				"request author's branch", pr.Head, headBeforeReview, after)
+	}
+	log.Printf("reviewer worked on the PR head, cut no branch, pushed nothing (%s still at %s)",
+		pr.Head, headBeforeReview[:8])
+
 	reviews := gh.Reviews()
 	if len(reviews) != 1 {
 		return t, fmt.Errorf("the fake GitHub has %d reviews, want 1", len(reviews))
 	}
 	rev := reviews[0]
-	if rev.State != "CHANGES_REQUESTED" {
-		return t, fmt.Errorf("review state = %q, want CHANGES_REQUESTED", rev.State)
+	// COMMENTED, not CHANGES_REQUESTED — and that is the correct expectation, not a
+	// concession. The reviewer asked for REQUEST_CHANGES (the fixture passes it explicitly);
+	// GitHub answered 422 because the reviewer is the pull request's own author under one
+	// shared token; the tool retried the same body as a comment so the findings still reach
+	// the pull request. What the reviewer *asked for* survives on the run's own record and
+	// on the agent_review event, which is what step 5 continues from.
+	if rev.State != "COMMENTED" {
+		return t, fmt.Errorf("review state = %q; GitHub refuses REQUEST_CHANGES from the "+
+			"pull request's own author, so the fallback must have posted a comment", rev.State)
+	}
+	if intent := systemActivity(c, run2, "posted as a comment"); intent == "" {
+		return t, fmt.Errorf("the run does not record that changes were REQUESTED and only "+
+			"posted as a comment; activities: %s", activityTitles(c, run2))
+	} else {
+		log.Printf("intent preserved on the run: %s", intent)
+	}
+	// Posted against the right pull request — a number the agent was never handed directly.
+	// The trigger's override is the shipped bootstrap default and the fixture passes no
+	// pr_number, so this asserts the whole chain: the event section named the pull request,
+	// and submit_review defaulted to it from the causing event.
+	if rev.PRNumber != pr.Number {
+		return t, fmt.Errorf("the review landed on PR #%d, want #%d", rev.PRNumber, pr.Number)
 	}
 	for _, want := range []string{"[BLOCKER]", "[MINOR]", "[NIT]", "<!-- lexicode:actor=agent:"} {
 		if !strings.Contains(rev.Body, want) {
@@ -455,7 +520,23 @@ func run(port, proxyPort, ghPort int) (*timings, error) {
 	if err != nil {
 		return t, err
 	}
-	log.Printf("Dev run %s spawned to address the review", run3)
+	// Enqueued FROM THE REVIEW: the firing that produced this run names the agent_review
+	// event the submit_review call published, on this pull request. Nothing here came back
+	// from GitHub — the poller's own event for the same review exists too, and would not
+	// have fired this rule, because a rule matches one event kind.
+	cause, err := firingEventFor(c, triggers["changes-requested"], run3)
+	if err != nil {
+		return t, err
+	}
+	if cause["kind"] != "agent_review" || cause["activity_type"] != "submitted" {
+		return t, fmt.Errorf("the Dev run was enqueued by a %v/%v event, want agent_review/submitted",
+			cause["kind"], cause["activity_type"])
+	}
+	if want := fmt.Sprintf("pr:%d", pr.Number); cause["subject"] != want {
+		return t, fmt.Errorf("the firing's subject = %v, want %s", cause["subject"], want)
+	}
+	log.Printf("Dev run %s spawned to address the review, from the %v event on %v",
+		run3, cause["kind"], cause["subject"])
 	if err := requireRunField(c, run3, "agent_id", dev); err != nil {
 		return t, err
 	}
@@ -605,6 +686,25 @@ var triggerOrder = []string{"pr-opened", "changes-requested", "ci-failed", "revi
 // shortens the debounce from 90s to 5s. This harness compresses a chain that would take a
 // human afternoon into a couple of minutes; at 90s, layer 2 would absorb the second bounce
 // (correctly!) before layer 4 ever saw it.
+// reviewerPrompt is the prompt override both reviewer rules carry: the SHIPPED bootstrap
+// default (internal/service/bootstrap.ReviewerPrompt), verbatim, with two fixture markers in
+// front of it.
+//
+// Firing the shipped string rather than a hand-written stand-in is the point. The harness used
+// to write its own override — one that spelled out the PR number and the branch in fields the
+// scripted agent read directly — and it passed green for months while the rule the product
+// actually creates carried `"prompt":""`. A reviewer spawned by that rule was handed no task
+// at all. An acceptance that exercises a better input than the product produces is not an
+// acceptance; it is a second implementation.
+//
+// The two markers are the irreducible fixture seam: a scripted `claude` has to be told which
+// of four roles to play, and which verdict to return so the chain reaches the loop guard. They
+// carry no information about the pull request — no number, no branch. Everything the fixture
+// knows about what it is reviewing, it reads out of the prompt the product built.
+func reviewerPrompt(verdict string) string {
+	return "E2E-ROLE: reviewer\nE2E-REVIEW: " + verdict + "\n\n" + bootstrap.ReviewerPrompt
+}
+
 func createTriggers(c *harness.Client, dev, reviewer string) (map[string]string, error) {
 	specs := []struct {
 		key  string
@@ -617,17 +717,20 @@ func createTriggers(c *harness.Client, dev, reviewer string) (map[string]string,
 			"conditions":     rawJSON(`{"all":[{"op":"actor.is_agent"}]}`),
 			"actions": rawJSON(fmt.Sprintf(
 				`[{"action_id":"run_agent","params":{"agent_id":%q,"prompt_override":%q}}]`,
-				reviewer, "E2E-ROLE: reviewer\nE2E-REVIEW: request_changes\n"+
-					"E2E-PR: {{pr.number}}\nE2E-BRANCH: {{pr.branch}}\n\n"+
-					"Review pull request #{{pr.number}} on branch {{pr.branch}}. "+
-					"Submit a review with severity-tagged findings.")),
+				reviewer, reviewerPrompt("request_changes"))),
 		}},
 		{"changes-requested", map[string]any{
+			// On the agent_review event, with the SHIPPED condition string bootstrap writes
+			// into a fresh project — not GitHub's pull_request_review. GitHub refuses a
+			// "request changes" review from the pull request's own author, which every agent
+			// is while they share one project token (D-9), so `review.state` never reads
+			// changes_requested for an agent's review and a rule keyed on it never fires.
+			// The fixture GitHub now refuses it too (harness.createReview), so this rule
+			// firing is proof that the chain runs on the reviewer's verdict.
 			"name": "Changes requested → Dev addresses them", "enabled": true,
-			"source_id": "github.poll", "event": "pull_request_review",
+			"source_id": "github.poll", "event": "agent_review",
 			"activity_types": []string{"submitted"},
-			"conditions": rawJSON(
-				`{"all":[{"field":"review.state","op":"enum.is","value":"changes_requested"}]}`),
+			"conditions":     rawJSON(bootstrap.ChangesRequestedConditions),
 			"loop_config": rawJSON(`{"actor_suppression":true,"debounce_seconds":5,` +
 				`"cancel_in_progress":true,"depth_limit":3,"daily_budget_cents":null}`),
 			"actions": rawJSON(fmt.Sprintf(
@@ -662,9 +765,7 @@ func createTriggers(c *harness.Client, dev, reviewer string) (map[string]string,
 				`"cancel_in_progress":true,"depth_limit":3,"daily_budget_cents":null}`),
 			"actions": rawJSON(fmt.Sprintf(
 				`[{"action_id":"run_agent","params":{"agent_id":%q,"prompt_override":%q}}]`,
-				reviewer, "E2E-ROLE: reviewer\nE2E-REVIEW: request_changes\n"+
-					"E2E-PR: {{pr.number}}\nE2E-BRANCH: {{pr.branch}}\n\n"+
-					"Dev says the findings on PR #{{pr.number}} are addressed. Look again.")),
+				reviewer, reviewerPrompt("request_changes"))),
 		}},
 	}
 	out := map[string]string{}
@@ -747,6 +848,27 @@ func waitForLoopStopped(c *harness.Client, triggerID string, timeout time.Durati
 		return false, nil
 	})
 	return runID, err
+}
+
+// firingEventFor returns the event summary of the firing that produced runID — how the
+// acceptance says "this run came from THAT event" rather than merely "a run appeared".
+func firingEventFor(c *harness.Client, triggerID, runID string) (map[string]any, error) {
+	body, err := c.Do("GET", "/api/v1/triggers/"+triggerID+"/firings", nil, 200)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range firings(body) {
+		if id, _ := f["run_id"].(string); id != runID {
+			continue
+		}
+		ev, ok := f["event"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("the firing for run %s carries no event summary: %s",
+				runID, harness.Compact(f))
+		}
+		return ev, nil
+	}
+	return nil, fmt.Errorf("no firing of trigger %s produced run %s", triggerID, runID)
 }
 
 func firings(body map[string]any) []map[string]any {

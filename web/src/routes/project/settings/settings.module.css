@@ -150,6 +150,31 @@
   font-weight: 400;
 }
 
+/* An allowlist with no domains behaves exactly like `none`. The setting reads permissive and
+   acts restrictive, so the discrepancy is stated rather than left for a failed install to
+   reveal. Amber (not red): the configuration is legal, just probably not what was meant. */
+.warning {
+  /* Plain px, like the rest of this file: --sp-* is not a token this design system defines,
+     and an undefined var here silently zeroed the inset — the text sat on the border rule. */
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--needs-you);
+  background: color-mix(in srgb, var(--needs-you) 8%, transparent);
+  color: var(--text-2);
+  font-size: var(--fs-mono);
+  line-height: 1.5;
+}
+
+.warning strong {
+  /* --text is the primary text token; --text-1 does not exist, so the emphasis was a no-op. */
+  color: var(--text);
+  font-weight: 600;
+}
+
+.warning code {
+  font-family: var(--font-mono);
+}
+
 /* ---- Board section (S09) -------------------------------------------------------------- */
 
 .sectionIntro {
@@ -488,6 +513,23 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* The setup script editor: a shell script is code, so it gets a code face, tab-friendly
+   spacing and the width of the pane rather than the 480px a prose textarea wants. */
+.codeArea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+.networkBlock textarea.codeArea {
+  max-width: 100%;
+  width: 100%;
 }
 
 .networkHint {

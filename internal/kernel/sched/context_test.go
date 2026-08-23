@@ -299,6 +299,142 @@ func TestContextBudgetUnderThresholdSilent(t *testing.T) {
 	}
 }
 
+// TestTriggerSpawnedRunPromptCarriesTheEvent is the regression for the reviewer that reviewed
+// the wrong thing. A trigger-spawned run has no ticket, so before the `event` provider its
+// prompt could contain nothing at all about the pull request it was started for — the run row
+// knew `subject_key = pr:219` and carried a cause_event_id whose payload held the whole
+// normalized event, and none of it reached the agent.
+//
+// The assertion is deliberately about the PROMPT, not about the provider: the provider can be
+// correct and still be unwired (it was), and what the agent actually reads is the prompt.
+func TestTriggerSpawnedRunPromptCarriesTheEvent(t *testing.T) {
+	e := newEnv(t, options{fixture: fixtureOK})
+	f := e.seed(2, nil, nil)
+	e.providers = []ports.ContextProvider{
+		contextmod.NewProjectProvider(e.st),
+		contextmod.NewEventProvider(e.st),
+		contextmod.NewTicketProvider(e.st),
+	}
+
+	ctx := context.Background()
+	number := int64(219)
+	branch := "dev/PAY-14-idempotency"
+	login := "spruce"
+	ev := domain.Event{
+		ID: domain.NewID(), ProjectID: &f.project.ID, Source: "github.poll",
+		Kind: "pull_request", ActivityType: "opened", ActorKind: domain.ActorAgent,
+		ActorLogin: &login, SubjectKind: "pr", SubjectNumber: &number, SubjectBranch: &branch,
+		Payload: []byte(`{"pr":{"number":219,"title":"Idempotency keys for POST /charges",` +
+			`"author":"spruce","author_kind":"agent","branch":"dev/PAY-14-idempotency",` +
+			`"base":"main","draft":false,"state":"open","files_changed":7,` +
+			`"body":"Adds a replay cache."},` +
+			`"repo":{"owner":"acme","name":"payments","default_branch":"main"},` +
+			`"actor":{"kind":"agent","login":"spruce","agent":"Dev"}}`),
+		DedupeKey: "test:" + domain.NewID(), DispatchState: domain.DispatchDone,
+		OccurredAt: domain.Now(), CreatedAt: domain.Now(),
+	}
+	if err := e.st.Events().Insert(ctx, &ev); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exactly what the run_agent action enqueues for a trigger firing: no ticket, no prompt
+	// override, a cause event and a subject.
+	run, err := e.sch.Enqueue(ctx, sched.RunRequest{
+		ProjectID: f.project.ID, AgentID: f.agent.ID,
+		Reason:       "trigger Agent PR opened → run Reviewer",
+		CauseEventID: ev.ID, SubjectKey: "pr:219",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(run.Prompt, "# What happened") {
+		t.Fatalf("the prompt has no event section:\n%s", run.Prompt)
+	}
+	// The number is the load-bearing fact: submit_review defaults to it, and an agent that
+	// cannot name the pull request cannot review it.
+	for _, want := range []string{
+		"pull request #219",
+		"dev/PAY-14-idempotency",
+		"Idempotency keys for POST /charges",
+		"spruce",
+	} {
+		if !strings.Contains(run.Prompt, want) {
+			t.Errorf("the prompt does not name %q:\n%s", want, run.Prompt)
+		}
+	}
+	// Prose, not a JSON blob: the payload must never be dumped verbatim.
+	if strings.Contains(run.Prompt, `"author_kind":`) {
+		t.Errorf("the raw payload leaked into the prompt:\n%s", run.Prompt)
+	}
+
+	// And the Context panel can explain it.
+	items, err := e.st.RunContextItems().ForRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.Provider != "event" {
+			continue
+		}
+		found = true
+		if it.SourceKind != "event" || it.SourceRef != "pr:219" || !it.Injected {
+			t.Errorf("event item = %+v", it)
+		}
+		if !strings.Contains(it.Reason, "pull_request opened") {
+			t.Errorf("event item reason = %q", it.Reason)
+		}
+	}
+	if !found {
+		t.Fatalf("no `event` row in the run's context stack: %+v", items)
+	}
+}
+
+// TestManualRunHasNoEventSection: the provider is silent for a run nobody triggered, so a
+// delegated run's prompt is unchanged by any of this.
+func TestManualRunHasNoEventSection(t *testing.T) {
+	e := newEnv(t, options{fixture: fixtureOK})
+	f := e.seed(2, nil, nil)
+	e.providers = []ports.ContextProvider{
+		contextmod.NewProjectProvider(e.st),
+		contextmod.NewEventProvider(e.st),
+		contextmod.NewTicketProvider(e.st),
+	}
+	tk := e.ticket(f, f.backlog, "Fix the deployment pipeline")
+	run, err := e.sch.Enqueue(context.Background(), runRequest(f, tk, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(run.Prompt, "# What happened") {
+		t.Fatalf("a manually delegated run got an event section:\n%s", run.Prompt)
+	}
+}
+
+// ---------------------------------------------------- the review provider (LEXI-10) -----
+
+// reviewCommentEvent stores the `pull_request_review_comment/created` event one inline comment
+// of review 555 arrives as, and returns it.
+func (e *env) reviewCommentEvent(projectID string) domain.Event {
+	e.t.Helper()
+	num := int64(219)
+	now := domain.Now()
+	ev := domain.Event{
+		ID: domain.NewID(), ProjectID: &projectID, Source: "github.poll",
+		Kind: "pull_request_review_comment", ActivityType: "created",
+		ActorKind: domain.ActorHuman, SubjectKind: "pr", SubjectNumber: &num,
+		Payload: []byte(`{"pr":{"number":219,"title":"Add rate limiting"},
+			"comment":{"id":"2001","review_id":"555","author":"alice",
+			"body":"this is off by one","path":"internal/api/rate.go","line":42}}`),
+		DedupeKey: "t:" + domain.NewID(), DispatchState: domain.DispatchDone,
+		OccurredAt: now, CreatedAt: now,
+	}
+	if err := e.st.Events().Insert(context.Background(), &ev); err != nil {
+		e.t.Fatal(err)
+	}
+	return ev
+}
+
 // ------------------------------------------------------------- the review provider -----
 
 // stubReviews is the contextmod.ReviewReader seam: one review's threads, canned.
@@ -343,28 +479,6 @@ func reviewProviderForTest(t *testing.T, e *env, f fixtures, forge contextmod.Re
 		t.Fatal(err)
 	}
 	return contextmod.NewReviewProvider(e.st, sec, forge, logger)
-}
-
-// reviewCommentEvent stores the `pull_request_review_comment/created` event one inline comment
-// of review 555 arrives as, and returns it.
-func (e *env) reviewCommentEvent(projectID string) domain.Event {
-	e.t.Helper()
-	num := int64(219)
-	now := domain.Now()
-	ev := domain.Event{
-		ID: domain.NewID(), ProjectID: &projectID, Source: "github.poll",
-		Kind: "pull_request_review_comment", ActivityType: "created",
-		ActorKind: domain.ActorHuman, SubjectKind: "pr", SubjectNumber: &num,
-		Payload: []byte(`{"pr":{"number":219,"title":"Add rate limiting"},
-			"comment":{"id":"2001","review_id":"555","author":"alice",
-			"body":"this is off by one","path":"internal/api/rate.go","line":42}}`),
-		DedupeKey: "t:" + domain.NewID(), DispatchState: domain.DispatchDone,
-		OccurredAt: now, CreatedAt: now,
-	}
-	if err := e.st.Events().Insert(context.Background(), &ev); err != nil {
-		e.t.Fatal(err)
-	}
-	return ev
 }
 
 // TestReviewReachesThePromptWhole is LEXI-10's first acceptance criterion end to end at the

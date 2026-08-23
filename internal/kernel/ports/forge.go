@@ -102,6 +102,33 @@ type ReviewSpec struct {
 var ErrSelfApprovalForbidden = errors.New(
 	"agents cannot approve pull requests: approval is reserved for humans (brief D6)")
 
+// ReviewEventRejectedError is returned by SubmitReview when the forge accepted the request
+// but refused the review EVENT — GitHub answers 422 to REQUEST_CHANGES from the pull
+// request's own author, which under D-9 (one project PAT, so every agent is the same GitHub
+// user) is what a reviewer agent reviewing a Dev agent's pull request always is. Nothing was
+// written; the caller may retry the same body as a COMMENT.
+//
+// It exists so the retry can be conditioned on the forge's actual verdict rather than on a
+// substring of an error message, and so that "what was intended" stays distinguishable from
+// "what GitHub accepted" all the way up to the run output.
+type ReviewEventRejectedError struct {
+	Event  string // the event the forge refused, e.g. "REQUEST_CHANGES"
+	Detail string // the forge's own explanation, when it gave one
+}
+
+func (e *ReviewEventRejectedError) Error() string {
+	msg := fmt.Sprintf("the forge refused a %s review", e.Event)
+	if e.Detail != "" {
+		msg += ": " + e.Detail
+	}
+	return msg
+}
+
+// ErrReviewEventRejected matches any ReviewEventRejectedError under errors.Is.
+var ErrReviewEventRejected = errors.New("forge refused the review event")
+
+func (e *ReviewEventRejectedError) Is(target error) bool { return target == ErrReviewEventRejected }
+
 // PermissionDeniedError is returned by a forge write when the acting agent lacks the named
 // grant. It matches ErrPermissionDenied under errors.Is. The check happens before any network
 // call: a denied write costs nothing and leaks nothing.
@@ -156,3 +183,36 @@ func (e *RateLimitedError) Error() string {
 var ErrRateLimited = errors.New("forge rate limit exhausted")
 
 func (e *RateLimitedError) Is(target error) bool { return target == ErrRateLimited }
+
+// ForbiddenError is returned when the forge accepted the credential but refused it sight of a
+// resource: the token is valid and the request well-formed, it simply may not read this. It is
+// the permanent counterpart to RateLimitedError — retrying changes nothing until a human
+// re-grants the token, so a caller polling on a timer should stop asking rather than fail on
+// every tick (story LEXI-9; the poller disables the affected resource and reports its module
+// degraded).
+//
+// Status is the forge's own answer: 403 for "not permitted", 404 for a resource a token
+// without access is not even told exists, 401 for a credential the forge no longer accepts.
+// Err keeps the adapter's underlying error reachable through errors.As, so nothing that used
+// to inspect it stops working.
+type ForbiddenError struct {
+	Resource string // what was refused, in the forge's own terms (an API path)
+	Status   int    // 401, 403 or 404
+	Detail   string // the forge's message, verbatim, when it sent one
+	Err      error  // the underlying adapter error
+}
+
+func (e *ForbiddenError) Error() string {
+	msg := fmt.Sprintf("the credential cannot access %s (HTTP %d)", e.Resource, e.Status)
+	if e.Detail != "" {
+		msg += ": " + e.Detail
+	}
+	return msg
+}
+
+func (e *ForbiddenError) Unwrap() error { return e.Err }
+
+// ErrForbidden matches any ForbiddenError under errors.Is.
+var ErrForbidden = errors.New("forge denied the credential access to the resource")
+
+func (e *ForbiddenError) Is(target error) bool { return target == ErrForbidden }

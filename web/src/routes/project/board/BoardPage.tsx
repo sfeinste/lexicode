@@ -37,6 +37,7 @@ import { EMPTY_STATES, boardImportLabel } from "../../emptyStates";
 import {
   ApiProblem,
   authApi,
+  problemMessage,
   type Agent,
   type Label,
   type Ticket,
@@ -45,6 +46,7 @@ import {
 import { useColumnsQuery } from "../../../lib/api/columnQueries";
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
 import { useStreamTopics } from "../../../lib/sse/useStreamTopics";
+import { RunNotice } from "../../../components/RunNotice/RunNotice";
 import { NeedsYouLane } from "./NeedsYouLane";
 import { TicketCard, type DisplayProps, type NeedsYouFlavor } from "./TicketCard";
 import styles from "./board.module.css";
@@ -52,6 +54,7 @@ import {
   useBoardLabels,
   useBoardTickets,
   useCreateTicket,
+  useDelegateTicket,
   useMoveTicket,
   useNeedsYouRuns,
   usePatchTicket,
@@ -163,6 +166,7 @@ export function BoardPage() {
   const patch = usePatchTicket(key);
   const setLabel = useSetTicketLabel(key);
   const create = useCreateTicket(key);
+  const delegateRun = useDelegateTicket(key);
 
   const groupBy: GroupBy = search.group_by ?? "status";
   const layout: "board" | "list" = search.layout ?? "board";
@@ -173,6 +177,11 @@ export function BoardPage() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [drop, setDrop] = useState<DropTarget | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // `D` starts a run (§5.3), so the board has to say what happened to it: one notice per
+  // ticket delegated, naming the run's real state and linking to it.
+  const [runNotices, setRunNotices] = useState<
+    Array<{ ticketId: string; ticketKey: string; runId: string; agentName: string }>
+  >([]);
 
   const patchSearch = useCallback(
     (patchObj: Partial<BoardSearch>, replace = true) => {
@@ -266,6 +275,36 @@ export function BoardPage() {
       err instanceof ApiProblem ? err.detail || err.title : "The change did not save.",
     );
   }, []);
+
+  /**
+   * `D` picked an agent: START (§5.3). The delegate endpoint records the delegate AND
+   * enqueues; the run comes back queued, so replace any earlier notice for this ticket with
+   * one that reads the new run's real state. A refusal says exactly what the server said —
+   * a field message when it named one, else the problem's detail — never a silent no-op.
+   */
+  const startDelegateRun = useCallback(
+    (t: Ticket, agentId: string, agentName: string) => {
+      delegateRun.mutate(
+        { id: t.id, agentId },
+        {
+          onSuccess: (res) => {
+            setActionError(null);
+            setRunNotices((prev) => [
+              ...prev.filter((n) => n.ticketId !== t.id),
+              { ticketId: t.id, ticketKey: t.key, runId: res.run_id, agentName },
+            ]);
+          },
+          onError: (err) => {
+            setRunNotices((prev) => prev.filter((n) => n.ticketId !== t.id));
+            setActionError(
+              `${t.key} — no run started: ${problemMessage(err, "the request did not reach the scheduler.")}`,
+            );
+          },
+        },
+      );
+    },
+    [delegateRun],
+  );
 
   const selectKey = useCallback(
     (ticketKey: string | undefined) => patchSearch({ sel: ticketKey }),
@@ -708,6 +747,19 @@ export function BoardPage() {
             </button>
           </p>
         )}
+
+        {runNotices.map((n) => (
+          <RunNotice
+            key={n.ticketId}
+            projectKey={key}
+            runId={n.runId}
+            agentName={n.agentName}
+            ticketKey={n.ticketKey}
+            onDismiss={() =>
+              setRunNotices((prev) => prev.filter((x) => x.ticketId !== n.ticketId))
+            }
+          />
+        ))}
       </div>
 
       <NeedsYouLane projectKey={key} runs={needsYouQuery.data ?? []} />
@@ -808,6 +860,7 @@ export function BoardPage() {
                 patch: (body) => patch.mutate({ id: t.id, body }, { onError: onMutationError }),
                 label: (attach, detach) =>
                   setLabel.mutate({ id: t.id, attach, detach }, { onError: onMutationError }),
+                delegate: (agentId, agentName) => startDelegateRun(t, agentId, agentName),
               });
             }
           }}
@@ -1028,6 +1081,8 @@ interface PickerMutators {
     delegate_agent_id?: string | null;
   }) => void;
   label: (attach?: string, detach?: string) => void;
+  /** `D` on an agent: POST /tickets/{id}/delegate — records the delegate AND starts a run. */
+  delegate: (agentId: string, agentName: string) => void;
 }
 
 function BoardPicker({
@@ -1056,6 +1111,8 @@ function BoardPicker({
   let title: string;
   let options: Array<{ id: string; text: string; active?: boolean }>;
   let empty: string | null = null;
+  /** One line under the title when the picker's effect is more than "set a field". */
+  let hint: string | null = null;
   let apply: (id: string) => (t: Ticket, m: PickerMutators) => void;
 
   switch (picker) {
@@ -1091,7 +1148,10 @@ function BoardPicker({
       apply = (id) => (_t, m) => m.patch({ assignee_id: id === NONE_GROUP ? null : id });
       break;
     case "delegate":
-      title = "Delegate (agent)";
+      // §5.3: `D` is one of the three ways a run STARTS. Picking an agent delegates and
+      // enqueues; "No delegate" only clears the field — clearing never starts anything.
+      title = "Delegate — starts a run";
+      hint = "Picking an agent records the delegate and queues a run for it.";
       // Enabled, non-archived agents only (S16); the §8 empty state until any exist.
       options = [
         ...agents.map((a) => ({
@@ -1099,12 +1159,17 @@ function BoardPicker({
           text: a.name,
           active: one?.delegate_agent_id === a.id,
         })),
-        ...(agents.length > 0 ? [{ id: NONE_GROUP, text: "No delegate" }] : []),
+        ...(agents.length > 0
+          ? [{ id: NONE_GROUP, text: "No delegate (clears the field, starts nothing)" }]
+          : []),
       ];
       empty = agents.length === 0 ? "No agents yet" : null;
       apply = (id) => (t, m) => {
-        const next = id === NONE_GROUP ? null : id;
-        if (t.delegate_agent_id !== next) m.patch({ delegate_agent_id: next });
+        if (id === NONE_GROUP) {
+          if (t.delegate_agent_id !== null) m.patch({ delegate_agent_id: null });
+          return;
+        }
+        m.delegate(id, agents.find((a) => a.id === id)?.name ?? id);
       };
       break;
     case "label":
@@ -1150,6 +1215,7 @@ function BoardPicker({
           {title}
           {targets.length > 1 ? ` — ${targets.length} tickets` : one ? ` — ${one.key}` : ""}
         </h2>
+        {hint !== null && <p className={styles.pickerHint}>{hint}</p>}
         {empty !== null ? (
           <p className={styles.pickerEmpty}>{empty}</p>
         ) : (

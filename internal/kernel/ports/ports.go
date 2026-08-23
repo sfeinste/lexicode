@@ -194,7 +194,8 @@ type ParamField struct {
 // files, the ticket — and is the reason the Context panel can explain every run.
 //
 // Method set: contracts §2.6, transcribed verbatim. S22 ships the `project` and `ticket`
-// providers (prompt assembly needs them); `wiki` and `repofiles` arrive with S34.
+// providers (prompt assembly needs them); `wiki` and `repofiles` arrive with S34; `event`
+// (the run's causing event) is the additive ContextRequest.CauseEventID field below.
 type ContextProvider interface {
 	// ID is the stable identifier, e.g. "wiki". It must be unique across registered providers.
 	ID() string
@@ -216,6 +217,7 @@ type ContextProvider interface {
 type ContextRequest struct {
 	ProjectID, AgentID string
 	TicketID           string   // may be empty
+	CauseEventID       string   // the event that spawned the run; empty for a manual run
 	TaskSummary        string   // ticket title + trigger description, for `auto` retrieval
 	ChangedPaths       []string // known for PR-triggered runs; empty otherwise
 	Dry                bool     // true for the agent's "what every run sees" preview
@@ -228,7 +230,7 @@ type ContextRequest struct {
 // ContextItem is one contribution: a labelled, token-counted piece of agent context. Reason is
 // rendered verbatim in the run detail's Context panel.
 type ContextItem struct {
-	SourceKind string // "wiki" | "repo_file" | "project" | "ticket"
+	SourceKind string // "wiki" | "repo_file" | "project" | "ticket" | "event"
 	SourceRef  string
 	Title      string
 	Reason     string

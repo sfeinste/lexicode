@@ -5,7 +5,7 @@ Docker and an egress proxy — not by asking the agent nicely. (Guidance and enf
 different mechanisms: a directive that says "don't call the internet" is a suggestion; a network
 with no route out is not.)
 
-Set it in **project settings → Network**. The workspace default is `allowlist`.
+Set it in **project settings → Network**. The workspace default is **`open`**.
 
 ## The three policies
 
@@ -13,13 +13,28 @@ Set it in **project settings → Network**. The workspace default is `allowlist`
 |---|---|
 | **None** | Only what the agent itself needs: `api.anthropic.com` and `claude.ai`, plus your git remote. Nothing else. |
 | **Allowlist** | The above, plus the domains you list. |
-| **Open** | Everything the host can reach. |
+| **Open** | Everything the host can reach. This is the default. |
 
 `none` is deliberately not "no network at all". An agent that cannot reach the model cannot
 think, so the setting would be a trap. It means *nothing beyond what the agent itself needs*.
 
 Telemetry hosts are not on the built-in list. Their denials are harmless and visible in the
 run's activity stream, which is better than a silent allowance.
+
+### Why the default is `open`
+
+Lexicode shipped with `allowlist` as the workspace default. In practice that resolved to
+"Anthropic, claude.ai and your git remote", because a new project's allowlist is empty and
+nothing prompts you to fill it in — so a setup script reaching for npm, PyPI or a toolchain
+download failed, and failed as a proxy denial rather than as a setting you knew to change. This
+is a proof-of-concept you run on your own laptop, so the default moved to the stance that works
+out of the box.
+
+Be clear about what that gives up. An `open` container reaches every host your machine reaches.
+That is the bound gone in both directions: what a run can send your code to, and what a run can
+pull in from a registry nobody vetted. If either matters for a repository, set that repository to
+`allowlist` and list what it actually needs — the enforcement below is unchanged and still real.
+Changing the workspace default back is a one-line migration.
 
 ## How it is enforced
 
@@ -65,8 +80,9 @@ tells you which host was refused, and you add it.
   artifact host.
 - **A repository with vendored dependencies** — `none`. Cheap, and the strictest thing that
   still works.
-- **Debugging, or an agent that genuinely needs the web** — `open`, knowingly. This is also what
-  the end-to-end fixtures use, because a fixture GitHub on the host has to be reachable.
+- **Debugging, or an agent that genuinely needs the web** — `open`, knowingly. This is the
+  workspace default, and it is what the end-to-end fixtures use, because a fixture GitHub on the
+  host has to be reachable.
 
 Allowlist entries are hostnames, matched exactly. A `*.` prefix covers subdomains and the bare
 domain both — `*.example.com` matches `example.com` and `api.example.com`.
@@ -80,8 +96,13 @@ permits the repository the run was provisioned for.
 ## The proxy port
 
 `--proxy-port` (default 7718) binds all interfaces because containers must reach it through
-Docker's NAT. The same listener also serves the Lexicode MCP endpoint for sandboxed containers,
-which is why runs under `none` can still ask you a question. Both are gated by the same run
-token.
+Docker's NAT. The same listener also serves the Lexicode MCP endpoint, which is why runs under
+`none` can still ask you a question. Both are gated by the same run token.
+
+Every policy reaches that listener; only the route differs. A `none` or `allowlist` container
+dials the relay (`http://lexicode-egress:3128/mcp/<token>`); an `open` container is on the
+bridge and dials `http://host.docker.internal:<proxy port>/mcp/<token>` directly, with no proxy
+environment at all. Both paths are covered by docker-tagged tests, because if either breaks then
+`ask_human` and every approval break with it.
 
 If that port is taken, `lexicode doctor` says so and names the flag.

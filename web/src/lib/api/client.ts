@@ -38,6 +38,8 @@ export type CreateTicketRequest = components["schemas"]["CreateTicketRequest"];
 export type UpdateTicketRequest = components["schemas"]["UpdateTicketRequest"];
 export type MoveTicketRequest = components["schemas"]["MoveTicketRequest"];
 export type SubticketsRequest = components["schemas"]["SubticketsRequest"];
+export type DelegateRequest = components["schemas"]["DelegateRequest"];
+export type DelegateResponse = components["schemas"]["DelegateResponse"];
 export type Criterion = components["schemas"]["Criterion"];
 export type CreateCriterionRequest = components["schemas"]["CreateCriterionRequest"];
 export type UpdateCriterionRequest = components["schemas"]["UpdateCriterionRequest"];
@@ -60,6 +62,7 @@ export type Repo = components["schemas"]["Repo"];
 export type RepoStatus = components["schemas"]["RepoStatus"];
 export type ConnectRepoRequest = components["schemas"]["ConnectRepoRequest"];
 export type UpdateRepoNetworkRequest = components["schemas"]["UpdateRepoNetworkRequest"];
+export type UpdateRepoSettingsRequest = components["schemas"]["UpdateRepoSettingsRequest"];
 export type BootstrapPreview = components["schemas"]["BootstrapPreview"];
 export type IssueCandidate = components["schemas"]["IssueCandidate"];
 export type DocCandidate = components["schemas"]["DocCandidate"];
@@ -173,6 +176,19 @@ export class ApiProblem extends Error {
     this.detail = p.detail;
     this.errors = p.errors;
   }
+}
+
+/**
+ * The most specific thing the server said, for inline copy. A validation problem's `detail`
+ * is the generic "One or more fields are invalid." — the honest sentence lives in
+ * `errors[].message`, so field messages win over the detail, and the detail over the title.
+ * Anything that is not a problem response falls back to `fallback`.
+ */
+export function problemMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiProblem)) return fallback;
+  const fields = (err.errors ?? []).map((e) => e.message).filter((m) => m !== "");
+  if (fields.length > 0) return fields.join(" ");
+  return err.detail || err.title || fallback;
 }
 
 /** True for a 4xx problem — the class TanStack Query must never retry. */
@@ -377,6 +393,15 @@ export const ticketsApi = {
     api<Ticket>("POST", `/tickets/${encodeURIComponent(id)}/move`, { body }),
   subtickets: (id: string, body: SubticketsRequest) =>
     api<TicketListResponse>("POST", `/tickets/${encodeURIComponent(id)}/subtickets`, { body }),
+  /**
+   * Delegate = START (UI spec §5.3: "Starting is `D` (delegate), the Run button on the
+   * ticket, or a trigger"). This records the agent as the ticket's delegate AND enqueues a
+   * run through the kernel scheduler — unlike `update({delegate_agent_id})`, which is the
+   * field editor and starts nothing. A 201 means QUEUED, not running: admission control
+   * decides when it starts, and the run's `hold_reason` says in words what is holding it.
+   */
+  delegate: (id: string, body: DelegateRequest) =>
+    api<DelegateResponse>("POST", `/tickets/${encodeURIComponent(id)}/delegate`, { body }),
   stream: (id: string, signal?: AbortSignal) =>
     api<TicketStreamResponse>("GET", `/tickets/${encodeURIComponent(id)}/stream`, { signal }),
   comment: (id: string, body: CreateCommentRequest) =>
@@ -464,6 +489,9 @@ export const repoApi = {
     api<void>("DELETE", `/projects/${encodeURIComponent(projectKey)}/repo`),
   updateNetwork: (projectKey: string, body: UpdateRepoNetworkRequest) =>
     api<Repo>("PATCH", `/projects/${encodeURIComponent(projectKey)}/repo/network`, { body }),
+  /** Setup script and branch template — the repo settings that are not the connection. */
+  updateSettings: (projectKey: string, body: UpdateRepoSettingsRequest) =>
+    api<Repo>("PATCH", `/projects/${encodeURIComponent(projectKey)}/repo`, { body }),
   /** Rotate the stored token (S37): verified against the repo before the old one is replaced. */
   rotateToken: (projectKey: string, token: string) =>
     api<Repo>("POST", `/projects/${encodeURIComponent(projectKey)}/repo/token`, {

@@ -31,6 +31,14 @@ type RunStateSetter func(ctx context.Context, runID string, state domain.RunStat
 // waiter cannot live forever.
 const defaultWaitCeiling = 24 * time.Hour
 
+// minWaitCeiling floors the derived ceiling. It mirrors runs.minMCPToolTimeout, which floors
+// the MCP_TOOL_TIMEOUT written into the container's environment (the two packages hold the
+// two ends of the same agreement and must not import each other's internals, so the number
+// is stated twice, deliberately). Both exist because agents may set max_wall_clock_seconds
+// as low as 60, and a question a human has sixty seconds to answer is the bug this pair of
+// values was introduced to fix.
+const minWaitCeiling = 5 * time.Minute
+
 // ErrNotPending is returned when a response targets an elicitation that is not pending —
 // already answered, denied, expired, or canceled.
 var ErrNotPending = errors.New("mcp: elicitation is not pending")
@@ -50,6 +58,9 @@ type Options struct {
 	// WaitCeiling overrides the blocked-call ceiling; zero derives it from the run's
 	// agent (MaxWallClockSeconds), falling back to defaultWaitCeiling.
 	WaitCeiling time.Duration
+	// ProgressInterval overrides how often a blocked tool call emits an MCP progress
+	// notification; zero means defaultProgressInterval. Tests compress it.
+	ProgressInterval time.Duration
 	// Now overrides the clock for tests.
 	Now func() time.Time
 }
@@ -65,7 +76,10 @@ type Server struct {
 	setState     RunStateSetter
 	submitReview ReviewSubmitFn
 	waitCeiling  time.Duration
-	now          func() time.Time
+
+	progressInterval time.Duration
+
+	now func() time.Time
 
 	mu      sync.Mutex
 	byToken map[string]string // token → run ID
@@ -91,10 +105,13 @@ func New(opts Options) *Server {
 		setState:     opts.SetRunState,
 		submitReview: opts.SubmitReview,
 		waitCeiling:  opts.WaitCeiling,
-		now:          now,
-		byToken:      map[string]string{},
-		byRun:        map[string]string{},
-		waiters:      map[string][]chan ports.Response{},
+
+		progressInterval: opts.ProgressInterval,
+
+		now:     now,
+		byToken: map[string]string{},
+		byRun:   map[string]string{},
+		waiters: map[string][]chan ports.Response{},
 	}
 }
 
@@ -267,14 +284,20 @@ func (s *Server) wake(elicitationID string, resp ports.Response) {
 }
 
 // ceilingFor is the blocked-call ceiling: the option override, else the run's agent
-// wall-clock limit, else the default.
+// wall-clock limit (floored at minWaitCeiling), else the default.
+//
+// The agent's wall-clock limit is deliberately the same number S19 writes into the
+// container as MCP_TOOL_TIMEOUT, so the client and the server abandon a question at the
+// same moment rather than one silently outliving the other. Note what it no longer means:
+// since the scheduler pauses a parked run's wall clock (D-12), this bounds how long the
+// question stays answerable, not how much working time the run has left afterwards.
 func (s *Server) ceilingFor(ctx context.Context, run domain.Run) time.Duration {
 	if s.waitCeiling > 0 {
 		return s.waitCeiling
 	}
 	if agent, err := s.st.Agents().ByID(ctx, run.AgentID); err == nil &&
 		agent.MaxWallClockSeconds > 0 {
-		return time.Duration(agent.MaxWallClockSeconds) * time.Second
+		return max(time.Duration(agent.MaxWallClockSeconds)*time.Second, minWaitCeiling)
 	}
 	return defaultWaitCeiling
 }

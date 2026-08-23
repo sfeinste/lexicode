@@ -1,7 +1,15 @@
 /*
  * The 40px fixed top bar (UI spec §2.1): wordmark, Home, Inbox (badge shows only an
  * actionable count), the ⌘K search affordance, the cheatsheet button and the user menu
- * (theme, density, sign out).
+ * (workspace settings, theme, density, sign out).
+ *
+ * §2.1 draws the top bar's right side as `[avatar] [?]` and does not pin where `/settings`
+ * hangs, and §1's IA rule 1 says nothing lives above the project except the project list and
+ * the inbox — so the workspace's own screen belongs in the account menu behind the avatar,
+ * the conventional home for it, and not as a fourth item in the global nav beside Home and
+ * Inbox. It is shown to members as well as owners: the page itself is owner-only and says so
+ * in words, which is a better answer than a menu item that isn't there for someone who was
+ * told (by the docs, or by `lexicode doctor`) to go to Settings → Credentials.
  */
 import { useMutation } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -180,6 +188,19 @@ function UserMenu({ user }: { user: User }) {
             <div>{user.display_name}</div>
             <div className={styles.menuMeta}>{user.email}</div>
           </div>
+          {/*
+            The only way into `/settings` (UI spec §1: "Workspace: members, integrations,
+            defaults, audit log"). Everything under it — Claude credentials most of all, which
+            no agent can run without — used to be reachable only by typing the URL.
+          */}
+          <Link
+            to="/settings"
+            role="menuitem"
+            className={styles.menuAction}
+            onClick={() => setOpen(false)}
+          >
+            Workspace settings
+          </Link>
           <label className={styles.menuRow}>
             Theme
             <select

@@ -4,16 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 	"github.com/spruce/lexicode/internal/kernel/store"
 )
+
+// parkedTimerHorizon is what the wall-clock timer is set to while a run is parked: long
+// enough that it never fires, finite so a leaked supervisor is still bounded by the process.
+const parkedTimerHorizon = 100 * 365 * 24 * time.Hour
 
 // startSupervisor hands one admitted run to its own goroutine. The supervisor owns the run
 // from provisioning to teardown; the admission loop never blocks on it.
@@ -34,7 +36,11 @@ func (s *Scheduler) superviseFrom(run domain.Run, reattached ports.Instance) {
 		return
 	}
 	ctx, cancel := context.WithCancel(s.baseCtx)
-	sup := &supervisor{runID: run.ID, cancel: cancel, steer: make(chan struct{}, 1)}
+	sup := &supervisor{
+		runID: run.ID, cancel: cancel,
+		steer: make(chan struct{}, 1),
+		park:  make(chan struct{}, 1),
+	}
 	sup.inst = reattached
 	s.supervisors[run.ID] = sup
 	s.loops.Add(1)
@@ -135,8 +141,14 @@ func (s *Scheduler) supervise(ctx context.Context, sup *supervisor, run domain.R
 	// composer is enabled throughout (§10.3).
 	s.drainSteering(ctx, sup, run.ID)
 
-	// Wall clock counts from started_at, surviving restarts.
+	// Wall clock counts from started_at, surviving restarts, and does not advance while the
+	// run is parked on a human (D-12): see supervisor.parked and wallRemaining.
 	deadline := s.wallDeadline(ctx, run, agent)
+	// A run that is already parked when its supervisor starts — the §10.6 reattach of a run
+	// that was waiting on a question when the orchestrator restarted — starts parked, and
+	// backdates to when it actually parked so the restart does not charge it for a wait it
+	// already was not being charged for.
+	s.seedParked(ctx, sup, run)
 
 	waitCh := make(chan waitOutcome, 1)
 	go func() {
@@ -144,7 +156,7 @@ func (s *Scheduler) supervise(ctx context.Context, sup *supervisor, run domain.R
 		waitCh <- waitOutcome{res: res, err: err}
 	}()
 
-	timer := time.NewTimer(time.Until(deadline))
+	timer := time.NewTimer(sup.wallRemaining(s.opts.Now(), deadline))
 	defer timer.Stop()
 	for {
 		select {
@@ -162,7 +174,21 @@ func (s *Scheduler) supervise(ctx context.Context, sup *supervisor, run domain.R
 			return
 		case <-sup.steer:
 			s.drainSteering(ctx, sup, run.ID)
+		case <-sup.park:
+			// The run parked or resumed; re-derive the deadline. While parked the timer is
+			// pushed past any run's lifetime, so nothing fires on a run that is only
+			// waiting for a person; on resume it comes back with the parked time credited.
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(sup.wallRemaining(s.opts.Now(), deadline))
 		case <-timer.C:
+			if sup.isParked() {
+				continue // raced a park; the reset above owns the next deadline
+			}
 			sup.requestStop(ctx, domain.RunTimedOut, fmt.Sprintf(
 				"wall clock limit of %s reached", (time.Duration(agent.MaxWallClockSeconds)*time.Second)))
 		case w := <-waitCh:
@@ -215,6 +241,83 @@ func (s *Scheduler) wallDeadline(_ context.Context, run domain.Run, agent domain
 	return start.Add(limit)
 }
 
+// wallRemaining is how long the timer should run for. Parked runs get forever — the wall
+// clock is a bound on agent work (D-12), and a run waiting on a human is not working — and
+// everything else gets what is left of the deadline plus whatever parked time has already
+// been credited back.
+func (sup *supervisor) wallRemaining(now, deadline time.Time) time.Duration {
+	sup.mu.Lock()
+	defer sup.mu.Unlock()
+	if sup.parked {
+		// A duration no run reaches, so the timer never fires while parked. The loop owns
+		// exactly one timer for its whole life and Reset needs a duration, so "never" is
+		// spelled as a horizon rather than as a nil channel.
+		return parkedTimerHorizon
+	}
+	return deadline.Add(sup.parkedTotal).Sub(now)
+}
+
+func (sup *supervisor) isParked() bool {
+	sup.mu.Lock()
+	defer sup.mu.Unlock()
+	return sup.parked
+}
+
+// setParked records a park or a resume and nudges the supervise loop to re-derive its timer.
+// Repeating the state it is already in is a no-op, so the elicitation seam can call it on
+// every transition without double-counting.
+func (sup *supervisor) setParked(parked bool, now time.Time) {
+	sup.mu.Lock()
+	if parked == sup.parked {
+		sup.mu.Unlock()
+		return
+	}
+	sup.parked = parked
+	if parked {
+		sup.parkedSince = now
+	} else if !sup.parkedSince.IsZero() {
+		sup.parkedTotal += now.Sub(sup.parkedSince)
+		sup.parkedSince = time.Time{}
+	}
+	sup.mu.Unlock()
+	select {
+	case sup.park <- struct{}{}:
+	default:
+	}
+}
+
+// notePark is the scheduler side of the same thing: the state machine tells the run's
+// supervisor that it just parked or resumed. Runs with no live supervisor (queued, terminal,
+// a parked run whose container died) are a no-op.
+func (s *Scheduler) notePark(runID string, state domain.RunState) {
+	s.mu.Lock()
+	sup := s.supervisors[runID]
+	s.mu.Unlock()
+	if sup == nil {
+		return
+	}
+	sup.setParked(state == domain.RunNeedsInput || state == domain.RunAwaitingApproval, s.opts.Now())
+}
+
+// seedParked starts a supervisor's clock in the right state. It matters only on the §10.6
+// reattach path, where a run can already be parked before anything transitions it: without
+// this, a question asked before a restart would be charged to the run's working budget from
+// started_at, and a long-parked run would time out the instant it was reattached.
+func (s *Scheduler) seedParked(ctx context.Context, sup *supervisor, run domain.Run) {
+	if run.State != domain.RunNeedsInput && run.State != domain.RunAwaitingApproval {
+		return
+	}
+	since := s.opts.Now()
+	if pending, err := s.st.Elicitations().PendingForRun(ctx, run.ID); err == nil {
+		for _, el := range pending {
+			if t, perr := time.Parse(time.RFC3339, el.CreatedAt); perr == nil && t.Before(since) {
+				since = t
+			}
+		}
+	}
+	sup.setParked(true, since)
+}
+
 // ---------------------------------------------------------------- provisioning -----
 
 // provision is §10.3: mint the token, register the proxy, build the spec, Prepare with the
@@ -251,6 +354,19 @@ func (s *Scheduler) provision(ctx context.Context, sup *supervisor, run domain.R
 			ticket = &tk
 		}
 	}
+	// The causing event: the builder needs it to prepare a pull-request run ON the pull
+	// request. Best-effort, like the ticket above — a run whose event row has gone is
+	// prepared the ordinary way rather than failing to provision.
+	var causeEvent *domain.Event
+	if run.CauseEventID != nil {
+		if ev, err := s.st.Events().ByID(ctx, *run.CauseEventID); err == nil {
+			causeEvent = &ev
+		} else {
+			s.logger.Warn("sched: the run's causing event could not be read",
+				slog.String("run", run.ID), slog.String("event", *run.CauseEventID),
+				slog.String("error", err.Error()))
+		}
+	}
 
 	if s.opts.Proxy != nil {
 		var hosts []string
@@ -265,7 +381,7 @@ func (s *Scheduler) provision(ctx context.Context, sup *supervisor, run domain.R
 	}
 	built, err := s.opts.Specs.Build(ctx, SpecInput{
 		Workspace: ws, Project: project, Repo: repo, Agent: agent,
-		Ticket: ticket, Run: run, RunToken: token,
+		Ticket: ticket, Run: run, CauseEvent: causeEvent, RunToken: token,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("preparing the workspace spec: %w", err)
@@ -493,19 +609,22 @@ func (s *Scheduler) finishWithoutInstance(ctx context.Context, run domain.Run, k
 func (s *Scheduler) finish(ctx context.Context, sup *supervisor, run domain.Run, agent domain.Agent, inst ports.Instance, branch string, kind domain.RunState, reason, message string) {
 	ctx = context.WithoutCancel(ctx)
 
-	// The failure-artifact rule: a failed run never leaves nothing behind. Whatever exists
-	// is committed and pushed before the container is destroyed. Completed runs pushed
-	// their own work; the wip commit is for the ones that could not.
-	preserved := false
-	if inst != nil && branch != "" && kind != domain.RunCompleted {
-		preserved = s.pushArtifact(ctx, run, inst, branch)
+	// The push (§10.5, and the D-9 amendment): the ORCHESTRATOR pushes, for every outcome,
+	// because the agent's container holds no credential that could. For a run that ended
+	// badly this is also the failure-artifact rule — whatever is in the workspace is
+	// committed as wip first, so a failed run never leaves nothing behind. For a run that
+	// completed it is how its branch reaches the remote at all, which is what the pull
+	// request is then opened from.
+	preserved := s.preserveAndPush(ctx, run, agent, inst, branch)
+	if preserved.pushed && kind != domain.RunCompleted {
+		s.recordPartialWork(ctx, run, preserved.branch)
 	}
 
 	fresh, err := s.st.Runs().ByID(ctx, run.ID)
 	if err == nil {
 		run = fresh
 	}
-	finalMessage := s.terminalMessage(kind, run, branch, message, preserved)
+	finalMessage := s.terminalMessage(kind, run, message, preserved)
 
 	// Teardown: revoke the MCP token, unregister the proxy, destroy the container.
 	if s.opts.Tokens != nil {
@@ -569,11 +688,23 @@ func (s *Scheduler) finish(ctx context.Context, sup *supervisor, run domain.Run,
 
 // terminalMessage renders the outcome line, naming the preserved branch (§10.5's exact shape:
 // "Failed after 6 steps. Partial work pushed to `dev/PAY-14-idempotency-keys`.").
-func (s *Scheduler) terminalMessage(kind domain.RunState, run domain.Run, branch, message string, preserved bool) string {
+//
+// Every clause is a fact from preserveOutcome. A push that failed says so and names the
+// error; a workspace with nothing in it says nothing at all. The version this replaced ran
+// `git push … || true` and then claimed "Partial work pushed to `branch`" whatever happened,
+// which is the one thing a terminal message must never do.
+func (s *Scheduler) terminalMessage(kind domain.RunState, run domain.Run, message string, p preserveOutcome) string {
 	var b strings.Builder
 	switch kind {
 	case domain.RunCompleted:
-		return message
+		b.WriteString(message)
+		// A completed run's own text is the message; the only thing worth adding is a push
+		// that did not happen, because the pull request will be missing and the reason
+		// belongs next to it.
+		if p.attempted && p.failure != "" {
+			fmt.Fprintf(&b, " The branch could not be pushed: %s.", strings.TrimSuffix(p.failure, "."))
+		}
+		return strings.TrimSpace(b.String())
 	case domain.RunFailed:
 		fmt.Fprintf(&b, "Failed after %d steps.", run.StepCount)
 	case domain.RunTimedOut:
@@ -584,53 +715,25 @@ func (s *Scheduler) terminalMessage(kind domain.RunState, run domain.Run, branch
 	if message != "" {
 		b.WriteString(" " + strings.TrimSuffix(message, ".") + ".")
 	}
-	if preserved {
-		fmt.Fprintf(&b, " Partial work pushed to `%s`.", branch)
+	switch {
+	case !p.attempted:
+	case p.pushed:
+		fmt.Fprintf(&b, " Partial work pushed to `%s`.", p.branch)
+	case p.failure != "" && p.committed:
+		fmt.Fprintf(&b, " Partial work was committed on `%s` but could not be pushed: %s.",
+			p.branch, strings.TrimSuffix(p.failure, "."))
+	case p.failure != "":
+		fmt.Fprintf(&b, " Partial work could not be preserved: %s.",
+			strings.TrimSuffix(p.failure, "."))
+	case p.nothing:
+		b.WriteString(" There was nothing to preserve: the workspace held no changes.")
 	}
 	return b.String()
 }
 
-// pushArtifact runs the §10.5 commit-and-push inside the instance and records the
-// partial_work output. Both git commands tolerate failure (`|| true`) — an empty workspace
-// or an unreachable remote must not turn teardown into a hang.
-func (s *Scheduler) pushArtifact(ctx context.Context, run domain.Run, inst ports.Instance, branch string) bool {
-	summary := run.CurrentStep
-	if summary == "" {
-		summary = "run " + fmt.Sprintf("#%d", run.Seq)
-	}
-	script := fmt.Sprintf("git add -A && git commit -m %s || true; git push origin %s || true",
-		shellQuote(fmt.Sprintf("wip: %s [lexicode run %s]", summary, run.ID)),
-		shellQuote(branch))
-	streams, err := inst.Exec(ctx, []string{"/bin/sh", "-c", script}, ports.ExecOpts{})
-	if err != nil {
-		s.logger.Error("sched: artifact push exec failed",
-			slog.String("run", run.ID), slog.String("error", err.Error()))
-		return false
-	}
-	if streams.Stdin != nil {
-		_ = streams.Stdin.Close()
-	}
-	// Drain stdout and stderr CONCURRENTLY: the docker exec demultiplexer feeds both
-	// through unbuffered pipes, so reading one to EOF before touching the other deadlocks
-	// the moment the ignored stream produces a frame (git push reports on stderr).
-	var drains sync.WaitGroup
-	for _, r := range []io.Reader{streams.Stdout, streams.Stderr} {
-		if r == nil {
-			continue
-		}
-		drains.Add(1)
-		go func(r io.Reader) {
-			defer drains.Done()
-			_, _ = io.Copy(io.Discard, r)
-		}(r)
-	}
-	drains.Wait()
-	if streams.Wait != nil {
-		if _, err := streams.Wait(); err != nil {
-			s.logger.Warn("sched: artifact push wait failed",
-				slog.String("run", run.ID), slog.String("error", err.Error()))
-		}
-	}
+// recordPartialWork writes the §10.5 output row. It is written only when a push actually
+// landed, so the row and the terminal message cannot disagree.
+func (s *Scheduler) recordPartialWork(ctx context.Context, run domain.Run, branch string) {
 	out := domain.RunOutput{
 		ID: domain.NewID(), RunID: run.ID, Kind: domain.OutputPartialWork,
 		Ref: branch, Summary: "Partial work pushed to `" + branch + "`.",
@@ -640,12 +743,6 @@ func (s *Scheduler) pushArtifact(ctx context.Context, run domain.Run, inst ports
 		s.logger.Error("sched: partial_work output write failed",
 			slog.String("run", run.ID), slog.String("error", err.Error()))
 	}
-	return true
-}
-
-// shellQuote single-quotes a string for /bin/sh.
-func shellQuote(v string) string {
-	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
 // cancelPendingElicitations closes a terminated run's open questions so nothing waits on a

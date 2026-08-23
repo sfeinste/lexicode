@@ -11,6 +11,7 @@ import {
   type BootstrapApplyRequest,
   type ConnectRepoRequest,
   type UpdateRepoNetworkRequest,
+  type UpdateRepoSettingsRequest,
 } from "./client";
 import { projectKeys } from "./projectQueries";
 
@@ -53,6 +54,20 @@ export function useUpdateRepoNetwork(key: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: UpdateRepoNetworkRequest) => repoApi.updateNetwork(key, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: repoKeys.status(key) });
+    },
+  });
+}
+
+/**
+ * Setup script + branch template. Same shape as the network mutation: only the repo status
+ * card reads these columns.
+ */
+export function useUpdateRepoSettings(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateRepoSettingsRequest) => repoApi.updateSettings(key, body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: repoKeys.status(key) });
     },

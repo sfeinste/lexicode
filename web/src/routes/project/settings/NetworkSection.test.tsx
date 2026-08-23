@@ -84,3 +84,58 @@ describe("NetworkPolicyField", () => {
     expect(screen.queryByLabelText(/Allowed domains/)).toBeNull();
   });
 });
+
+/*
+ * An allowlist with no domains is the default state of every project, and it behaves exactly
+ * like `none` — the label reads permissive while the proxy denies everything. That discrepancy
+ * cost a real user a run: the policy said "allowlist" and `npm install` came back 403 with no
+ * explanation on this screen. These assert the screen states it instead.
+ */
+describe("NetworkPolicyField — what is actually reachable", () => {
+  it("warns that an empty allowlist behaves like None", () => {
+    subject({ policy: "allowlist", allowlist: [] });
+    expect(
+      screen.getByText(/This allowlist is empty, so it currently behaves exactly like None/),
+    ).toBeTruthy();
+    // The failure a user would otherwise meet only at runtime is named here.
+    expect(screen.getByText(/will fail with a proxy denial/)).toBeTruthy();
+  });
+
+  it("drops the warning once a domain is listed", () => {
+    subject({ policy: "allowlist", allowlist: ["registry.npmjs.org"] });
+    expect(screen.queryByText(/behaves exactly like None/)).toBeNull();
+  });
+
+  it("names what is reachable under each policy", () => {
+    const empty = subject({ policy: "allowlist", allowlist: [] });
+    expect(
+      screen.getByText(/the Anthropic API and this repository's git host, and nothing else/),
+    ).toBeTruthy();
+    empty.unmount();
+
+    const listed = subject({ policy: "allowlist", allowlist: ["a.com", "b.com"] });
+    expect(screen.getByText(/and 2 listed domains/)).toBeTruthy();
+    listed.unmount();
+
+    const one = subject({ policy: "allowlist", allowlist: ["a.com"] });
+    expect(screen.getByText(/and 1 listed domain\./)).toBeTruthy();
+    one.unmount();
+
+    subject({ policy: "open" });
+    expect(screen.getByText(/every host — the container joins the default Docker network/)).toBeTruthy();
+  });
+
+  it("says nothing-else for `none`, where the warning would be redundant", () => {
+    subject({ policy: "none" });
+    expect(screen.queryByText(/behaves exactly like None/)).toBeNull();
+    expect(
+      screen.getByText(/the Anthropic API and this repository's git host, and nothing else/),
+    ).toBeTruthy();
+  });
+
+  it("reports the INHERITED policy's reachability, not the stored override", () => {
+    // policy=null means inherit; the line must describe what will actually happen.
+    subject({ policy: null, workspaceDefault: "open", allowlist: [] });
+    expect(screen.getByText(/every host — the container joins the default Docker network/)).toBeTruthy();
+  });
+});
