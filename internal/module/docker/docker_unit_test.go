@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spruce/lexicode/internal/domain"
 	"github.com/spruce/lexicode/internal/kernel"
 	"github.com/spruce/lexicode/internal/kernel/ports"
 )
@@ -133,9 +135,101 @@ func TestPrepareNetworkRejectsUnknownMode(t *testing.T) {
 }
 
 func TestSweepRefusesWithoutRunStateLookup(t *testing.T) {
-	s := &Sandbox{}
+	s := &Sandbox{owner: "ws-test"}
 	if _, err := s.Sweep(context.Background()); err == nil {
 		t.Error("Sweep without a run-state lookup should refuse, not guess")
+	}
+}
+
+// Without an owner identity the sweeper cannot tell its own containers from another Lexicode's,
+// and "not my run" would mean "nobody's run". Refusing beats reaping someone else's live run.
+func TestSweepRefusesWithoutOwner(t *testing.T) {
+	s := &Sandbox{runState: func(context.Context, string) (domain.RunState, bool, error) {
+		return "", false, nil // every run unknown: without the owner guard, everything looks orphaned
+	}}
+	if _, err := s.Sweep(context.Background()); err == nil {
+		t.Error("Sweep without an owner identity should refuse, not guess")
+	}
+}
+
+// Every container is stamped with the owner, so a sweep can filter on it.
+func TestContainerLabelsCarryOwner(t *testing.T) {
+	s := &Sandbox{owner: "ws-abc"}
+	labels := s.containerLabels(ports.SandboxSpec{
+		RunID:     "run-1",
+		ProjectID: "proj-1",
+		Labels:    map[string]string{"extra": "kept", labelOwner: "impostor", labelRun: "spoof"},
+	}, "inst-1")
+
+	want := map[string]string{
+		labelOwner:    "ws-abc",
+		labelRun:      "run-1",
+		labelProject:  "proj-1",
+		labelInstance: "inst-1",
+		"extra":       "kept",
+	}
+	for k, v := range want {
+		if labels[k] != v {
+			t.Errorf("label %s = %q, want %q", k, labels[k], v)
+		}
+	}
+}
+
+// The owner is the workspace: same data dir → same identity across restarts (so a boot sweep
+// still recognises the containers the previous process left), different data dir → different
+// identity (so the acceptance scripts and the product never see each other's containers).
+func TestOwnerIDIdentifiesTheWorkspace(t *testing.T) {
+	a := t.TempDir()
+	b := t.TempDir()
+
+	mine := ownerID(a)
+	if mine == "" {
+		t.Error("ownerID returned empty for a real data dir")
+	}
+	if again := ownerID(a); again != mine {
+		t.Errorf("ownerID is not stable for one data dir: %q then %q", mine, again)
+	}
+	if theirs := ownerID(b); theirs == mine {
+		t.Errorf("two data dirs share the owner id %q", mine)
+	}
+	if same := ownerID(a + string(filepath.Separator) + "."); same != mine {
+		t.Errorf("ownerID(%q) = %q, want %q: the two paths are the same dir", a+"/.", same, mine)
+	}
+	if got := ownerID(""); got != "" {
+		t.Errorf("ownerID(\"\") = %q, want empty so the caller can keep its fallback", got)
+	}
+	if strings.Contains(mine, a) {
+		t.Error("ownerID leaks the operator's path into a container label")
+	}
+}
+
+// Init derives the sandbox owner from the configured data dir; with no data dir the sandbox
+// still has an owner (the per-process fallback), never an empty one that Sweep would refuse.
+func TestModuleInitDerivesOwnerFromDataDir(t *testing.T) {
+	dir := t.TempDir()
+	m := New(Options{DataDir: dir})
+	k := kernel.New(kernel.Options{})
+	if err := k.RegisterModule(m); err != nil {
+		t.Fatalf("RegisterModule: %v", err)
+	}
+	if err := k.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if got, want := m.Sandbox().owner, ownerID(dir); got != want {
+		t.Errorf("sandbox owner = %q, want %q", got, want)
+	}
+
+	bare := New(Options{})
+	k2 := kernel.New(kernel.Options{})
+	if err := k2.RegisterModule(bare); err != nil {
+		t.Fatalf("RegisterModule: %v", err)
+	}
+	if err := k2.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if bare.Sandbox().owner != processOwner {
+		t.Errorf("owner without a data dir = %q, want the process fallback %q",
+			bare.Sandbox().owner, processOwner)
 	}
 }
 

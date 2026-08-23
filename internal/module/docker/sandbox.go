@@ -19,13 +19,15 @@ import (
 	"github.com/spruce/lexicode/internal/kernel/ports"
 )
 
-// Container labels (architecture §10.6). labelInstance marks a container as ours — its presence
-// is what the orphan sweeper keys on — and carries the InstanceRef.InstanceID that Reattach
-// finds the container back by.
+// Container labels (architecture §10.6). labelInstance carries the InstanceRef.InstanceID that
+// Reattach finds the container back by — one value per container. labelOwner carries the
+// identity of the Lexicode instance that created it, which is what the orphan sweeper keys on;
+// see owner.go for why the two cannot be the same label.
 const (
 	labelRun      = "lexicode.run"
 	labelInstance = "lexicode.instance"
 	labelProject  = "lexicode.project"
+	labelOwner    = "lexicode.owner"
 )
 
 // internalNetwork is the Docker network `none` and `allowlist` containers join: internal, so
@@ -114,6 +116,10 @@ type Sandbox struct {
 	logger     *slog.Logger
 	runState   RunStateFn
 	extraBinds []string // test seam: host bind mounts added to every container
+	// owner is this Lexicode instance's identity, stamped on every container it creates and
+	// the only containers Sweep will remove (owner.go). The module sets it from
+	// Options.DataDir; NewSandbox leaves the per-process fallback in place.
+	owner string
 	// proxyPort is the host port the S18 egress proxy listens on; none/allowlist containers
 	// get an egress relay targeting it (relay.go). Zero disables the relay — containers on
 	// the internal network then simply have no egress (restrictive, never permissive).
@@ -141,7 +147,7 @@ func NewSandbox(host string, logger *slog.Logger) (*Sandbox, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Sandbox{cli: cli, logger: logger}, nil
+	return &Sandbox{cli: cli, logger: logger, owner: processOwner}, nil
 }
 
 // ID implements ports.Sandbox.
@@ -245,16 +251,7 @@ func (s *Sandbox) createAndStart(ctx context.Context, spec ports.SandboxSpec, im
 	}
 
 	instanceID := domain.NewID()
-	labels := map[string]string{
-		labelRun:      spec.RunID,
-		labelInstance: instanceID,
-		labelProject:  spec.ProjectID,
-	}
-	for k, v := range spec.Labels {
-		if _, reserved := labels[k]; !reserved {
-			labels[k] = v
-		}
-	}
+	labels := s.containerLabels(spec, instanceID)
 
 	// HOME is root's home: the container runs as uid 0 with a writable rootfs (posture item
 	// 2), so the natural home directory works and tools that write dotfiles and caches
@@ -346,6 +343,25 @@ func (s *Sandbox) createAndStart(ctx context.Context, spec ports.SandboxSpec, im
 
 	sink.Step(step, ports.StepOK, "created "+shortID(created.ID))
 	return inst, nil
+}
+
+// containerLabels is the label set every run container carries: the run and project it belongs
+// to, its own instance id, and the Lexicode instance that owns it. The four are reserved — a
+// spec label may not overwrite one, or a caller could make its container look like another
+// instance's (or like no run at all, which the sweeper reads as an orphan).
+func (s *Sandbox) containerLabels(spec ports.SandboxSpec, instanceID string) map[string]string {
+	labels := map[string]string{
+		labelRun:      spec.RunID,
+		labelInstance: instanceID,
+		labelProject:  spec.ProjectID,
+		labelOwner:    s.owner,
+	}
+	for k, v := range spec.Labels {
+		if _, reserved := labels[k]; !reserved {
+			labels[k] = v
+		}
+	}
+	return labels
 }
 
 // prepareNetwork maps the resolved policy onto a Docker network. `open` (and an unset mode) is

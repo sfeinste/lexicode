@@ -267,7 +267,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	if err := k.RegisterModule(cronmod.New(cronmod.Options{})); err != nil {
 		return err
 	}
-	dockerMod := dockermod.New(dockermod.Options{Host: cfg.DockerHost, ProxyPort: cfg.ProxyPort})
+	// DataDir is what makes this instance's containers distinguishable from another Lexicode's
+	// on the same machine — the orphan sweeper removes only its own (module/docker owner.go).
+	dockerMod := dockermod.New(dockermod.Options{
+		Host: cfg.DockerHost, ProxyPort: cfg.ProxyPort, DataDir: cfg.DataDir,
+	})
 	if err := k.RegisterModule(dockerMod); err != nil {
 		return err
 	}

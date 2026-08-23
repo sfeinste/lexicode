@@ -34,6 +34,12 @@ type Options struct {
 	Host string
 	// Logger overrides the kernel logger; tests capture output through it.
 	Logger *slog.Logger
+	// DataDir is the workspace this process serves (config data_dir). It is this Lexicode
+	// instance's identity: containers are stamped with an owner label derived from it, and the
+	// orphan sweeper removes only containers carrying that owner (owner.go). Empty leaves the
+	// per-process fallback, which is safe but does not survive a restart — production wiring
+	// always passes it.
+	DataDir string
 	// RunState is the orphan sweeper's only reach into the rest of the system: what state is
 	// this run in, if it exists at all? Nil means "wire from the kernel store in Init".
 	RunState RunStateFn
@@ -95,6 +101,9 @@ func (m *Module) Init(k *kernel.Kernel) error {
 	}
 	sb.extraBinds = m.opts.ExtraBinds
 	sb.runState = m.opts.RunState
+	if owner := ownerID(m.opts.DataDir); owner != "" {
+		sb.owner = owner
+	}
 	if sb.runState == nil && k.Store() != nil {
 		st := k.Store()
 		sb.runState = func(ctx context.Context, runID string) (domain.RunState, bool, error) {
