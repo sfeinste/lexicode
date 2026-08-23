@@ -127,7 +127,7 @@ func (p *ReviewProvider) Resolve(ctx context.Context, req ports.ContextRequest) 
 		p.logger.Warn("contextmod: review assembly fell back to the event fragment",
 			slog.String("event", ev.ID), slog.Int("pr", prNumber),
 			slog.String("error", err.Error()))
-		assembled = fragmentOnly(pl)
+		assembled = degradeToFragment(assembled, pl)
 	}
 
 	body := renderReview(prNumber, pl, assembled)
@@ -184,6 +184,23 @@ func fragmentOnly(pl reviewPayload) assembledReview {
 				Line:        pl.Comment.Line,
 			}},
 		}}
+	}
+	return a
+}
+
+// degradeToFragment turns a failed assembly into the honest fragment: what the event itself
+// carried, plus anything the partial read already had in hand — a summary read off the review
+// listing before the thread read failed is worth keeping, since a comment event carries none.
+func degradeToFragment(partial assembledReview, pl reviewPayload) assembledReview {
+	a := fragmentOnly(pl)
+	if strings.TrimSpace(a.Summary) == "" {
+		a.Summary = partial.Summary
+	}
+	if a.Author == "" {
+		a.Author = partial.Author
+	}
+	if a.State == "" {
+		a.State = partial.State
 	}
 	return a
 }
@@ -262,15 +279,15 @@ func (p *ReviewProvider) assemble(ctx context.Context, projectID string, prNumbe
 	return out, nil
 }
 
-// threadsOfReview picks the threads that belong to the review the run is answering: the ones
-// whose first comment was submitted as part of it. Two cases have no review to match on and
-// are handled by falling back to the one thread the event named — a forge that does not group
-// a comment into a review at all, and a lone comment left outside any review.
+// threadsOfReview picks the threads that belong to the review the run is answering: every
+// thread any of whose comments was submitted as part of it. Two cases have no review to match
+// on and are handled by falling back to the one thread the event named — a forge that does not
+// group a comment into a review at all, and a lone comment left outside any review.
 func threadsOfReview(threads []domain.ReviewThread, reviewID, commentID string) []domain.ReviewThread {
 	if reviewID != "" {
 		var out []domain.ReviewThread
 		for _, t := range threads {
-			if t.ReviewID != 0 && fmt.Sprint(t.ReviewID) == reviewID {
+			if threadInReview(t, reviewID) {
 				out = append(out, t)
 			}
 		}
@@ -288,6 +305,21 @@ func threadsOfReview(threads []domain.ReviewThread, reviewID, commentID string) 
 		}
 	}
 	return nil
+}
+
+// threadInReview reports whether the review left any comment on this thread. It scans every
+// comment, not just the first: a second-pass review is largely replies to threads an earlier
+// review opened, and GitHub gives each reply the id of the review that submitted it while
+// ReviewThread.ReviewID carries the id of the review that opened the thread. Matching on the
+// thread alone therefore finds nothing for exactly the case this provider exists for.
+func threadInReview(t domain.ReviewThread, reviewID string) bool {
+	for _, cm := range t.Comments {
+		if cm.ReviewID != 0 && fmt.Sprint(cm.ReviewID) == reviewID {
+			return true
+		}
+	}
+	// A forge that reports the thread's review but not its comments' still matches.
+	return t.ReviewID != 0 && fmt.Sprint(t.ReviewID) == reviewID
 }
 
 // reviewIDOf is the review the event belongs to: its own id for a review submission, the

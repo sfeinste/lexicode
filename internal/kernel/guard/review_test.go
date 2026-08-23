@@ -2,6 +2,7 @@ package guard
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/spruce/lexicode/internal/domain"
@@ -78,6 +79,12 @@ func TestReviewCoalescingIsOneRunPerReview(t *testing.T) {
 		}
 		if v.AbsorbedByRunID == nil || *v.AbsorbedByRunID != run.ID {
 			t.Fatalf("comment %d absorbed_by = %v, want %s", i+1, v.AbsorbedByRunID, run.ID)
+		}
+		// The run is inside the ordinary debounce window too, so the reason is what tells
+		// the two apart: without layer 2a this is the time-keyed absorption, which would
+		// let the sixth comment through as soon as the window passed.
+		if !strings.Contains(v.Reason, "review 555 was already given") {
+			t.Fatalf("comment %d reason = %q, want the review-keyed absorption", i+1, v.Reason)
 		}
 	}
 }

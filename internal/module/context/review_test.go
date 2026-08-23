@@ -200,6 +200,130 @@ func TestReviewProviderAssemblesFromACommentFragment(t *testing.T) {
 	}
 }
 
+// reply appends one comment of a later review to an existing thread — what a second-pass review
+// is mostly made of. The reply carries the id of the review that submitted it; the thread and
+// its first comment still carry the id of the review that opened it, which is how GitHub
+// reports it.
+func reply(th domain.ReviewThread, reviewID int64, id int64, body string) domain.ReviewThread {
+	th.Comments = append(th.Comments, domain.Comment{
+		ID: id, SubjectNumber: 219, AuthorLogin: "alice", Body: body,
+		Path: th.Path, Line: th.Line, ReviewID: reviewID,
+		InReplyToID: th.Comments[0].ID, CreatedAt: time.Now(),
+	})
+	return th
+}
+
+// TestReviewProviderAssemblesAReviewOfReplies is the second-pass case the ticket is about: a
+// re-review that only replies to threads an earlier review opened. Every thread still belongs
+// to the first review, so a match on the thread alone finds nothing — and the section would
+// then claim the review left no inline comments while the guard has already coalesced away the
+// comment events that carried them.
+func TestReviewProviderAssemblesAReviewOfReplies(t *testing.T) {
+	st := openStore(t)
+	p := seedProject(t, st)
+	sec := openSecrets(t, st)
+	connectRepo(t, st, sec, p)
+
+	threads := []domain.ReviewThread{
+		reply(thread("t1", 555, "internal/api/rate.go", 42, "this is off by one", nil), 556, 2002, "still off by one"),
+		reply(thread("t2", 555, "internal/api/rate.go", 88, "swallow the error?", nil), 556, 2003, "the error is still swallowed"),
+		thread("t3", 555, "internal/store/limits.go", 12, "index this column", nil), // untouched by review 556
+	}
+	items, err := NewReviewProvider(st, sec, &fakeReviews{threads: threads}, discardLogger()).
+		Resolve(context.Background(), ports.ContextRequest{
+			ProjectID: p.ID, CausingEvent: reviewEvent("556", "Two of these are still open."),
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want one", len(items))
+	}
+	body := items[0].Body
+	if strings.Contains(body, "left no inline comments") {
+		t.Fatalf("a review made of replies rendered as having no inline comments:\n%s", body)
+	}
+	for _, want := range []string{
+		"still off by one", "the error is still swallowed",
+		"this is off by one", "swallow the error?", // the threads' own history comes with them
+		"All 2 open thread(s)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the section is missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "index this column") {
+		t.Errorf("a thread this review never touched was pulled in:\n%s", body)
+	}
+}
+
+// TestReviewProviderAssemblesAMixedReview: a re-review that opens one new thread and replies to
+// another must carry both — the failure the reply case hides is that the new thread renders,
+// the reply is dropped, and the section still says every open thread is above.
+func TestReviewProviderAssemblesAMixedReview(t *testing.T) {
+	st := openStore(t)
+	p := seedProject(t, st)
+	sec := openSecrets(t, st)
+	connectRepo(t, st, sec, p)
+
+	threads := []domain.ReviewThread{
+		reply(thread("t1", 555, "internal/api/rate.go", 42, "this is off by one", nil), 556, 2002, "still off by one"),
+		thread("t4", 556, "web/src/Rate.tsx", 30, "this state can go", nil),
+	}
+	items, err := NewReviewProvider(st, sec, &fakeReviews{threads: threads}, discardLogger()).
+		Resolve(context.Background(), ports.ContextRequest{
+			ProjectID: p.ID, CausingEvent: commentEvent("556", "2002"),
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := items[0].Body
+	for _, want := range []string{"still off by one", "this state can go", "All 2 open thread(s)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the section is missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestReviewProviderKeepsTheSummaryItAlreadyRead: the summary comes off the review listing and
+// the threads off a second read. When only the second fails, the section degrades to the
+// fragment — but the summary that was already in hand stays in it.
+func TestReviewProviderKeepsTheSummaryItAlreadyRead(t *testing.T) {
+	st := openStore(t)
+	p := seedProject(t, st)
+	sec := openSecrets(t, st)
+	connectRepo(t, st, sec, p)
+
+	forge := &halfDownReviews{reviews: []domain.Review{
+		{ID: 555, PRNumber: 219, AuthorLogin: "alice", State: "CHANGES_REQUESTED", Body: "Five things before this can land."},
+	}}
+	items, err := NewReviewProvider(st, sec, forge, discardLogger()).
+		Resolve(context.Background(), ports.ContextRequest{
+			ProjectID: p.ID, CausingEvent: commentEvent("555", "1042"),
+		})
+	if err != nil {
+		t.Fatalf("a thread-read outage failed the resolve: %v", err)
+	}
+	body := items[0].Body
+	if !strings.Contains(body, "Five things before this can land.") {
+		t.Errorf("the summary that was already read was thrown away:\n%s", body)
+	}
+	if !strings.Contains(body, "this is off by one") || !strings.Contains(body, "could not be reached") {
+		t.Errorf("the section is not the honest fragment:\n%s", body)
+	}
+}
+
+// halfDownReviews answers the review listing and fails the thread read — a partial outage.
+type halfDownReviews struct{ reviews []domain.Review }
+
+func (f *halfDownReviews) ListReviews(context.Context, ports.Creds, domain.RepoRef, int) ([]domain.Review, error) {
+	return f.reviews, nil
+}
+
+func (f *halfDownReviews) ListReviewThreads(context.Context, ports.Creds, domain.RepoRef, int) ([]domain.ReviewThread, error) {
+	return nil, errors.New("github: 502 bad gateway")
+}
+
 // TestReviewProviderExcludesResolvedThreads is the third acceptance criterion: a thread a human
 // has resolved on the forge is not re-sent — it is counted and named as settled instead.
 func TestReviewProviderExcludesResolvedThreads(t *testing.T) {
