@@ -74,6 +74,16 @@ func ghUser(login, userType string) map[string]any {
 	return u
 }
 
+// ghFault makes one poll endpoint answer with an error status instead of data, so a test can
+// put exactly one of the five passes into the 403 or the 500 and watch what the other four do
+// (LEXI-9). hits counts the requests it actually served, which is how "the disabled resource
+// stopped being asked" is asserted.
+type ghFault struct {
+	status int
+	body   string
+	hits   int
+}
+
 type snapshotGH struct {
 	mu             sync.Mutex
 	prs            []ghPR
@@ -83,6 +93,39 @@ type snapshotGH struct {
 	suites         []ghSuite
 	commitEmails   map[string]string // head sha → author email
 	commitMessages map[string]string // head sha → full commit message (trailers included)
+	faults         map[string]*ghFault
+}
+
+// failWith arms a fault on one poll resource (a resXxx constant).
+func (g *snapshotGH) failWith(resource string, status int, body string) {
+	defer g.lock()()
+	g.faults[resource] = &ghFault{status: status, body: body}
+}
+
+func (g *snapshotGH) clearFault(resource string) {
+	defer g.lock()()
+	delete(g.faults, resource)
+}
+
+func (g *snapshotGH) faultHits(resource string) int {
+	defer g.lock()()
+	if f := g.faults[resource]; f != nil {
+		return f.hits
+	}
+	return 0
+}
+
+// faulted serves an armed fault. Callers already hold g.mu.
+func (g *snapshotGH) faulted(w http.ResponseWriter, resource string) bool {
+	f := g.faults[resource]
+	if f == nil {
+		return false
+	}
+	f.hits++
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(f.status)
+	_, _ = w.Write([]byte(f.body))
+	return true
 }
 
 func (g *snapshotGH) lock() func() { g.mu.Lock(); return g.mu.Unlock }
@@ -134,6 +177,9 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET "+base+"/pulls", func(w http.ResponseWriter, _ *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resPulls) {
+			return
+		}
 		prs := append([]ghPR(nil), g.prs...)
 		// sort=updated&direction=desc, which the forge's since-cutoff relies on
 		for i := 0; i < len(prs); i++ {
@@ -151,6 +197,9 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET "+base+"/pulls/comments", func(w http.ResponseWriter, _ *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resReviewComments) {
+			return
+		}
 		out := make([]map[string]any, 0, len(g.reviewComments))
 		for _, c := range g.reviewComments {
 			out = append(out, map[string]any{
@@ -175,6 +224,9 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET "+base+"/pulls/{n}/reviews", func(w http.ResponseWriter, r *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resReviews) {
+			return
+		}
 		out := make([]map[string]any, 0)
 		for _, rev := range g.reviews {
 			if fmt.Sprint(rev.PR) == r.PathValue("n") {
@@ -190,6 +242,9 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET "+base+"/issues/comments", func(w http.ResponseWriter, _ *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resIssueComments) {
+			return
+		}
 		out := make([]map[string]any, 0, len(g.issueComments))
 		for _, c := range g.issueComments {
 			out = append(out, map[string]any{
@@ -203,6 +258,9 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET "+base+"/commits/{sha}/check-suites", func(w http.ResponseWriter, r *http.Request) {
 		defer g.lock()()
+		if g.faulted(w, resCheckSuites) {
+			return
+		}
 		suites := make([]map[string]any, 0)
 		for _, s := range g.suites {
 			if s.HeadSHA == r.PathValue("sha") {
@@ -274,6 +332,7 @@ func newPollHarness(t *testing.T) *pollHarness {
 		gh: &snapshotGH{
 			commitEmails:   map[string]string{},
 			commitMessages: map[string]string{},
+			faults:         map[string]*ghFault{},
 		},
 		clock: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
 	}

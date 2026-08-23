@@ -48,7 +48,10 @@ type Forge struct {
 	record   OutputRecorder
 	auditRec AuditRecorder
 	health   func(state kernel.ModuleState, reason string)
-	now      func() string
+	// mh composes the module's single kernel state out of every cause that can degrade it
+	// at once — the rate limit and each denied poll resource (health.go).
+	mh  *moduleHealth
+	now func() string
 }
 
 // setLogger wraps l in the token-redacting handler; every line this module emits goes through
@@ -86,9 +89,53 @@ func (f *Forge) client(c ports.Creds) (*gh.Client, error) {
 }
 
 // wrapErr adds context to an API error while keeping the typed errors (*ports.RateLimitedError
-// in particular) reachable through errors.Is / errors.As.
+// in particular) reachable through errors.Is / errors.As. It is also the module's one error
+// boundary, so it is where a permission refusal becomes typed: see denied.
 func wrapErr(action string, r domain.RepoRef, err error) error {
+	if d := denied(err); d != nil {
+		return fmt.Errorf("github: %s for %s: %w", action, r, d)
+	}
 	return fmt.Errorf("github: %s for %s: %w", action, r, err)
+}
+
+// denied classifies "the token cannot see this" the way the transport classifies "the budget
+// is spent" (story S14): by type, never by matching on GitHub's prose. A 403 without
+// X-RateLimit-Remaining: 0 has already passed the transport's rate-limit gate, so what is left
+// is a permission refusal — the exact shape a PAT missing a fine-grained permission returns.
+// A 404 belongs here too: GitHub answers 404 rather than 403 for resources a token may not
+// even know exist, and for a repository that is gone; both are permanent for a poller.
+//
+// Secondary rate limits are 403s that ARE transient, and go-github types them
+// (*gh.AbuseRateLimitError) — they are excluded here so that backing off, not disabling, stays
+// the response to them. nil means "not a permission refusal"; the caller keeps the original.
+func denied(err error) *ports.ForbiddenError {
+	var (
+		rl    *ports.RateLimitedError
+		abuse *gh.AbuseRateLimitError
+		prim  *gh.RateLimitError
+	)
+	if errors.As(err, &rl) || errors.As(err, &abuse) || errors.As(err, &prim) {
+		return nil
+	}
+	var er *gh.ErrorResponse
+	if !errors.As(err, &er) || er.Response == nil {
+		return nil
+	}
+	switch er.Response.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+	default:
+		return nil
+	}
+	resource := ""
+	if er.Response.Request != nil && er.Response.Request.URL != nil {
+		resource = er.Response.Request.URL.Path
+	}
+	return &ports.ForbiddenError{
+		Resource: resource,
+		Status:   er.Response.StatusCode,
+		Detail:   strings.TrimSpace(er.Message),
+		Err:      err,
+	}
 }
 
 // ------------------------------------------------------------------------------ Verify -----

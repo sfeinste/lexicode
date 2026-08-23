@@ -49,6 +49,10 @@ const (
 	resReviewComments = "review_comments"
 	resIssueComments  = "issue_comments"
 	resCheckSuites    = "check_suites"
+	// resReviews has no poll_cursors row — reviews ride per-PR cursors in poll_pr_state
+	// (§7 table row 3). It exists so the reviews pass has a health identity of its own
+	// (pollhealth.go), the same as the four cursored resources.
+	resReviews = "reviews"
 )
 
 // Interval policy: workspace_settings.poll_interval_seconds, default 30, floor 10
@@ -59,9 +63,10 @@ const (
 	floorPollSeconds   = 10
 )
 
-// maxErrorBackoff bounds the exponential backoff a failing worker applies on top of the
-// configured interval (rate limits and API outages; the transport additionally marks the
-// module degraded, S14).
+// maxErrorBackoff bounds the exponential backoff applied on top of the configured interval
+// after a transient failure (rate limits and API outages; the transport additionally marks the
+// module degraded, S14). It applies per resource, and to a whole tick that could not even
+// begin — never to a worker whose resources are merely partly unreadable (LEXI-9).
 const maxErrorBackoff = 15 * time.Minute
 
 // errNoRepo tells a worker its project no longer has a connected repo; the worker exits.
@@ -77,6 +82,10 @@ type Poller struct {
 	creds func(ctx context.Context, rp domain.Repo) (ports.Creds, error)
 	now   func() time.Time
 
+	// after is the worker's sleep, seamed so a test can assert the cadence a resource
+	// failure leaves the worker on without waiting out real minutes.
+	after func(time.Duration) <-chan time.Time
+
 	mu      sync.Mutex
 	emit    ports.Emit
 	baseCtx context.Context
@@ -84,16 +93,29 @@ type Poller struct {
 	workers map[string]context.CancelFunc
 	started bool
 	wg      sync.WaitGroup
+
+	// mh composes this module's kernel state; rmu guards per-project resource health
+	// (pollhealth.go). Both are separate from mu, which guards the worker registry.
+	mh        *moduleHealth
+	rmu       sync.Mutex
+	resources map[string]map[string]*resourceState
 }
 
 // newPoller builds the poller around the module's forge. Store, creds and logger are wired in
 // Module.Init (or directly by tests).
 func newPoller(f *Forge) *Poller {
+	mh := newModuleHealth(nil)
+	if f != nil && f.mh != nil {
+		mh = f.mh
+	}
 	return &Poller{
-		forge:   f,
-		logger:  slog.Default(),
-		now:     time.Now,
-		workers: make(map[string]context.CancelFunc),
+		forge:     f,
+		logger:    slog.Default(),
+		now:       time.Now,
+		after:     time.After,
+		workers:   make(map[string]context.CancelFunc),
+		mh:        mh,
+		resources: make(map[string]map[string]*resourceState),
 	}
 }
 
@@ -162,17 +184,23 @@ func (p *Poller) Stop(ctx context.Context) error {
 // (module boot, and the repo.connected bus event).
 func (p *Poller) EnsureWorker(projectID string) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if !p.started {
+		p.mu.Unlock()
 		return // Start's repo listing will pick the project up
 	}
 	if _, ok := p.workers[projectID]; ok {
+		p.mu.Unlock()
+		// A running worker plus a repo.connected event is a RECONNECT — the fast path back
+		// for a user who has just fixed the token that got a resource disabled. Re-probe on
+		// the next tick instead of waiting out deniedRecheck.
+		p.forgetResources(projectID)
 		return
 	}
 	wctx, cancel := context.WithCancel(p.baseCtx)
 	p.workers[projectID] = cancel
 	p.wg.Add(1)
 	go p.runWorker(wctx, projectID)
+	p.mu.Unlock()
 	p.logger.Info("github.poll: worker started", slog.String("project", projectID))
 }
 
@@ -187,6 +215,7 @@ func (p *Poller) RemoveWorker(ctx context.Context, projectID string) {
 		cancel()
 		p.logger.Info("github.poll: worker stopped", slog.String("project", projectID))
 	}
+	p.forgetResources(projectID)
 	if p.store == nil {
 		return
 	}
@@ -224,8 +253,15 @@ func (p *Poller) interval(ctx context.Context) time.Duration {
 }
 
 // runWorker is one project's poll loop: tick, sleep the configured interval (re-read every
-// loop so a settings change applies without restart), exponential backoff on consecutive
-// failures, exit when the repo is disconnected or the context ends.
+// loop so a settings change applies without restart), exit when the repo is disconnected or
+// the context ends.
+//
+// The backoff here is for a tick that could not START — no repo row readable, credentials
+// unresolvable, the baseline pass failing. It is deliberately NOT reached by a resource that
+// merely cannot be polled: those back off individually inside tick (pollhealth.go), because a
+// worker that slows every resource down to the pace of its least readable one is the LEXI-9
+// bug — a token missing "Checks: read" put a 30-second poll on a 15-minute cadence and left
+// every trigger in the workspace quarter-hours late.
 func (p *Poller) runWorker(ctx context.Context, projectID string) {
 	defer p.wg.Done()
 	failures := 0
@@ -241,7 +277,7 @@ func (p *Poller) runWorker(ctx context.Context, projectID string) {
 			return
 		case err != nil:
 			failures++
-			p.logger.Warn("github.poll: tick failed", slog.String("project", projectID),
+			p.logger.Warn("github.poll: tick could not run", slog.String("project", projectID),
 				slog.Int("consecutive", failures), slog.String("error", err.Error()))
 		default:
 			failures = 0
@@ -249,23 +285,12 @@ func (p *Poller) runWorker(ctx context.Context, projectID string) {
 
 		wait := p.interval(ctx)
 		if failures > 0 {
-			backoff := wait << min(failures, 10)
-			if backoff > maxErrorBackoff {
-				backoff = maxErrorBackoff
-			}
-			wait = backoff
-			var rl *ports.RateLimitedError
-			if errors.As(err, &rl) {
-				// Sleeping past the reset beats hammering a dead budget.
-				if until := time.Until(rl.Reset); until > wait && until < maxErrorBackoff {
-					wait = until
-				}
-			}
+			wait = backoffFor(wait, failures, p.now(), err)
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(wait):
+		case <-p.after(wait):
 		}
 	}
 }
@@ -325,19 +350,57 @@ func (p *Poller) tick(ctx context.Context, projectID string) error {
 		return p.baseline(ctx, t)
 	}
 
-	if err := p.pollPulls(ctx, t, pulls); err != nil {
-		return err
+	return p.runPasses(ctx, t, pulls)
+}
+
+// runPasses is the five resource passes of one tick, run independently (LEXI-9).
+//
+// They were a chain of early returns, which made the tick as readable as its least readable
+// resource: one 403 and the other four never ran, their cursors never advanced, and the whole
+// worker backed off. Now each pass owns its own outcome. A pass that succeeds advances its
+// cursor and emits its events whatever the others did; a pass that fails is classified —
+// permanently refused, or merely transient — and marked accordingly, and only that pass pays.
+//
+// Order still matters and is unchanged: pulls fills tickState.touched and .prState, which
+// reviews and checks read. When pulls is the pass that failed those two see an empty touched
+// set and simply have nothing to do this tick, which is the correct degradation and not an
+// error of their own.
+//
+// The tick itself returns an error only for something that ends the WORKER: a cancelled
+// context. Everything else has been recorded against the resource it belongs to, so a tick in
+// which some passes worked is not a failed tick.
+func (p *Poller) runPasses(ctx context.Context, t *tickState, pulls domain.PollCursor) error {
+	base := p.interval(ctx)
+	passes := []struct {
+		res pollResource
+		run func() error
+	}{
+		{resourcePulls, func() error { return p.pollPulls(ctx, t, pulls) }},
+		{resourceReviews, func() error { return p.pollReviews(ctx, t) }},
+		{resourceReviewComments, func() error { return p.pollComments(ctx, t, resReviewComments) }},
+		{resourceIssueComments, func() error { return p.pollComments(ctx, t, resIssueComments) }},
+		{resourceCheckSuites, func() error { return p.pollChecks(ctx, t) }},
 	}
-	if err := p.pollReviews(ctx, t); err != nil {
-		return err
+	for _, pass := range passes {
+		if !p.resourceDue(t.projectID, pass.res.key, t.now) {
+			continue
+		}
+		err := pass.run()
+		switch {
+		case err == nil:
+			p.resourceOK(t.projectID, pass.res)
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return err
+		default:
+			var fe *ports.ForbiddenError
+			if errors.As(err, &fe) {
+				p.resourceDenied(t.projectID, pass.res, t.repo.Ref(), fe, t.now)
+			} else {
+				p.resourceTransient(t.projectID, pass.res, err, t.now, base)
+			}
+		}
 	}
-	if err := p.pollComments(ctx, t, resReviewComments); err != nil {
-		return err
-	}
-	if err := p.pollComments(ctx, t, resIssueComments); err != nil {
-		return err
-	}
-	return p.pollChecks(ctx, t)
+	return nil
 }
 
 // baseline is the cold-start pass (architecture §7): record every listed PR's state, seed all
