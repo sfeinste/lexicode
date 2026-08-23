@@ -139,8 +139,24 @@ func eventReviewID(ev domain.Event) string {
 // same review twice, in two different shapes. History means what came before *this review*,
 // not before this fragment of it.
 //
+// The drop's precondition is that `review` really will render the review, so it is gated on
+// exactly the condition that provider resolves on (review.go's Resolve): the causing event is
+// a `pull_request_review` or a `pull_request_review_comment`. Other kinds carry a review id in
+// their payload too — `agent_review`, which the shipped "changes requested" rule keys on,
+// carries the id of the review the reviewing agent just submitted — and `review` contributes
+// nothing at all for them. Pruning on the payload alone would delete that review's inline
+// findings from the prompt with nothing left to render them.
+//
+// The other half of the precondition is held up from review.go's side: a forge outage there
+// degrades the section to the causing event's own fragment, so completeFromStore reads the
+// review's other fragments back out of the events table rather than letting the drop and the
+// degradation omit the same content.
+//
 // A run caused by something that is not part of a review (a push, a check) drops nothing.
 func dropCausingReview(prior []domain.Event, cause domain.Event) []domain.Event {
+	if cause.Kind != kindReview && cause.Kind != kindReviewComment {
+		return prior
+	}
 	rid := eventReviewID(cause)
 	if rid == "" {
 		return prior

@@ -336,6 +336,72 @@ func TestPRHistoryDropsTheCausingReviewsOwnFragments(t *testing.T) {
 	}
 }
 
+// TestPRHistoryKeepsWhatNoReviewSectionWillRender is the other side of the same seam. The drop
+// is only sound while `review` really renders what was dropped, and that provider resolves on
+// the event KIND, not on the payload. An `agent_review` event — the internal event the shipped
+// "changes requested" rule keys on — carries the review's id in its payload just as the
+// poller's events do, and yields no `review` section at all. Pruning its history on the payload
+// alone deleted the review's inline findings from the prompt with nothing left to render them.
+func TestPRHistoryKeepsWhatNoReviewSectionWillRender(t *testing.T) {
+	w := seedPRWorld(t)
+
+	// The poller's own record of review 400: the summary, then one inline finding.
+	w.prEvent(t, 12, "2026-08-23T10:00:00.000Z", func(e *domain.Event) {
+		e.Kind = "pull_request_review"
+		e.ActivityType = "submitted"
+		e.ActorKind = domain.ActorAgent
+		e.ActorLogin = ptrStr("reviewer-bot")
+		e.Payload = json.RawMessage(
+			`{"review":{"id":"400","author":"reviewer-bot","state":"changes_requested","body":"Two problems."}}`)
+	})
+	w.prEvent(t, 12, "2026-08-23T10:00:30.000Z", func(e *domain.Event) {
+		e.Kind = "pull_request_review_comment"
+		e.ActivityType = "created"
+		e.ActorKind = domain.ActorAgent
+		e.ActorLogin = ptrStr("reviewer-bot")
+		e.Payload = json.RawMessage(
+			`{"comment":{"review_id":"400","path":"internal/retry.go","line":42,"body":"the first problem"}}`)
+	})
+	// The MCP server's own event for the same review is what starts the run.
+	cause := w.prEvent(t, 12, "2026-08-23T10:01:00.000Z", func(e *domain.Event) {
+		e.Kind = "agent_review"
+		e.ActivityType = "submitted"
+		e.ActorKind = domain.ActorAgent
+		e.ActorLogin = ptrStr("reviewer-bot")
+		e.Payload = json.RawMessage(
+			`{"review":{"id":"400","author":"reviewer-bot","state":"changes_requested","body":"Two problems."}}`)
+	})
+
+	ctx := context.Background()
+	req := ports.ContextRequest{
+		ProjectID: w.project.ID, AgentID: w.agent.ID, CauseEventID: cause.ID, CausingEvent: &cause,
+	}
+
+	// The premise: `review` contributes nothing for this event kind.
+	reviewItems, err := NewReviewProvider(w.st, nil, nil, discardLogger()).Resolve(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviewItems) != 0 {
+		t.Fatalf("the `review` provider now handles agent_review (%d items) — the drop's gate must "+
+			"follow it", len(reviewItems))
+	}
+
+	items, err := NewPRHistoryProvider(w.st).Resolve(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want the history of PR #12", items)
+	}
+	if !strings.Contains(items[0].Body, "the first problem") {
+		t.Errorf("the review's inline finding is in no section of the prompt:\n%s", items[0].Body)
+	}
+	if !strings.Contains(items[0].Reason, "2 events") {
+		t.Errorf("Reason = %q, want both earlier events counted", items[0].Reason)
+	}
+}
+
 // TestPRHistoryKeepsEverythingWhenNoReviewCaused it: a run started by a push or a check drops
 // nothing, so the exclusion cannot quietly eat ordinary history.
 func TestPRHistoryKeepsEverythingWhenNoReviewCausedIt(t *testing.T) {

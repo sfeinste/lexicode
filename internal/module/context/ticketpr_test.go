@@ -208,8 +208,9 @@ func TestTicketProviderPrefersTheRunsOwnTicket(t *testing.T) {
 }
 
 // TestTicketProviderPullRequestInferenceIsNonFatal: every way the walk can come up empty is an
-// absent section, never a failed enqueue — no causing event, an event about something that is
-// not a pull request, and a pull request no run in this project opened.
+// absent section, never a failed enqueue — no causing event, the agent's dry preview (which
+// has none by construction), an event about something that is not a pull request, a pull
+// request no run in this project opened, and a causing event that is no longer there.
 func TestTicketProviderPullRequestInferenceIsNonFatal(t *testing.T) {
 	w := seedPRWorld(t)
 	tk := w.ticket(t, "PAY-7", "The PR's work", "Do that.")
@@ -229,6 +230,7 @@ func TestTicketProviderPullRequestInferenceIsNonFatal(t *testing.T) {
 		req  ports.ContextRequest
 	}{
 		{"no causing event", ports.ContextRequest{ProjectID: w.project.ID}},
+		{"dry preview", ports.ContextRequest{ProjectID: w.project.ID, Dry: true}},
 		{"event is not about a PR", ports.ContextRequest{ProjectID: w.project.ID, CauseEventID: notAPR.ID}},
 		{"no run opened that PR", ports.ContextRequest{ProjectID: w.project.ID, CauseEventID: unopened.ID}},
 		{"causing event is gone", ports.ContextRequest{ProjectID: w.project.ID, CauseEventID: domain.NewID()}},

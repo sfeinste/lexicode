@@ -7,9 +7,6 @@
 // `pr_history` and `review` divide the same subject and must not repeat each other:
 // `review` renders the review the run is answering, whole; `pr_history` lists what came
 // before it, excluding that review's own fragments.
-// architecture §11's four — `project` (10) · `wiki` (20) · `ticket` (30) · `repofiles` (40)
-// — plus `event` (25), the causing event of a trigger-spawned run, and `review` (35), which
-// assembles the whole review behind a run caused by a review fragment (LEXI-10).
 package contextmod
 
 import (
