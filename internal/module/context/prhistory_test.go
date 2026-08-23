@@ -261,3 +261,107 @@ func TestTruncateProseCutsOnARuneBoundary(t *testing.T) {
 		t.Errorf("truncateProse trimmed a short body")
 	}
 }
+
+// TestPRHistoryDropsTheCausingReviewsOwnFragments is the seam between this provider and
+// `review` (priority 35). A human review is a summary plus N inline comments, and the poller
+// emits each as its own event. When a comment fragment starts the run, `review` renders that
+// whole review — summary, every unresolved thread, diff hunks. If `pr_history` also listed the
+// review's other comments as "what came before", the agent would receive the same review twice
+// in two different shapes, and could not tell which it was being asked to answer.
+//
+// History means what came before *this review*, not before this fragment of it.
+func TestPRHistoryDropsTheCausingReviewsOwnFragments(t *testing.T) {
+	w := seedPRWorld(t)
+
+	// An earlier, unrelated review: this one IS history and must survive.
+	w.prEvent(t, 9, "2026-08-23T10:00:00.000Z", func(e *domain.Event) {
+		e.Kind = "pull_request_review"
+		e.ActivityType = "submitted"
+		e.ActorKind = domain.ActorHuman
+		e.ActorLogin = ptrStr("alice")
+		e.Payload = json.RawMessage(
+			`{"review":{"id":"100","author":"alice","state":"commented","body":"An earlier pass."}}`)
+	})
+
+	// Review 200: a summary and two comments. Its third comment starts the run.
+	w.prEvent(t, 9, "2026-08-23T11:00:00.000Z", func(e *domain.Event) {
+		e.Kind = "pull_request_review"
+		e.ActivityType = "submitted"
+		e.ActorKind = domain.ActorHuman
+		e.ActorLogin = ptrStr("spruce")
+		e.Payload = json.RawMessage(
+			`{"review":{"id":"200","author":"spruce","state":"changes_requested","body":"Three things."}}`)
+	})
+	w.prEvent(t, 9, "2026-08-23T11:01:00.000Z", func(e *domain.Event) {
+		e.Kind = "pull_request_review_comment"
+		e.ActivityType = "created"
+		e.ActorKind = domain.ActorHuman
+		e.ActorLogin = ptrStr("spruce")
+		e.Payload = json.RawMessage(
+			`{"comment":{"review_id":"200","path":"a.go","line":1,"body":"first point"}}`)
+	})
+	cause := w.prEvent(t, 9, "2026-08-23T11:02:00.000Z", func(e *domain.Event) {
+		e.Kind = "pull_request_review_comment"
+		e.ActivityType = "created"
+		e.ActorKind = domain.ActorHuman
+		e.ActorLogin = ptrStr("spruce")
+		e.Payload = json.RawMessage(
+			`{"comment":{"review_id":"200","path":"b.go","line":2,"body":"second point"}}`)
+	})
+
+	items, err := NewPRHistoryProvider(w.st).Resolve(context.Background(), ports.ContextRequest{
+		ProjectID: w.project.ID, AgentID: w.agent.ID, CauseEventID: cause.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want one history section", items)
+	}
+	body := items[0].Body
+
+	// Review 200's own fragments belong to `review`, not here.
+	for _, leaked := range []string{"Three things.", "first point", "second point"} {
+		if strings.Contains(body, leaked) {
+			t.Errorf("the causing review's own content leaked into history (%q):\n%s", leaked, body)
+		}
+	}
+	// The genuinely earlier review is still history.
+	if !strings.Contains(body, "An earlier pass.") {
+		t.Errorf("the earlier review is missing from history:\n%s", body)
+	}
+	// And the count in the reason must agree with what was kept.
+	if !strings.Contains(items[0].Reason, "1 event") {
+		t.Errorf("Reason = %q, want it to count only the 1 surviving event", items[0].Reason)
+	}
+}
+
+// TestPRHistoryKeepsEverythingWhenNoReviewCaused it: a run started by a push or a check drops
+// nothing, so the exclusion cannot quietly eat ordinary history.
+func TestPRHistoryKeepsEverythingWhenNoReviewCausedIt(t *testing.T) {
+	w := seedPRWorld(t)
+	w.prEvent(t, 11, "2026-08-23T10:00:00.000Z", func(e *domain.Event) {
+		e.Kind = "pull_request_review"
+		e.ActivityType = "submitted"
+		e.ActorKind = domain.ActorHuman
+		e.ActorLogin = ptrStr("alice")
+		e.Payload = json.RawMessage(
+			`{"review":{"id":"300","author":"alice","state":"commented","body":"Looks fine."}}`)
+	})
+	cause := w.prEvent(t, 11, "2026-08-23T11:00:00.000Z", func(e *domain.Event) {
+		e.Kind = "pull_request"
+		e.ActivityType = "synchronize"
+		e.ActorKind = domain.ActorAgent
+		e.Payload = json.RawMessage(`{"pr":{"number":11,"state":"open"}}`)
+	})
+
+	items, err := NewPRHistoryProvider(w.st).Resolve(context.Background(), ports.ContextRequest{
+		ProjectID: w.project.ID, AgentID: w.agent.ID, CauseEventID: cause.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !strings.Contains(items[0].Body, "Looks fine.") {
+		t.Fatalf("a push-caused run lost its history: %+v", items)
+	}
+}

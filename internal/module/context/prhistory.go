@@ -64,6 +64,12 @@ func (p *PRHistoryProvider) Resolve(ctx context.Context, req ports.ContextReques
 		return nil, err
 	}
 	prior := historyBefore(events, req.CauseEventID)
+	for _, ev := range events {
+		if ev.ID == req.CauseEventID {
+			prior = dropCausingReview(prior, ev)
+			break
+		}
+	}
 	if len(prior) == 0 {
 		return nil, nil
 	}
@@ -114,6 +120,39 @@ func historyBefore(events []domain.Event, causeID string) []domain.Event {
 		}
 	}
 	return events
+}
+
+// eventReviewID is reviewIDOf (review.go) over a raw event: the review this event belongs to,
+// or "" if it belongs to none. Decoding into review.go's own payload type keeps one definition
+// of "which review is this" rather than two that can drift.
+func eventReviewID(ev domain.Event) string {
+	var pl reviewPayload
+	if err := json.Unmarshal(ev.Payload, &pl); err != nil {
+		return ""
+	}
+	return reviewIDOf(pl)
+}
+
+// dropCausingReview removes the fragments of the review this run is answering. The `review`
+// provider (priority 35) renders that review whole — summary, every unresolved thread, diff
+// hunks — so listing its other comments here as "what came before" would hand the agent the
+// same review twice, in two different shapes. History means what came before *this review*,
+// not before this fragment of it.
+//
+// A run caused by something that is not part of a review (a push, a check) drops nothing.
+func dropCausingReview(prior []domain.Event, cause domain.Event) []domain.Event {
+	rid := eventReviewID(cause)
+	if rid == "" {
+		return prior
+	}
+	out := prior[:0:0]
+	for _, ev := range prior {
+		if eventReviewID(ev) == rid {
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
 }
 
 // historySubjects is the payload sub-object each event kind's words live in, most specific

@@ -729,6 +729,14 @@ func (p *Poller) pollComments(ctx context.Context, t *tickState, resource string
 		if kind == kindReviewComment {
 			body["path"] = cm.Path
 			body["line"] = cm.Line
+			// review_id is what turns N comment fragments back into one review
+			// (LEXI-10): the loop guard coalesces on it and the `review` context
+			// provider assembles the whole review from it. A comment GitHub did not
+			// group into a review carries "", which every consumer reads as "none".
+			body["review_id"] = ""
+			if cm.ReviewID != 0 {
+				body["review_id"] = strconv.FormatInt(cm.ReviewID, 10)
+			}
 		}
 		att, ok := attributeBody(cm.Body, t.agents)
 		who := forgeUser{login: cm.AuthorLogin, userType: cm.AuthorType}

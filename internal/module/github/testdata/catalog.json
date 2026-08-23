@@ -522,6 +522,10 @@
           "type": "number"
         },
         {
+          "path": "comment.review_id",
+          "type": "text"
+        },
+        {
           "path": "pr.number",
           "type": "number"
         },

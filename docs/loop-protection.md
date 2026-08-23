@@ -36,6 +36,15 @@ the agent acting, and suppressing it would make "CI failed → run Dev" impossib
 absorbed by the run that is already going. Default 90 seconds. It is a database probe, not a
 timer, so it survives a restart. Recorded as `debounced`, linked to the run that absorbed it.
 
+Reviews get a stronger form of the same rule: **one review is one run**, however long its
+fragments take to arrive. A human review reaches Lexicode as one submission event plus one
+event per inline comment, and the run any one of them starts is given the *whole* review —
+summary and every unresolved thread, with file, line and diff hunk — so the remaining fragments
+have nothing left to add and are absorbed by it. This is keyed on the review, not on the clock,
+so it holds across poll ticks and restarts; a *later* review on the same pull request is a new
+review and gets its own run. It is part of debounce: setting `debounce_seconds` to 0 asks for
+one run per event and turns this off too.
+
 **3 — cancel in progress.** If a run for this rule and subject is still going when a newer event
 arrives, the new run supersedes it — the old one is cancelled with a reason naming its
 replacement. Three pushes in a minute produce one review of the final state, not three reviews
