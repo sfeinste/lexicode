@@ -2,7 +2,6 @@ package contextmod
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -113,7 +112,14 @@ func (p *TicketProvider) Resolve(ctx context.Context, req ports.ContextRequest) 
 				mark = "x"
 			}
 			// The criterion id rides along so `check_criterion` (contracts §3.3) can
-			// address it.
+			// address it — but only for a run that could. A run on the inferred path is
+			// free-floating by definition, and check_criterion refuses any run whose
+			// ticket_id is nil; offering the id there would offer a call guaranteed to be
+			// refused. The lead sentence says what the criteria are for instead.
+			if via.PRNumber != 0 {
+				fmt.Fprintf(&b, "- [%s] %s\n", mark, c.Text)
+				continue
+			}
 			fmt.Fprintf(&b, "- [%s] %s (criterion_id: %s)\n", mark, c.Text, c.ID)
 		}
 	}
@@ -173,12 +179,16 @@ func (o ticketOrigin) reason(tk domain.Ticket) string {
 // the inference rather than presenting the ticket as this run's assignment: the agent is being
 // given the pull request's original goal to measure a change against, and the chain that
 // produced it is short enough to state.
+//
+// It also says what the acceptance criteria below are and are not for. They are the bar the
+// pull request has to clear, not this run's checklist — `check_criterion` refuses a run with no
+// ticket_id of its own, which is every run that reaches this path.
 func (o ticketOrigin) lead(tk domain.Ticket) string {
 	if o.PRNumber == 0 {
 		return ""
 	}
 	return fmt.Sprintf(
-		"This run has no ticket of its own. Pull request #%d was opened by run #%d, which was working on %s — so this is the ticket the pull request has to satisfy.",
+		"This run has no ticket of its own. Pull request #%d was opened by run #%d, which was working on %s — so this is the ticket the pull request has to satisfy. Measure your change against its acceptance criteria; they are not yours to check off.",
 		o.PRNumber, o.RunSeq, tk.Key)
 }
 
@@ -199,7 +209,7 @@ func (p *TicketProvider) ticketFor(ctx context.Context, req ports.ContextRequest
 		return &tk, ticketOrigin{}, nil
 	}
 
-	prNumber, err := p.causePRNumber(ctx, req)
+	prNumber, err := causePRNumber(ctx, p.st, req)
 	if err != nil || prNumber == 0 {
 		return nil, ticketOrigin{}, err
 	}
@@ -218,36 +228,4 @@ func (p *TicketProvider) ticketFor(ctx context.Context, req ports.ContextRequest
 		return nil, ticketOrigin{}, err
 	}
 	return &tk, ticketOrigin{PRNumber: prNumber, RunSeq: found.RunSeq}, nil
-}
-
-// causePRNumber is the pull request the run's causing event is about, or 0 when it is about
-// something else or there is no causing event at all.
-//
-// It prefers the event's own subject columns — the normalized, indexed fact that both producers
-// of a PR event set (the GitHub poller and the `submit_review` MCP tool) — and falls back to the
-// payload's `pr.number`, exactly as mcp.Server.causePRNumber does. A module may not import a
-// service, so the read is restated here rather than shared.
-func (p *TicketProvider) causePRNumber(ctx context.Context, req ports.ContextRequest) (int, error) {
-	if req.CauseEventID == "" {
-		return 0, nil
-	}
-	ev, err := p.st.Events().ByID(ctx, req.CauseEventID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	if ev.SubjectKind == "pr" && ev.SubjectNumber != nil && *ev.SubjectNumber > 0 {
-		return int(*ev.SubjectNumber), nil
-	}
-	var payload struct {
-		PR struct {
-			Number int `json:"number"`
-		} `json:"pr"`
-	}
-	if err := json.Unmarshal(ev.Payload, &payload); err == nil && payload.PR.Number > 0 {
-		return payload.PR.Number, nil
-	}
-	return 0, nil
 }

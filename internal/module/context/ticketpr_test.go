@@ -167,6 +167,14 @@ func TestTicketProviderResolvesTicketThroughPullRequest(t *testing.T) {
 			t.Errorf("Body missing %q:\n%s", want, it.Body)
 		}
 	}
+	// check_criterion refuses a run with no ticket_id of its own, so an id offered here is an
+	// id the run cannot use. The criteria are the bar to measure against; the lead says so.
+	if strings.Contains(it.Body, "criterion_id") {
+		t.Errorf("body offers criterion ids to a run that cannot check them off:\n%s", it.Body)
+	}
+	if !strings.Contains(it.Body, "not yours to check off") {
+		t.Errorf("body does not say what the criteria are for:\n%s", it.Body)
+	}
 }
 
 // TestTicketProviderPrefersTheRunsOwnTicket: a run that has a ticket_id is unaffected — same
@@ -193,11 +201,16 @@ func TestTicketProviderPrefersTheRunsOwnTicket(t *testing.T) {
 	if strings.Contains(items[0].Body, "no ticket of its own") {
 		t.Errorf("body claims an inference for a run that has its own ticket:\n%s", items[0].Body)
 	}
+	// This run CAN check its criteria off, so the ids it needs to name them are still there.
+	if !strings.Contains(items[0].Body, "criterion_id:") {
+		t.Errorf("body withholds criterion ids from a run that can use them:\n%s", items[0].Body)
+	}
 }
 
 // TestTicketProviderPullRequestInferenceIsNonFatal: every way the walk can come up empty is an
-// absent section, never a failed enqueue — no causing event, an event about something that is
-// not a pull request, and a pull request no run in this project opened.
+// absent section, never a failed enqueue — no causing event, the agent's dry preview (which
+// has none by construction), an event about something that is not a pull request, a pull
+// request no run in this project opened, and a causing event that is no longer there.
 func TestTicketProviderPullRequestInferenceIsNonFatal(t *testing.T) {
 	w := seedPRWorld(t)
 	tk := w.ticket(t, "PAY-7", "The PR's work", "Do that.")

@@ -553,6 +553,73 @@ func TestReviewProviderDegradesToTheFragment(t *testing.T) {
 	}
 }
 
+// TestReviewProviderDegradedSectionKeepsWhatHistoryDropped is the seam with `pr_history`
+// (priority 26) under a forge outage. That provider drops this review's fragments from the
+// history it lists because THIS section renders them; when the forge is down and the section
+// degrades to the causing comment alone, the review's summary and its other comments — rows in
+// the events table, and about to be rendered — would otherwise appear nowhere in the prompt.
+func TestReviewProviderDegradedSectionKeepsWhatHistoryDropped(t *testing.T) {
+	st := openStore(t)
+	p := seedProject(t, st)
+	sec := openSecrets(t, st)
+	connectRepo(t, st, sec, p)
+
+	// The poller's record of review 555 on PR #219: the summary, two inline comments, the
+	// second of which starts the run.
+	storeEvent := func(src *domain.Event, at string) domain.Event {
+		return seedEvent(t, st, p.ID, func(e *domain.Event) {
+			e.Kind, e.ActivityType, e.Payload = src.Kind, src.ActivityType, src.Payload
+			e.SubjectKind, e.SubjectNumber = src.SubjectKind, src.SubjectNumber
+			e.OccurredAt, e.CreatedAt = at, at
+		})
+	}
+	sibling := &domain.Event{
+		Kind: "pull_request_review_comment", ActivityType: "created",
+		SubjectKind: "pr", SubjectNumber: ptrI64(219),
+		Payload: mustRaw(map[string]any{
+			"pr": map[string]any{"number": 219},
+			"comment": map[string]any{
+				"id": "1041", "review_id": "555", "author": "alice",
+				"body": "swallow the error?", "path": "internal/api/rate.go", "line": 88,
+			},
+		}),
+	}
+	storeEvent(reviewEvent("555", "Five things."), "2026-08-23T11:00:00.000Z")
+	storeEvent(sibling, "2026-08-23T11:01:00.000Z")
+	cause := storeEvent(commentEvent("555", "1042"), "2026-08-23T11:02:00.000Z")
+
+	down := &fakeReviews{err: errors.New("github: 502 bad gateway")}
+	items, err := NewReviewProvider(st, sec, down, discardLogger()).
+		Resolve(context.Background(), ports.ContextRequest{ProjectID: p.ID, CausingEvent: &cause})
+	if err != nil {
+		t.Fatalf("a forge outage failed the resolve: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want the degraded section", len(items))
+	}
+	body := items[0].Body
+	// In order: the event's own fragment, the summary off the review event, the review's other
+	// comment, and the admission that the rest could not be read.
+	for _, want := range []string{
+		"this is off by one",
+		"Five things.",
+		"swallow the error?",
+		"could not be reached",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the degraded section lost %q:\n%s", want, body)
+		}
+	}
+	// The causing fragment is rendered from the payload; reading it back off its own event too
+	// would show it twice.
+	if n := strings.Count(body, "this is off by one"); n != 1 {
+		t.Errorf("the causing comment appears %d times, want 1:\n%s", n, body)
+	}
+	if !strings.Contains(body, "2 further fragments") {
+		t.Errorf("the section does not say how much of it was recovered:\n%s", body)
+	}
+}
+
 // TestReviewProviderWithoutARepoStillSaysWhatItKnows: no connected repository is the same
 // degradation as an outage, not an error.
 func TestReviewProviderWithoutARepoStillSaysWhatItKnows(t *testing.T) {

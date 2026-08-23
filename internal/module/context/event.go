@@ -78,6 +78,44 @@ func (p *EventProvider) Resolve(ctx context.Context, req ports.ContextRequest) (
 	}}, nil
 }
 
+// causePRNumber is the pull request the run's causing event is about, or 0 when it is about
+// something else or there is no causing event at all. Both the `ticket` provider (which walks
+// the number back to the work the pull request came from) and the `pr_history` provider (which
+// reads the number's other events) ask this question, so it is a package function rather than
+// either one's method.
+//
+// It prefers the event's own subject columns — the normalized, indexed fact that both producers
+// of a PR event set (the GitHub poller and the `submit_review` MCP tool) — and falls back to the
+// payload's `pr.number`, exactly as mcp.Server.causePRNumber does. A module may not import a
+// service, so the read is restated here rather than shared.
+//
+// A missing event is 0, not an error: an inference that cannot be made is a dropped prompt
+// section, never a failed enqueue.
+func causePRNumber(ctx context.Context, st *store.Store, req ports.ContextRequest) (int, error) {
+	if req.CauseEventID == "" {
+		return 0, nil
+	}
+	ev, err := st.Events().ByID(ctx, req.CauseEventID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if ev.SubjectKind == "pr" && ev.SubjectNumber != nil && *ev.SubjectNumber > 0 {
+		return int(*ev.SubjectNumber), nil
+	}
+	var payload struct {
+		PR struct {
+			Number int `json:"number"`
+		} `json:"pr"`
+	}
+	if err := json.Unmarshal(ev.Payload, &payload); err == nil && payload.PR.Number > 0 {
+		return payload.PR.Number, nil
+	}
+	return 0, nil
+}
+
 // eventRef is the Context panel's source reference: the subject the event is about
 // ("pr:2"), falling back to the event's own id when it has no numbered subject.
 func eventRef(ev domain.Event) string {

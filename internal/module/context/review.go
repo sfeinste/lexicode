@@ -15,7 +15,11 @@
 // so rather than claiming the threads are open.
 //
 // Like `repofiles` it is deliberately non-fatal: no connected repo, no stored token, or a forge
-// that is down degrades to the event's own fragment — never to a failed enqueue.
+// that is down degrades to the event's own fragment, widened with whatever else of the same
+// review the events table already holds — never to a failed enqueue. The widening is not a
+// nicety: `pr_history` (priority 26) drops this review's fragments from the history it lists
+// because this section renders them, so a degradation that rendered less than it displaced
+// would lose them from the prompt entirely.
 package contextmod
 
 import (
@@ -129,6 +133,7 @@ func (p *ReviewProvider) Resolve(ctx context.Context, req ports.ContextRequest) 
 			slog.String("error", err.Error()))
 		assembled = degradeToFragment(assembled, pl)
 	}
+	assembled = p.completeFromStore(ctx, req, prNumber, pl, assembled)
 
 	body := renderReview(prNumber, pl, assembled)
 	return []ports.ContextItem{{
@@ -159,6 +164,9 @@ type assembledReview struct {
 	// Fragment is true when the forge could not be read and the section carries only what
 	// the event itself said.
 	Fragment bool
+	// Recovered is how many of the review's fragments came from the events table rather than
+	// from the forge — the summary and the sibling comments completeFromStore read back.
+	Recovered int
 }
 
 // fragmentOnly is the degraded assembly: exactly what the event carried, and nothing claimed
@@ -203,6 +211,102 @@ func degradeToFragment(partial assembledReview, pl reviewPayload) assembledRevie
 		a.State = partial.State
 	}
 	return a
+}
+
+// completeFromStore fills what the forge could not give from events Lexicode already recorded.
+//
+// It exists because of the boundary with `pr_history` (prhistory.go, priority 26): that
+// provider drops the causing review's own fragments from the history it lists, on the
+// understanding that THIS section renders them. A forge outage would otherwise break that
+// understanding — degradeToFragment leaves the section carrying the causing event's fragment
+// alone, and the review's summary and sibling comments, which are rows in the events table,
+// would appear nowhere in the prompt at all. The drop is a boundary between two sections, so
+// it may only ever move content, never lose it.
+//
+// The summary is filled on the healthy path too: assemble's review listing is allowed to fail
+// on its own (only the thread read decides whether the assembly succeeded), and a comment event
+// carries no summary of its own, so that is the second way a section could come out narrower
+// than the history it displaced. Threads are added only in the degraded case — on the healthy
+// path the forge already returned them, and adding them again would render each one twice.
+func (p *ReviewProvider) completeFromStore(ctx context.Context, req ports.ContextRequest, prNumber int, pl reviewPayload, a assembledReview) assembledReview {
+	needSummary := strings.TrimSpace(a.Summary) == ""
+	if !a.Fragment && !needSummary {
+		return a
+	}
+	causeEventID := ""
+	if req.CausingEvent != nil {
+		causeEventID = req.CausingEvent.ID
+	}
+	stored := p.storedFragments(ctx, req.ProjectID, prNumber, reviewIDOf(pl), causeEventID, pl.Comment.ID)
+	if needSummary && stored.Summary != "" {
+		a.Summary = stored.Summary
+		if a.Author == "" {
+			a.Author = stored.Author
+		}
+		if a.State == "" {
+			a.State = stored.State
+		}
+		a.Recovered++
+	}
+	if a.Fragment {
+		a.Threads = append(a.Threads, stored.Threads...)
+		a.Recovered += len(stored.Threads)
+	}
+	return a
+}
+
+// reviewFragments is what the events table already knows about one review: the summary its
+// `pull_request_review` event carried, and one thread per `pull_request_review_comment` event.
+type reviewFragments struct {
+	Summary, Author, State string
+	Threads                []domain.ReviewThread
+}
+
+// storedFragments collects review reviewID's fragments off the pull request's events, oldest
+// first. The causing event is skipped — the caller renders that one from the payload it already
+// holds — as is any comment the caller has already rendered, so nothing is listed twice.
+//
+// The threads it builds carry no diff hunk and no resolution state: an event records what was
+// said, not the lines it was said against. That is a thinner rendering than the forge's, and
+// renderReview says so; it is still every word of the review the run has to answer.
+func (p *ReviewProvider) storedFragments(ctx context.Context, projectID string, prNumber int, reviewID, causeEventID, renderedCommentID string) reviewFragments {
+	var out reviewFragments
+	if p.st == nil || reviewID == "" {
+		return out
+	}
+	events, err := p.st.Events().ForPRSubject(ctx, projectID, int64(prNumber))
+	if err != nil {
+		p.logger.Warn("contextmod: the review's recorded fragments could not be read",
+			slog.Int("pr", prNumber), slog.String("review", reviewID),
+			slog.String("error", err.Error()))
+		return out
+	}
+	for _, ev := range events {
+		if ev.ID == causeEventID {
+			continue
+		}
+		var frag reviewPayload
+		if err := json.Unmarshal(ev.Payload, &frag); err != nil || reviewIDOf(frag) != reviewID {
+			continue
+		}
+		if body := strings.TrimSpace(frag.Review.Body); body != "" && out.Summary == "" {
+			out.Summary, out.Author, out.State = body, frag.Review.Author, frag.Review.State
+		}
+		if strings.TrimSpace(frag.Comment.Body) == "" {
+			continue
+		}
+		if renderedCommentID != "" && frag.Comment.ID == renderedCommentID {
+			continue
+		}
+		out.Threads = append(out.Threads, domain.ReviewThread{
+			Path: frag.Comment.Path, Line: frag.Comment.Line,
+			Comments: []domain.Comment{{
+				AuthorLogin: frag.Comment.Author, Body: frag.Comment.Body,
+				Path: frag.Comment.Path, Line: frag.Comment.Line,
+			}},
+		})
+	}
+	return out
 }
 
 // assemble reads the whole review off the forge: its summary (from the event when the event IS
@@ -431,6 +535,12 @@ func renderReview(prNumber int, pl reviewPayload, a assembledReview) string {
 
 	b.WriteString("\n")
 	switch {
+	case a.Fragment && a.Recovered > 0:
+		fmt.Fprintf(&b, "_The repository could not be reached, so this section is the part of the "+
+			"review that arrived with the event plus %d further %s of the same review Lexicode had "+
+			"already recorded. Diff hunks and which threads are already resolved are missing. "+
+			"Check the pull request for anything not shown here._\n",
+			a.Recovered, plural(a.Recovered, "fragment", "fragments"))
 	case a.Fragment:
 		b.WriteString("_Only the part of this review that arrived with the event could be read; " +
 			"the repository could not be reached for the rest. Check the pull request for anything not shown here._\n")
