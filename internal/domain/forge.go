@@ -20,6 +20,17 @@ type RepoRef struct {
 // String renders "owner/name", the form every error message and log line uses.
 func (r RepoRef) String() string { return r.Owner + "/" + r.Name }
 
+// Forge user types: what a forge reports about the identity behind an action, as GitHub's
+// `user.type` spells it on reviews, comments, issues and pull requests. It answers "a person
+// or a machine", never "which person" — a login cannot be mapped to a workspace user (D-9).
+// An empty value means the forge did not report one, which includes every event the poller
+// DERIVES from state diffing rather than reading an actor off the API (a push seen only as a
+// head-sha change). Unknown is not human: see the poller's actorKindFor.
+const (
+	UserTypeUser = "User"
+	UserTypeBot  = "Bot"
+)
+
 // Actor is the agent a forge write is performed on behalf of. Every ForgeProvider write method
 // takes one so that the D-9 marker can never be forgotten: the adapter builds it from these two
 // IDs and appends it to every body it sends.
@@ -44,6 +55,7 @@ type PullRequest struct {
 	Draft       bool
 	Merged      bool
 	AuthorLogin string
+	AuthorType  string // UserTypeUser | UserTypeBot | "" when the forge did not report one
 	AuthorEmail string // often empty; suppression falls back to the marker and branch name
 	HeadRef     string
 	HeadSHA     string
@@ -67,6 +79,7 @@ type Review struct {
 	ID          int64
 	PRNumber    int
 	AuthorLogin string
+	AuthorType  string // UserTypeUser | UserTypeBot | "" when the forge did not report one
 	State       string // "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED"
 	Body        string
 	URL         string
@@ -80,6 +93,7 @@ type Comment struct {
 	ID            int64
 	SubjectNumber int
 	AuthorLogin   string
+	AuthorType    string // UserTypeUser | UserTypeBot | "" when the forge did not report one
 	Body          string
 	Path          string // review comments only: the file the comment anchors to
 	Line          int    // review comments only: the line the comment anchors to; 0 otherwise
@@ -116,6 +130,7 @@ type Issue struct {
 	Title       string
 	Body        string
 	AuthorLogin string
+	AuthorType  string // UserTypeUser | UserTypeBot | "" when the forge did not report one
 	Labels      []string
 	URL         string
 	CreatedAt   time.Time

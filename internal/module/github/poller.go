@@ -538,18 +538,21 @@ func (p *Poller) emitPREvent(ctx context.Context, t *tickState, pr domain.PullRe
 	}
 
 	occurred := pr.UpdatedAt
-	login := ""
+	// Polling only knows who *authored* the PR. For a push, a ready-for-review or a close —
+	// activities DERIVED from state diffing — it cannot name the acting login, and it has no
+	// user type to read either: the zero forgeUser leaves both empty, which keeps the event
+	// `external` (see actorKindFor) rather than guessing the author. That is what stops an
+	// unattributed agent push from resetting the depth counter.
+	var who forgeUser
 	if act == "opened" {
-		// Polling only knows who *authored* the PR; for pushes, ready and close it cannot
-		// name the acting login — that field stays empty rather than guessing the author.
-		login = pr.AuthorLogin
+		who = forgeUser{login: pr.AuthorLogin, userType: pr.AuthorType}
 		if !pr.CreatedAt.IsZero() {
 			occurred = pr.CreatedAt
 		}
 	}
 	e := p.newEvent(ctx, t, kindPullRequest, act, pr,
 		dedupe(t.projectID, kindPullRequest, strconv.Itoa(pr.Number), act+":"+pr.HeadSHA),
-		occurred, att, ok, login)
+		occurred, att, ok, who)
 	prMap := p.prBody(pr, t)
 	if headMessage != "" {
 		prMap["head_commit_message"] = headMessage
@@ -557,7 +560,7 @@ func (p *Poller) emitPREvent(ctx context.Context, t *tickState, pr domain.PullRe
 	e.Payload = mustPayload(map[string]any{
 		"pr":    prMap,
 		"repo":  repoBody(t.repo),
-		"actor": actorBody(att, ok, login),
+		"actor": actorBody(att, ok, who),
 	})
 	return p.publish(ctx, e)
 }
@@ -586,9 +589,10 @@ func (p *Poller) pollReviews(ctx context.Context, t *tickState) error {
 				maxSeen = rev.SubmittedAt
 			}
 			att, ok := attributeBody(rev.Body, t.agents)
+			who := forgeUser{login: rev.AuthorLogin, userType: rev.AuthorType}
 			e := p.newEvent(ctx, t, kindReview, "submitted", pr,
 				dedupe(t.projectID, kindReview, strconv.FormatInt(rev.ID, 10), ""),
-				rev.SubmittedAt, att, ok, rev.AuthorLogin)
+				rev.SubmittedAt, att, ok, who)
 			e.Payload = mustPayload(map[string]any{
 				"review": map[string]any{
 					"id":     strconv.FormatInt(rev.ID, 10),
@@ -598,7 +602,7 @@ func (p *Poller) pollReviews(ctx context.Context, t *tickState) error {
 				},
 				"pr":    p.prBody(pr, t),
 				"repo":  repoBody(t.repo),
-				"actor": actorBody(att, ok, rev.AuthorLogin),
+				"actor": actorBody(att, ok, who),
 			})
 			if err := p.publish(ctx, e); err != nil {
 				return err
@@ -664,14 +668,15 @@ func (p *Poller) pollComments(ctx context.Context, t *tickState, resource string
 			body["line"] = cm.Line
 		}
 		att, ok := attributeBody(cm.Body, t.agents)
+		who := forgeUser{login: cm.AuthorLogin, userType: cm.AuthorType}
 		pr, hasPR := t.findPR(int64(cm.SubjectNumber))
 		e := p.newEvent(ctx, t, kind, "created", pr,
 			dedupe(t.projectID, kind, strconv.FormatInt(cm.ID, 10), ""),
-			cm.CreatedAt, att, ok, cm.AuthorLogin)
+			cm.CreatedAt, att, ok, who)
 		payload := map[string]any{
 			"comment": body,
 			"repo":    repoBody(t.repo),
-			"actor":   actorBody(att, ok, cm.AuthorLogin),
+			"actor":   actorBody(att, ok, who),
 		}
 		if hasPR {
 			payload["pr"] = p.prBody(pr, t)
@@ -746,6 +751,10 @@ func (p *Poller) pollChecks(ctx context.Context, t *tickState) error {
 				branch = pr.HeadRef
 			}
 			att, ok := attributeBranch(branch, t.template, t.agents)
+			// A check suite's "login" is the CI app's name, not a forge user: no user type,
+			// so an unattributed suite stays `external`. CI is a machine, and a machine's
+			// verdict must not reset a chain's depth counter.
+			who := forgeUser{login: s.App}
 			occurred := s.UpdatedAt
 			if occurred.IsZero() {
 				occurred = t.now
@@ -753,7 +762,7 @@ func (p *Poller) pollChecks(ctx context.Context, t *tickState) error {
 			e := p.newEvent(ctx, t, kindCheckSuite, "completed", pr,
 				dedupe(t.projectID, kindCheckSuite, strconv.FormatInt(s.ID, 10),
 					s.Status+":"+s.Conclusion),
-				occurred, att, ok, s.App)
+				occurred, att, ok, who)
 			if !hasPR {
 				e.SubjectNumber = &n
 				b := branch
@@ -769,7 +778,7 @@ func (p *Poller) pollChecks(ctx context.Context, t *tickState) error {
 					"url":        s.URL,
 				},
 				"repo":  repoBody(t.repo),
-				"actor": actorBody(att, ok, s.App),
+				"actor": actorBody(att, ok, who),
 			}
 			if hasPR {
 				payload["pr"] = p.prBody(pr, t)
@@ -789,9 +798,41 @@ func (p *Poller) pollChecks(ctx context.Context, t *tickState) error {
 
 // --------------------------------------------------------------------------- helpers -----
 
+// forgeUser is the API-reported acting identity behind one event: the login, and the forge's
+// own answer to "person or machine" (GitHub's `user.type`). Both are empty for an event the
+// poller DERIVES from state diffing — a push seen only as a head-sha change, a close, a
+// ready-for-review — where no endpoint names who acted.
+type forgeUser struct {
+	login    string
+	userType string
+}
+
+// actorKindFor is the actor_kind of an event whose actor did NOT attribute to one of our
+// agents (D-9 marker, commit identity, branch template).
+//
+// GitHub reports `user.type` as "User" or "Bot" on reviews, comments, issues and pull
+// requests, and that is the honest reading of it: a non-agent "User" is a person, so the
+// event is `human` and the loop guard's depth reset (architecture §9) fires for it. Anything
+// else — "Bot", an unrecognized type, or no reported type at all (a derived push) — stays
+// `external`.
+//
+// The default is deliberately not human. An unattributed agent push relabelled human would
+// reset the depth counter on the agent's own chain, which weakens the very guard the reset
+// exists to serve. `external` says what we actually know: someone who is not one of our
+// agents, and not demonstrably a person.
+//
+// What this does NOT claim is identity: a GitHub login still does not map to a workspace user
+// (D-9, S25), so a human forge event carries actor_login and no actor_id.
+func actorKindFor(who forgeUser) domain.ActorKind {
+	if who.userType == domain.UserTypeUser {
+		return domain.ActorHuman
+	}
+	return domain.ActorExternal
+}
+
 // newEvent fills the envelope every poll event shares. The payload is the caller's.
 func (p *Poller) newEvent(ctx context.Context, t *tickState, kind, act string, pr domain.PullRequest,
-	dedupeKey string, occurred time.Time, att attribution, attributed bool, login string,
+	dedupeKey string, occurred time.Time, att attribution, attributed bool, who forgeUser,
 ) domain.Event {
 	pid := t.projectID
 	e := domain.Event{
@@ -799,7 +840,7 @@ func (p *Poller) newEvent(ctx context.Context, t *tickState, kind, act string, p
 		Source:       pollSourceID,
 		Kind:         kind,
 		ActivityType: act,
-		ActorKind:    domain.ActorExternal,
+		ActorKind:    actorKindFor(who),
 		SubjectKind:  "pr",
 		DedupeKey:    dedupeKey,
 		OccurredAt:   domain.FormatTime(occurred),
@@ -812,8 +853,8 @@ func (p *Poller) newEvent(ctx context.Context, t *tickState, kind, act string, p
 			e.SubjectBranch = &b
 		}
 	}
-	if login != "" {
-		l := login
+	if who.login != "" {
+		l := who.login
 		e.ActorLogin = &l
 	}
 	if attributed && att.agent != nil {
@@ -902,9 +943,16 @@ func repoBody(rp domain.Repo) map[string]any {
 	return map[string]any{"owner": rp.Owner, "name": rp.Name, "default_branch": branch}
 }
 
-// actorBody renders the contracts §4 `actor` sub-object.
-func actorBody(att attribution, attributed bool, login string) map[string]any {
-	out := map[string]any{"kind": string(domain.ActorExternal), "login": login, "agent": ""}
+// actorBody renders the contracts §4 `actor` sub-object. Its kind agrees with the event's
+// actor_kind column by construction — the `actor.is_human` / `actor.is_agent` operators read
+// THIS object, not the column (internal/service/triggers/conditions.go), so the two must not
+// be allowed to drift.
+func actorBody(att attribution, attributed bool, who forgeUser) map[string]any {
+	out := map[string]any{
+		"kind":  string(actorKindFor(who)),
+		"login": who.login,
+		"agent": "",
+	}
 	if attributed && att.agent != nil {
 		out["kind"] = string(domain.ActorAgent)
 		out["agent"] = att.agent.Name

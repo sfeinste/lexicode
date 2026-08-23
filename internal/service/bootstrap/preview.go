@@ -528,6 +528,19 @@ const (
 		"That branch is already checked out in this workspace. Work out why the suite failed, " +
 		"fix it on this branch, and commit the fix. Keep it to what the failure needs — this " +
 		"run exists to get the checks green, not to revisit the change they are checking."
+
+	// HumanReviewPrompt is the "a person reviewed the PR → run Dev" task. Unlike
+	// AddressReviewPrompt it cannot name severities: this fires on GitHub's own review event,
+	// which carries prose and a state, not the structured findings `submit_review` produces.
+	// So the instruction is to read the review and do what it asks.
+	HumanReviewPrompt = "{{review.author}} reviewed pull request #{{pr.number}} — " +
+		"\"{{pr.title}}\" — on branch `{{pr.branch}}`. GitHub recorded the review as " +
+		"`{{review.state}}`, which says less than the review itself does: read the text.\n\n" +
+		"That branch is already checked out in this workspace. Address what the review asks " +
+		"for on this branch — the same branch, not a new one — and commit the fix. If a point " +
+		"is wrong or you disagree, say so in your final message rather than changing the code " +
+		"around it. If the review asks for nothing at all, change nothing and say that.\n\n" +
+		"The review:\n\n{{review.body}}"
 )
 
 // ChangesRequestedConditions is the IF row of the suggested "changes requested" rule, and the
@@ -545,7 +558,26 @@ const (
 const ChangesRequestedConditions = `{"all":[{"field":"review.max_severity","op":"enum.in",` +
 	`"value":["blocker","major"]}]}`
 
+// HumanReviewConditions is the IF row of the suggested "human review" rule: the acting
+// identity is a person, and nothing else.
+//
+// It has to be the actor rather than the review state. Every agent shares the project's one
+// PAT (D-9), so the user reviewing their own agent's pull request is, to GitHub, its author —
+// and GitHub answers 422 to REQUEST_CHANGES from the author. Their review lands as
+// COMMENTED, exactly like an agent's, and a rule keyed on the state cannot tell the two
+// apart. The actor can: the poller reads GitHub's `user.type` and stamps a non-agent "User"
+// as `human` (see internal/module/github's actorKindFor), and the marker attribution that
+// makes an agent's review `agent` runs first.
+//
+// The `actor.is_human` operator takes no field — it defaults to the payload's actor
+// sub-object (contracts §4.1, internal/service/triggers/conditions.go).
+//
+// Exported so the acceptance harness fires the SHIPPED condition rather than a hand-written
+// stand-in, for the same reason ReviewerPrompt is (see the note above it).
+const HumanReviewConditions = `{"all":[{"op":"actor.is_human"}]}`
+
 // suggestedTriggers is the brief's three pre-filled rules — steps 3, 5 and 6 of the canonical
+// chain — plus the human-review rule, which is the way back IN for the person watching the
 // chain. All ship with Enabled=false — Apply preserves that. The set is offered only when CI
 // was detected, which is the S15 gate on the whole trigger section of the checklist, not a
 // statement that each rule needs CI.
@@ -584,6 +616,22 @@ func suggestedTriggers(workflowFiles []string) []TriggerCandidate {
 			Description:   "When a check suite completes with a failure on an agent branch, run the Dev agent to fix it.",
 			Workflows:     workflowFiles, Checked: true,
 		},
+		{
+			// Keyed on GitHub's own `pull_request_review`, not on the internal
+			// `agent_review`: this is the rule for a PERSON reviewing, and a person's
+			// review only ever reaches Lexicode through the poller.
+			//
+			// No loop_config override, and none is needed: actor suppression keys on "the
+			// event's actor IS the agent this rule would run", and a human is not Dev. The
+			// depth counter is likewise not in the way — a human action on the subject
+			// RESETS it (architecture §9), so this rule is exactly how a person unsticks a
+			// chain that stopped on the depth limit.
+			ID: "human-review-address", Name: "Human review → Dev addresses it",
+			Event:         "pull_request_review",
+			ActivityTypes: []string{"submitted"},
+			Description:   "When a person submits a review on a pull request, run the Dev agent to address it on the same branch.",
+			Workflows:     workflowFiles, Checked: true,
+		},
 	}
 }
 
@@ -602,6 +650,9 @@ func triggerRow(cand TriggerCandidate, projectID, createdBy, now string) domain.
 	case "ci-failed-fix":
 		conditions = `{"all":[{"field":"check.conclusion","op":"enum.is","value":"failure"}]}`
 		actions = runAgentAction("Dev", CIFixPrompt)
+	case "human-review-address":
+		conditions = HumanReviewConditions
+		actions = runAgentAction("Dev", HumanReviewPrompt)
 	}
 	var by *string
 	if createdBy != "" {

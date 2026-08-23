@@ -42,7 +42,7 @@ func TestSuggestedTriggersCarryARealPrompt(t *testing.T) {
 	e.connect(c)
 
 	code, res := e.doJSON(c, "POST", "/api/v1/projects/PAY/bootstrap/apply",
-		`{"triggers": ["agent-pr-review", "changes-requested", "ci-failed-fix"]}`)
+		`{"triggers": ["agent-pr-review", "changes-requested", "ci-failed-fix", "human-review-address"]}`)
 	if code != 200 {
 		t.Fatalf("apply = %d: %v", code, res)
 	}
@@ -50,8 +50,8 @@ func TestSuggestedTriggersCarryARealPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(trs) != 3 {
-		t.Fatalf("triggers = %d, want 3", len(trs))
+	if len(trs) != 4 {
+		t.Fatalf("triggers = %d, want 4", len(trs))
 	}
 
 	byEvent := map[string]runAgentAction{}
@@ -97,6 +97,19 @@ func TestSuggestedTriggersCarryARealPrompt(t *testing.T) {
 			t.Errorf("the CI-fix prompt does not mention %q:\n%s", want, cifix.Params.Prompt)
 		}
 	}
+
+	human, ok := byEvent["pull_request_review"]
+	if !ok {
+		t.Fatal("no pull_request_review rule was created")
+	}
+	if human.Params.AgentName != "Dev" {
+		t.Errorf("agent_name = %q", human.Params.AgentName)
+	}
+	for _, want := range []string{"{{pr.number}}", "{{pr.branch}}", "{{review.body}}"} {
+		if !strings.Contains(human.Params.Prompt, want) {
+			t.Errorf("the human-review prompt does not mention %q:\n%s", want, human.Params.Prompt)
+		}
+	}
 }
 
 var templatePath = regexp.MustCompile(`\{\{\s*([^}]+?)\s*\}\}`)
@@ -120,6 +133,7 @@ func TestSuggestedTriggerPromptsOnlyUseRealPayloadPaths(t *testing.T) {
 		{"pull_request", bootstrap.ReviewerPrompt},
 		{"agent_review", bootstrap.AddressReviewPrompt},
 		{"check_suite", bootstrap.CIFixPrompt},
+		{"pull_request_review", bootstrap.HumanReviewPrompt},
 	} {
 		known, ok := fields[tc.kind]
 		if !ok {

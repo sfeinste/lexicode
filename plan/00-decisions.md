@@ -212,6 +212,38 @@ orchestrator therefore:
 Residual: an agent can still author commits without the trailer. The guarantee is that this is
 *visible on the run*, not that it cannot happen.
 
+### Amendment — a non-agent forge actor is `human` when the forge says it is a person
+
+S25 stamped `external` on every poll event whose actor did not attribute to one of our agents,
+reasoning that a GitHub login cannot be mapped to a workspace user. That reasoning is sound and
+still holds — for *identity*. It was applied to *kind*, and the two are different questions.
+
+The cost was silent. `EventsRepo.NewestHumanActionAt` matches `actor_kind = 'human'`, so the
+architecture §9 depth reset — a human acting on a subject clears the chain's exhausted budget —
+could never fire for anything happening on the forge. Commenting on a loop-stopped pull request
+left the next agent event still loop-stopped, which is §9's own stated failure ("a human's
+intervention on a stalled chain inherits the chain's exhausted budget, which reads as the
+product being broken"). For the same reason no `actor.is_human` rule could ever match a forge
+event.
+
+So the poller now reads GitHub's `user.type`, which the API reports on reviews, comments,
+issues and pull requests, and which the forge port carries as `AuthorType` on
+`domain.Review` / `domain.Comment` / `domain.Issue` / `domain.PullRequest`:
+
+- attribution runs first and is unchanged — a marker, commit identity or branch-template hit is
+  `agent`, run id included;
+- otherwise `user.type == "User"` is `human`;
+- `"Bot"`, an unrecognized type, and **no reported type at all** stay `external`.
+
+The default matters as much as the rule. Events the poller *derives* from state diffing — a
+push seen only as a head-sha change, a close, a ready-for-review — name no actor on any
+endpoint, and a check suite's "actor" is a CI app. Calling those human would let an
+unattributed agent push reset the depth counter, weakening the guard in exactly the direction
+the guard exists to prevent. Unknown is `external`, deliberately.
+
+Identity is still not claimed: a human forge event carries `actor_login` and **no**
+`actor_id`. We now record that a person acted, never which person.
+
 ## D-10 — Network policy is enforced by an orchestrator-run egress proxy
 
 Three policies, per project:

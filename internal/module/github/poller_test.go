@@ -32,6 +32,7 @@ type ghPR struct {
 	Draft                              bool
 	MergedAt                           string // non-empty → merged
 	Login                              string
+	Type                               string // GitHub's user.type: "User" | "Bot" | "" (unreported)
 	HeadRef, HeadSHA, BaseRef          string
 	Labels                             []string
 	Additions, Deletions, ChangedFiles int
@@ -42,6 +43,7 @@ type ghReview struct {
 	ID                 int64
 	PR                 int
 	Login, State, Body string
+	Type               string // GitHub's user.type: "User" | "Bot" | "" (unreported)
 	SubmittedAt        string
 }
 
@@ -49,6 +51,7 @@ type ghComment struct {
 	ID                   int64
 	Subject              int // PR/issue number
 	Login, Body, Path    string
+	Type                 string // GitHub's user.type: "User" | "Bot" | "" (unreported)
 	Line                 int
 	CreatedAt, UpdatedAt string
 }
@@ -59,6 +62,16 @@ type ghSuite struct {
 	Status, Conclusion  string
 	App                 string
 	UpdatedAt           string
+}
+
+// ghUser renders the API's `user` object. An empty type is a user object without a `type`
+// key at all — the "the forge did not tell us" case, which must not read as a person.
+func ghUser(login, userType string) map[string]any {
+	u := map[string]any{"login": login}
+	if userType != "" {
+		u["type"] = userType
+	}
+	return u
 }
 
 type snapshotGH struct {
@@ -92,7 +105,7 @@ func (g *snapshotGH) prJSON(pr ghPR, detail bool) map[string]any {
 	}
 	m := map[string]any{
 		"number": pr.Number, "title": pr.Title, "body": pr.Body, "state": pr.State,
-		"draft": pr.Draft, "user": map[string]any{"login": pr.Login},
+		"draft": pr.Draft, "user": ghUser(pr.Login, pr.Type),
 		"head":       map[string]any{"ref": pr.HeadRef, "sha": pr.HeadSHA},
 		"base":       map[string]any{"ref": pr.BaseRef},
 		"labels":     labels,
@@ -141,7 +154,7 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 		out := make([]map[string]any, 0, len(g.reviewComments))
 		for _, c := range g.reviewComments {
 			out = append(out, map[string]any{
-				"id": c.ID, "user": map[string]any{"login": c.Login}, "body": c.Body,
+				"id": c.ID, "user": ghUser(c.Login, c.Type), "body": c.Body,
 				"path": c.Path, "line": c.Line,
 				"pull_request_url": fmt.Sprintf("https://api.github.example%s/pulls/%d", base, c.Subject),
 				"html_url":         fmt.Sprintf("https://github.example/acme/payments/pull/%d#discussion", c.Subject),
@@ -166,7 +179,7 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 		for _, rev := range g.reviews {
 			if fmt.Sprint(rev.PR) == r.PathValue("n") {
 				out = append(out, map[string]any{
-					"id": rev.ID, "user": map[string]any{"login": rev.Login},
+					"id": rev.ID, "user": ghUser(rev.Login, rev.Type),
 					"state": rev.State, "body": rev.Body,
 					"html_url":     fmt.Sprintf("https://github.example/acme/payments/pull/%d#review-%d", rev.PR, rev.ID),
 					"submitted_at": rev.SubmittedAt,
@@ -180,7 +193,7 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 		out := make([]map[string]any, 0, len(g.issueComments))
 		for _, c := range g.issueComments {
 			out = append(out, map[string]any{
-				"id": c.ID, "user": map[string]any{"login": c.Login}, "body": c.Body,
+				"id": c.ID, "user": ghUser(c.Login, c.Type), "body": c.Body,
 				"issue_url":  fmt.Sprintf("https://api.github.example%s/issues/%d", base, c.Subject),
 				"html_url":   fmt.Sprintf("https://github.example/acme/payments/pull/%d#comment", c.Subject),
 				"created_at": c.CreatedAt, "updated_at": c.UpdatedAt,
@@ -663,7 +676,7 @@ func TestPollerActorAttribution(t *testing.T) {
 		CreatedAt: at(12, 1), UpdatedAt: at(12, 1),
 	}
 	ph.gh.upsertPR(pr)
-	ph.tick() // pr.opened — human branch, no marker: external actor
+	ph.tick() // pr.opened — no marker, no branch match, no reported user type: external
 
 	// Marker comment (signal 1): agent + run straight from the marker.
 	marker := domain.Actor{AgentID: ph.agent.ID, RunID: markerRun.ID}.Marker()
@@ -737,10 +750,11 @@ func TestPollerActorAttribution(t *testing.T) {
 		t.Fatalf("branch-prefix pr.author_kind = %v, want agent", p["pr"])
 	}
 
-	// The earlier human-branch opened event stayed external.
+	// The earlier unattributed open, whose author carried no reported user type, stayed
+	// external — unknown is not human (see actorKindFor).
 	first := events[0]
 	if first.ActivityType != "opened" || first.ActorKind != domain.ActorExternal {
-		t.Fatalf("human PR opened actor = %s (%s)", first.ActorKind, first.ActivityType)
+		t.Fatalf("untyped PR opened actor = %s (%s)", first.ActorKind, first.ActivityType)
 	}
 }
 
@@ -935,4 +949,133 @@ func eventKinds(events []domain.Event) []string {
 		out = append(out, e.Kind+"."+e.ActivityType)
 	}
 	return out
+}
+
+// TestPollerReviewActorKindFollowsUserType is the fix for the bug that made the loop guard's
+// depth reset dead code for anything happening on the forge: every non-agent actor was
+// stamped `external`, and `NewestHumanActionAt` matches `human`, so commenting on a
+// loop-stopped pull request left the next agent event still loop-stopped.
+//
+// GitHub reports `user.type` on reviews, comments and issues. A non-agent "User" is a person
+// (`human`, which resets the depth counter and satisfies `actor.is_human`); a "Bot" — and an
+// unreported type — stays `external`. Agent attribution still runs first and still wins, run
+// id included: relabelling an unattributed agent as human is exactly the weakening this must
+// not do.
+func TestPollerReviewActorKindFollowsUserType(t *testing.T) {
+	ph := newPollHarness(t)
+	ph.tick() // baseline over an empty repo
+
+	agentRun := ph.run(domain.RunCompleted, "dev/pay-5-keys", nil)
+	pr := ghPR{
+		Number: 5, Title: "Add keys", Body: "adds keys", State: "open",
+		Login: "svc-bot", HeadRef: "feature/pay", HeadSHA: "sha5a", BaseRef: "main",
+		CreatedAt: at(12, 1), UpdatedAt: at(12, 1),
+	}
+	ph.gh.upsertPR(pr)
+	ph.tick()
+
+	// Three reviews on one pull request, differing only in who submitted them.
+	marker := domain.Actor{AgentID: ph.agent.ID, RunID: agentRun.ID}.Marker()
+	ph.gh.reviews = append(ph.gh.reviews,
+		ghReview{ID: 901, PR: 5, Login: "ada", Type: "User", State: "COMMENTED",
+			Body: "Two things here.", SubmittedAt: at(12, 10)},
+		ghReview{ID: 902, PR: 5, Login: "dependabot[bot]", Type: "Bot", State: "COMMENTED",
+			Body: "Bumped a dependency.", SubmittedAt: at(12, 11)},
+		ghReview{ID: 903, PR: 5, Login: "svc-bot", Type: "User", State: "COMMENTED",
+			Body: "Reviewed.\n\n" + marker, SubmittedAt: at(12, 12)},
+	)
+	pr.UpdatedAt = at(12, 12)
+	ph.gh.upsertPR(pr)
+	ph.tick()
+
+	byID := map[string]domain.Event{}
+	for _, e := range ph.collected() {
+		if e.Kind != kindReview {
+			continue
+		}
+		byID[ph.payload(e)["review"].(map[string]any)["id"].(string)] = e
+	}
+	if len(byID) != 3 {
+		t.Fatalf("review events = %d, want 3: %v", len(byID), byID)
+	}
+
+	// A person: human, with the login recorded and NO actor id — the kind is what we learned,
+	// the identity is still unknowable (a GitHub login is not a workspace user, D-9/S25).
+	human := byID["901"]
+	if human.ActorKind != domain.ActorHuman {
+		t.Fatalf("human review actor_kind = %s, want human", human.ActorKind)
+	}
+	if human.ActorID != nil {
+		t.Fatalf("human review actor_id = %v, want nil — the login does not identify a user", *human.ActorID)
+	}
+	if human.ActorLogin == nil || *human.ActorLogin != "ada" {
+		t.Fatalf("human review actor_login = %v, want ada", human.ActorLogin)
+	}
+	// The payload's actor sub-object is what `actor.is_human` reads (it is not the column),
+	// so the two have to agree.
+	if got := ph.payload(human)["actor"]; !reflect.DeepEqual(got,
+		map[string]any{"kind": "human", "login": "ada", "agent": ""}) {
+		t.Fatalf("human review payload actor = %v", got)
+	}
+
+	// A bot: external. It must not reset the depth counter, and `actor.is_human` must not
+	// match it.
+	bot := byID["902"]
+	if bot.ActorKind != domain.ActorExternal {
+		t.Fatalf("bot review actor_kind = %s, want external", bot.ActorKind)
+	}
+	if got := ph.payload(bot)["actor"].(map[string]any)["kind"]; got != "external" {
+		t.Fatalf("bot review payload actor.kind = %v, want external", got)
+	}
+
+	// One of ours: agent, with the run the marker names — user.type says "User" here too,
+	// because every agent writes through the project's shared PAT (D-9). Attribution wins.
+	agent := byID["903"]
+	if agent.ActorKind != domain.ActorAgent || agent.ActorID == nil || *agent.ActorID != ph.agent.ID {
+		t.Fatalf("agent review actor = %s/%v, want agent %s", agent.ActorKind, agent.ActorID, ph.agent.ID)
+	}
+	if agent.CauseRunID == nil || *agent.CauseRunID != agentRun.ID {
+		t.Fatalf("agent review cause_run = %v, want %s", agent.CauseRunID, agentRun.ID)
+	}
+	if got := ph.payload(agent)["actor"]; !reflect.DeepEqual(got,
+		map[string]any{"kind": "agent", "login": "svc-bot", "agent": "Dev"}) {
+		t.Fatalf("agent review payload actor = %v", got)
+	}
+}
+
+// TestPollerDerivedPushStaysExternal pins the other half of the decision: an event the poller
+// DERIVES from state diffing has no API actor to ask, so it gets no user type and stays
+// external. Calling it human would let an unattributed agent push reset the depth counter,
+// which is the loop guard failing open — the opposite of the point.
+func TestPollerDerivedPushStaysExternal(t *testing.T) {
+	ph := newPollHarness(t)
+	ph.tick()
+
+	pr := ghPR{
+		Number: 6, Title: "Tidy", Body: "no marker", State: "open",
+		Login: "ada", Type: "User", HeadRef: "tidy", HeadSHA: "sha6a", BaseRef: "main",
+		CreatedAt: at(12, 1), UpdatedAt: at(12, 1),
+	}
+	ph.gh.upsertPR(pr)
+	ph.tick()
+
+	// The open names its author, and that author is a person.
+	opened := ph.lastEvent(kindPullRequest, "opened")
+	if opened.ActorKind != domain.ActorHuman {
+		t.Fatalf("opened actor_kind = %s, want human", opened.ActorKind)
+	}
+
+	// The push does not: no endpoint says who pushed, and the commit read attributes nothing.
+	pr.HeadSHA = "sha6b"
+	pr.UpdatedAt = at(12, 30)
+	ph.gh.upsertPR(pr)
+	ph.tick()
+
+	sync := ph.lastEvent(kindPullRequest, "synchronize")
+	if sync.ActorKind != domain.ActorExternal {
+		t.Fatalf("synchronize actor_kind = %s, want external", sync.ActorKind)
+	}
+	if got := ph.payload(sync)["actor"].(map[string]any)["kind"]; got != "external" {
+		t.Fatalf("synchronize payload actor.kind = %v, want external", got)
+	}
 }
