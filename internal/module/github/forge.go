@@ -264,17 +264,10 @@ func (f *Forge) ListReviewComments(ctx context.Context, c ports.Creds, r domain.
 			return nil, wrapErr("list review comments", r, err)
 		}
 		for _, cm := range comments {
-			out = append(out, domain.Comment{
-				ID:            cm.GetID(),
-				SubjectNumber: trailingNumber(cm.GetPullRequestURL()),
-				AuthorLogin:   cm.GetUser().GetLogin(),
-				Body:          cm.GetBody(),
-				Path:          cm.GetPath(),
-				Line:          cm.GetLine(),
-				URL:           cm.GetHTMLURL(),
-				CreatedAt:     cm.GetCreatedAt().Time,
-				UpdatedAt:     cm.GetUpdatedAt().Time,
-			})
+			// mapReviewComment (reviewthreads.go) carries the review, reply and diff-hunk
+			// fields too: the poller puts the review id on the event so a review's comment
+			// fragments can be reassembled into one whole (LEXI-10).
+			out = append(out, mapReviewComment(cm, 0))
 		}
 		if resp.NextPage == 0 {
 			break

@@ -116,6 +116,10 @@ func catalog() ports.EventCatalog {
 				{Path: "comment.body", Type: "text"},
 				{Path: "comment.path", Type: "text"},
 				{Path: "comment.line", Type: "number"},
+				// The review this comment was submitted as part of, "" when it belongs
+				// to none. A rule can narrow on it; the loop guard coalesces on it so
+				// one review is one run (LEXI-10).
+				{Path: "comment.review_id", Type: "text"},
 			}, prFields, repoFields, actorFields),
 			SubjectKey: "pr:{{pr.number}}",
 		},

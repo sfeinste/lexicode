@@ -160,6 +160,22 @@ func (l *Layers) Evaluate(ctx context.Context, in Input) Verdict {
 		}
 	}
 
+	// Layer 2a — review coalescing: one review is one run. A human review arrives as a
+	// summary event plus one event per inline comment, and every one of them would fire the
+	// rule; since the run they cause is given the WHOLE review (the `review` context
+	// provider), the fragments after the first have nothing left to add and must not each
+	// start their own run. Keyed on the review id rather than on time, because the fragments
+	// can straddle any window: two poll ticks, a slow listing, a restart.
+	//
+	// It rides on debounce_seconds rather than carrying a switch of its own: a rule with
+	// debounce off has asked for one run per event, and this is the review-shaped form of
+	// the same decision.
+	if cfg.DebounceSeconds > 0 {
+		if v, absorbed := l.coalesceReview(ctx, in); absorbed {
+			return v
+		}
+	}
+
 	// Layer 2 — debounce: a run already started for this (trigger, subject) inside the
 	// window absorbs the firing. A database probe, not a timer: restart-safe.
 	if cfg.DebounceSeconds > 0 {
@@ -217,6 +233,51 @@ func (l *Layers) Evaluate(ctx context.Context, in Input) Verdict {
 	}
 
 	return Verdict{Proceed: true, Pass: pass}
+}
+
+// coalesceReview is layer 2a: if some run of this trigger was already caused by an event
+// belonging to the same review, this firing is one more fragment of a review that run already
+// has. absorbed is false when the event names no review (everything that is not a review or a
+// review comment) or when nothing has run for it yet.
+func (l *Layers) coalesceReview(ctx context.Context, in Input) (Verdict, bool) {
+	reviewID := reviewIDOf(in.Payload)
+	// The probe is scoped to the event's own subject, so an event that names no pull request
+	// (nothing the poller emits) simply falls through to the ordinary layers.
+	if reviewID == "" || in.Event.ProjectID == nil || in.Event.SubjectNumber == nil {
+		return Verdict{}, false
+	}
+	run, err := l.st.Runs().LatestForReview(ctx, in.Trigger.ID, *in.Event.ProjectID,
+		in.Event.SubjectKind, *in.Event.SubjectNumber, reviewID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			l.logger.Error("guard: review coalescing probe failed", slog.String("error", err.Error()))
+		}
+		return Verdict{}, false
+	}
+	id := run.ID
+	return Verdict{
+		Proceed: false, Outcome: domain.FiringDebounced,
+		Reason: fmt.Sprintf("debounced: review %s was already given to run #%d in full",
+			reviewID, run.Seq),
+		AbsorbedByRunID: &id,
+	}, true
+}
+
+// reviewIDOf reads the review an event belongs to out of its normalized payload: review.id on
+// a review submission, comment.review_id on an inline comment of one. "" means neither — a
+// conversation comment, a push, a check suite, or a lone inline comment the forge grouped into
+// no review.
+func reviewIDOf(payload map[string]any) string {
+	for _, path := range [][]string{{"review", "id"}, {"comment", "review_id"}} {
+		v, ok := lookup(payload, path)
+		if !ok {
+			continue
+		}
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // stopLoop is layer 4's trip: create the terminal loop-stopped run row (never suppress — the

@@ -86,6 +86,53 @@ type Comment struct {
 	URL           string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+
+	// ReviewID is the review this comment was submitted as part of; 0 for conversation
+	// comments and for hosts that do not group comments into reviews. It is what lets a
+	// whole review be reassembled from the comment fragments the poller emits (LEXI-10).
+	ReviewID int64
+	// InReplyToID is the review comment this one replies to; 0 when the comment starts its
+	// own thread. Threading a review is exactly following this pointer.
+	InReplyToID int64
+	// DiffHunk is the few lines of diff the forge anchors the comment to. Review comments
+	// only; empty otherwise.
+	DiffHunk string
+}
+
+// ReviewThread is one inline conversation on a pull request: the file and line it anchors to,
+// the diff hunk it was written against, every comment on it in order, and whether a human has
+// marked it resolved on the forge. It is the unit an agent has to act on — a review is a
+// summary plus N of these (LEXI-10).
+//
+// Resolution is not in GitHub's REST surface, so an adapter that could only reach REST reports
+// Resolved false and ResolutionKnown false: "not known to be resolved" and "known to be
+// unresolved" are different claims, and a prompt that confuses them re-litigates settled
+// threads.
+type ReviewThread struct {
+	// ID is the forge's own thread identifier when it has one (GitHub's GraphQL node id);
+	// empty when threads were reassembled from comments alone.
+	ID string
+	// ReviewID is the review the thread's first comment belongs to; 0 when unknown.
+	ReviewID int64
+	Path     string
+	Line     int
+	DiffHunk string
+	// Outdated is true when the lines the thread anchors to have since changed.
+	Outdated bool
+	// Resolved is true when the thread is marked resolved on the forge; meaningful only
+	// when ResolutionKnown is true.
+	Resolved        bool
+	ResolutionKnown bool
+	URL             string
+	Comments        []Comment
+}
+
+// Author returns the login that opened the thread, or "" for an empty thread.
+func (t ReviewThread) Author() string {
+	if len(t.Comments) == 0 {
+		return ""
+	}
+	return t.Comments[0].AuthorLogin
 }
 
 // CheckSuite is one CI check suite for a head SHA.

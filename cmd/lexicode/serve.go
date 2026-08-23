@@ -287,12 +287,13 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout i
 	if err := k.RegisterModule(credsMod); err != nil {
 		return err
 	}
-	// The context-provider module (contracts §2.6): all four of architecture §11's
-	// providers. The scheduler resolves them at enqueue for prompt assembly; repofiles
+	// The context-provider module (contracts §2.6): architecture §11's four providers plus
+	// `review`. The scheduler resolves them at enqueue for prompt assembly; repofiles
 	// enumerates instruction files through the github adapter's DocLister methods, the
-	// same seam bootstrap doc detection uses (there is no checkout at resolve time).
+	// same seam bootstrap doc detection uses (there is no checkout at resolve time), and
+	// `review` reassembles a whole review through the adapter's review reads (LEXI-10).
 	if err := k.RegisterModule(contextmod.New(contextmod.Options{
-		Store: st, Secrets: sec, Docs: ghMod.Forge(), Logger: logger,
+		Store: st, Secrets: sec, Docs: ghMod.Forge(), Reviews: ghMod.Forge(), Logger: logger,
 	})); err != nil {
 		return err
 	}

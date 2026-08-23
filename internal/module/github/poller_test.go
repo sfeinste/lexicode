@@ -50,6 +50,7 @@ type ghComment struct {
 	Subject              int // PR/issue number
 	Login, Body, Path    string
 	Line                 int
+	ReviewID             int64 // review comments: the review the comment was submitted with
 	CreatedAt, UpdatedAt string
 }
 
@@ -142,7 +143,7 @@ func (g *snapshotGH) install(mux *http.ServeMux) {
 		for _, c := range g.reviewComments {
 			out = append(out, map[string]any{
 				"id": c.ID, "user": map[string]any{"login": c.Login}, "body": c.Body,
-				"path": c.Path, "line": c.Line,
+				"path": c.Path, "line": c.Line, "pull_request_review_id": c.ReviewID,
 				"pull_request_url": fmt.Sprintf("https://api.github.example%s/pulls/%d", base, c.Subject),
 				"html_url":         fmt.Sprintf("https://github.example/acme/payments/pull/%d#discussion", c.Subject),
 				"created_at":       c.CreatedAt, "updated_at": c.UpdatedAt,
@@ -935,4 +936,55 @@ func eventKinds(events []domain.Event) []string {
 		out = append(out, e.Kind+"."+e.ActivityType)
 	}
 	return out
+}
+
+// TestPollerReviewCommentCarriesItsReview: every inline comment of a review says which review
+// it belongs to, which is what lets the guard coalesce the fragments into one run and the
+// `review` context provider assemble them into one prompt section (LEXI-10). A comment the
+// forge grouped into no review says so with an empty string rather than a wrong id.
+func TestPollerReviewCommentCarriesItsReview(t *testing.T) {
+	ph := newPollHarness(t)
+	ph.gh.upsertPR(ghPR{
+		Number: 219, Title: "Add rate limiting", State: "open", Login: "alice",
+		HeadRef: "feature/rate", HeadSHA: "sha219a", BaseRef: "main",
+		CreatedAt: at(9, 0), UpdatedAt: at(10, 0),
+	})
+	ph.tick() // baseline
+
+	ph.gh.upsertPR(ghPR{
+		Number: 219, Title: "Add rate limiting", State: "open", Login: "alice",
+		HeadRef: "feature/rate", HeadSHA: "sha219a", BaseRef: "main",
+		CreatedAt: at(9, 0), UpdatedAt: at(12, 0),
+	})
+	ph.gh.reviewComments = append(ph.gh.reviewComments,
+		ghComment{ID: 2001, Subject: 219, Login: "bob", Body: "off by one",
+			Path: "internal/api/rate.go", Line: 42, ReviewID: 555,
+			CreatedAt: at(12, 1), UpdatedAt: at(12, 1)},
+		ghComment{ID: 2002, Subject: 219, Login: "bob", Body: "a lone remark",
+			Path: "README.md", Line: 4,
+			CreatedAt: at(12, 2), UpdatedAt: at(12, 2)},
+	)
+	ph.tick()
+
+	events := ph.collected()
+	var comments []domain.Event
+	for _, e := range events {
+		if e.Kind == kindReviewComment {
+			comments = append(comments, e)
+		}
+	}
+	if len(comments) != 2 {
+		t.Fatalf("emitted %d review comment events, want 2: %v", len(comments), eventKinds(events))
+	}
+	first := ph.payload(comments[0])["comment"].(map[string]any)
+	if first["review_id"] != "555" {
+		t.Errorf("comment.review_id = %v, want \"555\"", first["review_id"])
+	}
+	if first["path"] != "internal/api/rate.go" || first["line"] != float64(42) {
+		t.Errorf("comment payload = %+v", first)
+	}
+	second := ph.payload(comments[1])["comment"].(map[string]any)
+	if second["review_id"] != "" {
+		t.Errorf("a comment in no review has review_id %v, want \"\"", second["review_id"])
+	}
 }

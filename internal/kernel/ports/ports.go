@@ -206,12 +206,23 @@ type ContextProvider interface {
 }
 
 // ContextRequest is what a provider gets to decide relevance (contracts §2.6).
+//
+// CausingEvent is an addition to the frozen §2.6 shape (LEXI-10) and is flagged as such: it is
+// additive — every provider that ignores it behaves exactly as before, and no interface method
+// signature changed — but it does widen a contract type, so it is called out rather than
+// slipped in. It exists because a provider that reacts to *what happened* (the review provider)
+// cannot be written without it, and the alternative was special-casing the scheduler, which
+// would have put prompt assembly in two places.
 type ContextRequest struct {
 	ProjectID, AgentID string
 	TicketID           string   // may be empty
 	TaskSummary        string   // ticket title + trigger description, for `auto` retrieval
 	ChangedPaths       []string // known for PR-triggered runs; empty otherwise
 	Dry                bool     // true for the agent's "what every run sees" preview
+	// CausingEvent is the normalized event that caused this run (runs.cause_event_id), when
+	// there was one. Nil for a manual run and always nil for the dry preview — "what every
+	// run of this agent sees" is precisely the part that does not depend on one event.
+	CausingEvent *domain.Event
 }
 
 // ContextItem is one contribution: a labelled, token-counted piece of agent context. Reason is
