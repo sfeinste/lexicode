@@ -120,6 +120,25 @@ Stated plainly, because a recommendation that only lists strengths is not a reco
    flag on, the same derivations go through `color-mix()`, which takes custom properties happily.
    The entire token-by-reference strategy rests on one boolean; a future MUI major that changes how
    that flag works is the biggest single upgrade risk in this recommendation.
+7. **Every palette slot you do not set is filled with a light-mode literal, silently.**
+   `createPalette` defaults `action.active` to `rgba(0, 0, 0, 0.54)`, `action.hover` to
+   `rgba(0, 0, 0, 0.04)`, and so on. Those are not neutral placeholders — they are *colours*, and
+   they do not follow `data-theme`. `ToggleButton` colours its **unselected** label from
+   `palette.action.active`, so the run detail's verbosity switch rendered its Summary and Verbose
+   options in near-black on `--surface`: fine in light, invisible in dark.
+
+   This is the sharpest edge of paying by reference, and it is worth being precise about why it is
+   dangerous rather than merely annoying. **No test in this repository could see it.** jsdom
+   renders no colours, so `axe.test.tsx` cannot; axe's own contrast rule needs real layout and is
+   disabled for that reason; and `tokens.contrast.test.ts` checks `tokens.css`, which was never
+   wrong — the theme simply was not consulting it for that slot. It was found by screenshotting
+   the real production bundle in both themes (`web/scripts/screenshot.mjs`), and it is the reason
+   that harness is committed rather than thrown away.
+
+   Fixed in `theme.ts` by setting `action.active` to `var(--text-2)`, and pinned by
+   `theme.tokens.test.ts`, which asserts *structurally* that no `palette.action` slot is left on a
+   Material literal — so the next unset slot fails by name instead of shipping. Mitigated, not
+   eliminated: the guard covers the slots we know components read, and MUI is free to add more.
 
 ### Mantine 9 — rejected (the closest call)
 
@@ -220,6 +239,35 @@ every limit at once: a three-pane layout, a live SSE stream, a virtualised timel
 verbosity switch, a dense selectable list, inline approvals, a modal, and the entire §4 status
 vocabulary.
 
+### What it looks like
+
+These are the real screen: headless Chromium driving `web/dist` — the same bundle `go:embed`
+ships — with the API stubbed at the network layer. `web/scripts/screenshot.mjs` regenerates them.
+
+**Dark.** The three panes, the collapsed `Read 5 files ▸` group, the timing gutters with their
+queued/model/tool split, and the **Next failure** button this conversion added, beside the
+verbosity switch.
+
+![Run detail, dark](screenshots/run-detail-dark.png)
+
+**Light.** The same screen and the same components; only `tokens.css` changed underneath them.
+
+![Run detail, light](screenshots/run-detail-light.png)
+
+**The centre pane is tool-aware** (§5.7): selecting the edit step renders a diff hunk rather than
+raw JSON. Note that added and removed lines carry `+`/`−` as well as colour — §10's rule that
+colour is never the sole carrier applies to diffs too.
+
+![The diff-hunk renderer](screenshots/run-detail-diff-dark.png)
+
+**Below 1400px** the context pane collapses behind a labelled `Context ▸` toggle rather than
+disappearing (§10).
+
+![Run detail, narrow](screenshots/run-detail-narrow-light.png)
+
+These are not decoration. Weakness #7 above — the invisible `ToggleButton` labels in dark mode —
+was found in the first of these images and was invisible to every test in the repository.
+
 **What the library supplied:** `Box` · `Paper` · `Stack` · `Typography` · `Button` ·
 `ToggleButtonGroup`/`ToggleButton` · `Tooltip` · `Chip` · `Alert`/`AlertTitle` · `Divider` ·
 `List`/`ListItem`/`ListItemButton` · `Accordion` · `Dialog` · `TextField` · `Checkbox` ·
@@ -253,6 +301,10 @@ Not theory — things that were wrong and are now right:
   tooltip when a run has no failures.
 - **~1,090 lines of hand-written CSS left `runs.module.css`** without a single visual rule being
   re-authored by hand.
+- **The verbosity switch's unselected options were illegible in dark mode** — Material's
+  `palette.action.active` default, weakness #7 — and are not any more. That one is listed under
+  what the conversion *cost*, honestly: MUI introduced the bug and MUI's theme fixed it. It is
+  here because the interesting part is that it took a screenshot to see it.
 
 ### Measured cost, in the real app
 
@@ -270,17 +322,23 @@ about 0.8% of a 9 MB binary.
 ### Verification
 
 `make check` passes with the conversion in place: Go build, vet, `golangci-lint`, `go test`, then
-`tsc -b --noEmit`, `eslint` and 453 frontend tests across 50 files — including the axe suite
-(zero critical violations on all 20 routes), the route-reachability crawl, the contrast assertions
-over both palettes, and six new tests in `runDetail.mui.test.tsx` that pin the converted screen's
-own acceptance: no action reachable only by keyboard, the §4 vocabulary intact, both themes
-resolving, and the empty state still saying what to do next.
+`tsc -b --noEmit`, `eslint` and the frontend suite — including the axe suite (zero critical
+violations on all 20 routes), the route-reachability crawl, the contrast assertions over both
+palettes, six new tests in `runDetail.mui.test.tsx` that pin the converted screen's own acceptance
+(no action reachable only by keyboard, the §4 vocabulary intact, both themes resolving, the empty
+state still saying what to do next), and four in `theme/theme.tokens.test.ts` that pin the
+token-by-reference arrangement itself.
+
+Both new suites were **mutation-checked** rather than merely observed to pass: removing the
+`action.active` fix fails `theme.tokens.test.ts` by name with the offending literal in the
+message, and renaming the Next-failure button fails `runDetail.mui.test.tsx`. A guard that has
+never been seen to fail is not yet a guard.
 
 ---
 
 ## Did the research change the plan?
 
-Yes, in three ways.
+Yes, in four ways.
 
 1. **The migration is ordered by discoverability value, not by screen size.** The audit found ten
    of fifteen hidden actions on the board, six of them retired by a single card overflow menu. The
@@ -296,6 +354,17 @@ Yes, in three ways.
    discouraged. In exchange, the whole arrangement depends on `cssVariables: true` continuing to
    route derived colours through `color-mix()`. That is now the single upgrade risk worth watching,
    and it is pinned by tests that fail loudly if it ever stops being true.
+
+4. **The test suite has a blind spot the migration has to plan around, and now has a tool for.**
+   This repository's accessibility guarantees are strong but they are all *structural*: axe over
+   jsdom (which renders no colour), arithmetic over `tokens.css`, a crawl over the route tree.
+   Nothing in `make check` looks at a pixel. That was survivable while every colour was written by
+   hand in a CSS module; it is not survivable when a library fills in colours you did not ask for
+   (weakness #7). So `web/scripts/screenshot.mjs` is committed, and **every stage of the migration
+   ends by rendering its converted screens in both themes and looking at them.** It is deliberately
+   not wired into `make check` — it needs a browser binary and the check must stay installable —
+   which makes it a checklist item rather than a gate. Naming it here is the honest version: it is
+   a habit the plan depends on, not an automated guarantee.
 
 ---
 

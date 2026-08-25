@@ -118,6 +118,15 @@ export const lexicodeTheme: Theme = createTheme({
     action: {
       // color-mix keeps these on the app's own text hue in both themes; Material's defaults
       // are fixed rgba() values that only look right on one of the two.
+      //
+      // `active` is the one that bites hardest, so it is first: ToggleButton colours its
+      // UNSELECTED label from `palette.action.active` (ToggleButton.js), and Material's
+      // default for it is a literal `rgba(0, 0, 0, 0.54)`. Leave it unset and the verbosity
+      // switch's Summary/Verbose options render near-black on `--surface` in dark mode —
+      // legible in light, effectively invisible in dark, and indistinguishable from
+      // `disabled` in both. Found by screenshotting the converted screen in both themes;
+      // jsdom renders no colour, which is why theme.tokens.test.ts asserts the shape instead.
+      active: token("text-2"),
       hover: `color-mix(in srgb, ${token("text")} 6%, transparent)`,
       selected: `color-mix(in srgb, ${token("text")} 10%, transparent)`,
       disabled: token("text-3"),

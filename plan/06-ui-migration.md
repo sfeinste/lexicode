@@ -16,6 +16,19 @@ Keyboard shortcuts all stay. Nothing is reachable *only* by keyboard.
 
 > At the end of every stage the app **builds**, **passes `make check`**, and is **usable**.
 
+And one more, which `make check` cannot enforce for you:
+
+> **Look at the converted screens, in both themes, before calling a stage done.**
+> `cd web && npm run build && node scripts/screenshot.mjs`.
+
+That is not ceremony. Every accessibility guarantee in this repository is structural — axe runs
+over jsdom, which renders no colour; contrast is asserted arithmetically against `tokens.css`;
+reachability is a crawl over the route tree. Nothing in `make check` looks at a pixel. Stage 0
+shipped a verbosity switch whose unselected options were invisible in dark mode (Material defaults
+`palette.action.active` to a literal `rgba(0, 0, 0, 0.54)`), and **every test in the repository
+passed**. It was caught by a screenshot and fixed in `theme.ts`; `theme/theme.tokens.test.ts` now
+fails if any `palette.action` slot is left on a Material literal. Expect one of these per stage.
+
 That is achievable because MUI and the CSS modules coexist without a fight: the theme sits on the
 root route, so a converted screen is themed wherever it renders, and an unconverted screen keeps
 its stylesheet untouched. `CssBaseline` is deliberately **not** installed until the final stage —
@@ -45,10 +58,15 @@ and why the library has no answer. Stage 0's files are the worked examples.
 | `StatusDot` · `CostChip` · `ContextMeter` · `LoopChain` | The shared status/cost primitives, rebuilt on library components. Four CSS modules deleted. |
 | `/p/:key/runs/:id` | The run detail: `RunDetailPage` · `renderers` · `Intervention` · `InlineElicitation`. ~1,090 lines of CSS left `runs.module.css`. |
 | `runDetail.mui.test.tsx` | Six tests pinning the converted screen's acceptance, including a sweep asserting **every route-scoped chord has a visible control** — mutation-checked: renaming the button fails the suite by name. |
+| `theme/theme.tokens.test.ts` | Four tests pinning the token-by-reference arrangement: no `palette.action` slot may be left on a Material literal. Mutation-checked against the bug that motivated it. |
+| `web/scripts/screenshot.mjs` | The screenshot harness. Drives `web/dist` — the bundle `go:embed` ships — in headless Chromium with the API stubbed at the network layer, and writes `design/screenshots/*.png`. Not in `make check`: it needs a browser binary. |
 
 **Discoverability retired:** `f` (next failure) → a labelled button beside the verbosity switch.
+**Defect found and fixed:** the verbosity switch's unselected options were illegible in dark mode
+— MUI's `palette.action.active` default — and no test in the repository could see it. This is
+where the "look at it" rule above comes from.
 **Cost paid:** +96.6 kB gzip JS, −3.2 kB CSS. One-time.
-**Verified:** `make check` green — 453 tests, 50 files.
+**Verified:** `make check` green, and the screen rendered and inspected in both themes.
 
 ---
 
