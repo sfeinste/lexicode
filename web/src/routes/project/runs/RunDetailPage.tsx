@@ -32,6 +32,15 @@
  *      their own screens (see plan/06-ui-redesign-plan.md, stages 3 and 5).
  *   4. The three-pane frame is `Box` with CSS grid — MUI's documented layout primitive.
  *      MUI ships no split-pane.
+ *
+ * One MUI default this screen deliberately overrides: `Alert` renders `role="alert"`, an
+ * ASSERTIVE live region. Most alerts here are styled containers for content that is merely
+ * displayed — the activation cards, the loop chain, a step's exit code — and §10 allows only
+ * state transitions and step boundaries to be announced at all. Those get
+ * `role="presentation"` (a div's implicit role is generic, so this removes nothing a reader
+ * needs); the two that really are time-sensitive — the load error and the §7 stall warning —
+ * keep the default. See the sr-only `aria-live="polite"` region below: it is the ONLY thing
+ * on this page allowed to speak.
  */
 import Alert from "@mui/material/Alert";
 import AlertTitle from "@mui/material/AlertTitle";
@@ -50,7 +59,7 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ContextMeter } from "../../../components/ContextMeter/ContextMeter";
@@ -81,7 +90,7 @@ import { useMediaQuery } from "../../../lib/useMediaQuery";
 import { MuiThemeProvider } from "../../../styles/MuiThemeProvider";
 import { MONO_FONT } from "../../../styles/muiTheme";
 import { runAnnouncement, type AnnounceSnapshot } from "./announce";
-import { ActivityDetail } from "./renderers";
+import { ActivityDetail, Glyph } from "./renderers";
 import { InterventionBar } from "./Intervention";
 import {
   buildTimeline,
@@ -196,6 +205,7 @@ function RunDetail() {
   const { key, id } = useParams({ from: "/shell/p/$key/runs/$id" });
   const { step, line, level } = useSearch({ from: "/shell/p/$key/runs/$id" });
   const navigate = useNavigate({ from: "/p/$key/runs/$id" });
+  const router = useRouter();
 
   useStreamTopics([`run:${id}`]);
 
@@ -272,11 +282,26 @@ function RunDetail() {
   };
 
   const [copied, setCopied] = useState(false);
+  // Build the link from the SELECTION, never from the address bar. `?step=` is only there
+  // once something has navigated (selectStep, the Next failure button, a permalink someone
+  // opened); the landing selection comes from defaultSelection() — the first failure, else
+  // the tail — and leaves the URL bare. So copying window.location.href verbatim, which is
+  // what this did, handed out a link that re-resolves to whatever the *recipient's* default
+  // selection is: on a live run, the moving tail rather than the step being pointed at. That
+  // is precisely the case the button exists for.
   const copyStepLink = () => {
-    void navigator.clipboard.writeText(window.location.href).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+    if (selectedSeq === undefined) return;
+    const { href } = router.buildLocation({
+      to: "/p/$key/runs/$id",
+      params: { key, id },
+      search: { step: selectedSeq, line, level },
     });
+    void navigator.clipboard
+      .writeText(new URL(href, window.location.origin).toString())
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
   };
 
   const live = run !== undefined && !isTerminal(run.state);
@@ -439,11 +464,18 @@ function RunDetail() {
                 : "Select the next failed step"
             }
           >
-            ✕ Next failure{failures.length > 0 ? ` (${failures.length})` : ""}
+            <Glyph>✕</Glyph>
+            Next failure{failures.length > 0 ? ` (${failures.length})` : ""}
           </Button>
 
           <Button onClick={copyStepLink} disabled={selectedSeq === undefined}>
-            {copied ? "✓ Link copied" : "Copy link to step"}
+            {copied ? (
+              <>
+                <Glyph>✓</Glyph>Link copied
+              </>
+            ) : (
+              "Copy link to step"
+            )}
           </Button>
 
           <Box sx={{ flexGrow: 1 }} />
@@ -478,7 +510,7 @@ function RunDetail() {
       {/* §8: the first completed run is the activation event — mark it, teach the next
           action. Restrained: one alert, shown exactly once per project. */}
       {firstCompletedMoment && (
-        <Alert severity="success" icon={<span aria-hidden="true">✓</span>}>
+        <Alert severity="success" role="presentation" icon={<span aria-hidden="true">✓</span>}>
           <AlertTitle>Your first completed run</AlertTitle>
           Next:{" "}
           {(() => {
@@ -502,7 +534,7 @@ function RunDetail() {
 
       {/* §8: the first `needs input` teaches that agents are interactive — unmissable. */}
       {firstNeedsInputMoment && (
-        <Alert severity="warning" icon={<span aria-hidden="true">▲</span>}>
+        <Alert severity="warning" role="presentation" icon={<span aria-hidden="true">▲</span>}>
           <AlertTitle>{agentName} is asking you a question</AlertTitle>
           Agents aren&apos;t fire-and-forget: this run is paused until you answer, right here
           in the step detail below. Your answer goes straight back into the running session.
@@ -651,7 +683,7 @@ function RunDetail() {
 function LoopChainPanel({ projectKey, runId }: { projectKey: string; runId: string }) {
   const chain = useRunChainQuery(runId);
   return (
-    <Alert severity="warning" icon={<span aria-hidden="true">⊗</span>}>
+    <Alert severity="warning" role="presentation" icon={<span aria-hidden="true">⊗</span>}>
       <AlertTitle>Loop stopped — the causal chain</AlertTitle>
       {chain.isPending ? (
         <Typography variant="body2" color="text.secondary">
@@ -910,7 +942,11 @@ function ContextPane({
                           size="small"
                           color="warning"
                           variant="outlined"
-                          label="⚠ large diff"
+                          label={
+                            <>
+                              <Glyph>⚠</Glyph>large diff
+                            </>
+                          }
                           title={`Above the ${prSizeThreshold}-line warning threshold (project settings)`}
                         />
                       )}

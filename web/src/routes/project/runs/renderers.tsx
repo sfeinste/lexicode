@@ -116,6 +116,23 @@ function payloadOf(a: RunActivity): KnownPayload {
 
 const monoSx = { fontFamily: MONO_FONT, fontSize: 12 } as const;
 
+/**
+ * A status glyph inside a control's label — a `Box` span, exactly the pattern the timeline
+ * rows already use, named so the rule is greppable rather than remembered.
+ *
+ * §4 requires that colour is never the sole carrier; the WORD beside the glyph is what
+ * satisfies that, so the glyph itself is decoration. Left visible it becomes part of the
+ * control's accessible name and a screen reader announces "✓ Approve" as "check mark,
+ * Approve". Every glyph that sits inside a Button or a Chip label goes through here.
+ */
+export function Glyph({ children }: { children: ReactNode }) {
+  return (
+    <Box component="span" aria-hidden="true" sx={{ mr: 0.5 }}>
+      {children}
+    </Box>
+  );
+}
+
 // ---- line-addressable output ------------------------------------------------------------
 
 export interface LineSelection {
@@ -303,8 +320,12 @@ function BashDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
       meta={<StepMeta a={a} />}
     >
       {done && (
+        // `role="presentation"`, not MUI's default `role="alert"`: an exit code is content
+        // the centre pane displays, and the pane remounts on every selection — see the
+        // header note in RunDetailPage.tsx.
         <Alert
           severity={failed ? "error" : "success"}
+          role="presentation"
           icon={<span aria-hidden="true">{failed ? "✕" : "✓"}</span>}
           sx={{ py: 0 }}
         >
@@ -349,7 +370,7 @@ function DiffDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
       meta={<StepMeta a={a} />}
     >
       {p.error !== undefined && (
-        <Alert severity="error">
+        <Alert severity="error" role="presentation">
           <Raw value={p.error} />
         </Alert>
       )}
@@ -634,7 +655,7 @@ function QuestionRow({
         <Chip
           size="small"
           variant="outlined"
-          label={resolvedLabel(el)}
+          label={<ResolvedLabel el={el} />}
           color={el?.state === "denied" ? "error" : "default"}
         />
       )}
@@ -781,7 +802,7 @@ function ApprovalRow({
                   }
                 }}
               >
-                ✓ Approve with these edits
+                <Glyph>✓</Glyph>Approve with these edits
               </Button>
             ) : mode === "respond" ? (
               <Button
@@ -789,7 +810,7 @@ function ApprovalRow({
                 disabled={respond.isPending || message.trim() === ""}
                 onClick={() => act({ action: "deny", message: message.trim() })}
               >
-                ↩ Send response
+                <Glyph>↩</Glyph>Send response
               </Button>
             ) : (
               <Button
@@ -797,7 +818,7 @@ function ApprovalRow({
                 disabled={respond.isPending}
                 onClick={() => act(alwaysAllow ? { action: "remember" } : { action: "approve" })}
               >
-                ✓ Approve
+                <Glyph>✓</Glyph>Approve
               </Button>
             )}
             <Button
@@ -820,7 +841,7 @@ function ApprovalRow({
               disabled={respond.isPending}
               onClick={() => act({ action: "deny" })}
             >
-              ✕ Deny
+              <Glyph>✕</Glyph>Deny
             </Button>
           </Stack>
           <FormControlLabel
@@ -848,12 +869,14 @@ function ApprovalRow({
         <Chip
           size="small"
           variant="outlined"
-          label={resolvedLabel(el)}
+          label={<ResolvedLabel el={el} />}
           color={el.state === "denied" ? "error" : "default"}
         />
       )}
       {ruleID !== null && (
-        <Alert severity="info" sx={{ mt: 1 }}>
+        // The one alert here that appears in response to a click rather than a selection, so
+        // it does announce — but politely (`role="status"`), not with MUI's assertive default.
+        <Alert severity="info" role="status" sx={{ mt: 1 }}>
           Rule added —{" "}
           <MuiLink
             component={RouterLink}
@@ -868,19 +891,32 @@ function ApprovalRow({
   );
 }
 
-function resolvedLabel(el?: Elicitation): string {
+/** How an elicitation ended: a decorative glyph, and the word that actually says it. */
+function resolution(el?: Elicitation): { glyph?: string; text: string } {
   switch (el?.state) {
     case "answered":
-      return el.kind === "approval" ? "✓ Approved" : "↩ Answered";
+      return el.kind === "approval"
+        ? { glyph: "✓", text: "Approved" }
+        : { glyph: "↩", text: "Answered" };
     case "denied":
-      return "✕ Denied";
+      return { glyph: "✕", text: "Denied" };
     case "expired":
-      return "Expired without an answer";
+      return { text: "Expired without an answer" };
     case "canceled":
-      return "Canceled with the run";
+      return { text: "Canceled with the run" };
     default:
-      return "Waiting…";
+      return { text: "Waiting…" };
   }
+}
+
+function ResolvedLabel({ el }: { el?: Elicitation }) {
+  const { glyph, text } = resolution(el);
+  return (
+    <>
+      {glyph !== undefined && <Glyph>{glyph}</Glyph>}
+      {text}
+    </>
+  );
 }
 
 /** The lexicode MCP tools get labelled cards; other MCP tools a labelled honest card. */
@@ -1004,7 +1040,7 @@ export function ActivityDetail({
       );
     case "response":
       return (
-        <Alert severity="success" icon={<span aria-hidden="true">✓</span>}>
+        <Alert severity="success" role="presentation" icon={<span aria-hidden="true">✓</span>}>
           <AlertTitle>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <span>Outcome</span>
@@ -1017,7 +1053,7 @@ export function ActivityDetail({
     case "error": {
       const p = payloadOf(a);
       return (
-        <Alert severity="error" icon={<span aria-hidden="true">✕</span>}>
+        <Alert severity="error" role="presentation" icon={<span aria-hidden="true">✕</span>}>
           <AlertTitle>
             {p.subtype !== undefined && p.subtype !== "" ? p.subtype : "Error"}
           </AlertTitle>

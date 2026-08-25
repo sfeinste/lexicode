@@ -20,13 +20,22 @@ of three properties established by the proof of concept:
 2. **The theme is derived from `tokens.css`, not a replacement for it.** `styles/muiTheme.ts`
    parses the same stylesheet the contrast test parses. Converted and unconverted screens
    therefore cannot drift in colour, and `tokens.contrast.test.ts` keeps guarding both.
-3. **The status vocabulary, the routes, the query layer and the tests are out of scope.**
-   Nothing in `lib/api`, `lib/sse`, `app/router.tsx` or `components/StatusDot` changes. A
-   conversion rewrites JSX and deletes CSS; it does not touch data flow.
+3. **The status vocabulary, the routes and the query layer are out of scope.** Nothing in
+   `lib/api`, `lib/sse`, `app/router.tsx` or `components/StatusDot` changes. A conversion
+   rewrites JSX and deletes CSS; it does not touch data flow. The *existing* tests are
+   likewise untouched — but each stage ADDS one, below.
 
 **A stage is done when:** `make check` passes; the axe suite reports zero critical violations on
 the converted routes; `reachability.test.tsx` still crawls to every route; the converted screen
-has no action reachable only by keyboard; and the screenshots are regenerated.
+has no action reachable only by keyboard; **each converted screen ships a test that names its
+controls by accessible name and asserts the route registers no route-scoped key binding**
+(`routes/project/runs/runDetailControls.test.tsx` is the model — see stage 0); and the
+screenshots are regenerated.
+
+Why that test is not optional: axe passes on this screen and always did. axe checks markup
+validity, and every defect the redesign is meant to fix — an action with no control, a control
+whose label is a bare glyph, `role="alert"` on a container that is only being *displayed* — is
+valid markup. Nothing but a behavioural assertion catches those.
 
 ---
 
@@ -34,10 +43,10 @@ has no action reachable only by keyboard; and the screenshots are regenerated.
 
 | | Lines |
 |---|---|
-| `web/src` total (ts + tsx + css) | 41,184 |
+| `web/src` total (ts + tsx + css) | 41,720 |
 | of which generated (`lib/api/types.gen.ts`) | 6,018 |
-| of which tests (49 files) | 5,878 |
-| **Hand-written app code in scope** | **~29,300** |
+| of which tests (50 files) | 6,326 |
+| **Hand-written app code in scope** | **~29,400** |
 | `*.module.css` (the part that mostly disappears) | 7,118 |
 
 The proof of concept converted the run detail: ~1,800 lines of TSX rewritten, 1,108 lines of CSS
@@ -83,12 +92,22 @@ harness, and one converted screen proving the shape works.
 
 **Shipped:** `styles/muiTheme.ts`, `styles/MuiThemeProvider.tsx`,
 `components/RouterLink/RouterLink.tsx`, the converted run detail (`RunDetailPage.tsx`,
-`renderers.tsx`, `Intervention.tsx`, `InlineElicitation.tsx`), `web/screenshots/*`,
-`design/screenshots/*`.
+`renderers.tsx`, `Intervention.tsx`, `InlineElicitation.tsx`),
+`routes/project/runs/runDetailControls.test.tsx`, `web/screenshots/*`, `design/screenshots/*`.
 **Cost:** this run.
-**Verification:** `tsc`, `eslint`, `vitest` (49 files / 451 tests) green; axe clean; both themes
+**Verification:** `tsc`, `eslint`, `vitest` (50 files / 458 tests) green; axe clean; both themes
 rendered and screenshotted. *Go half of `make check` not runnable in this container — no Go
 toolchain (see §7).*
+
+`runDetailControls.test.tsx` is what makes this stage's claims regressions rather than prose:
+it renders the route over the real route tree and asserts each promoted control **by its
+accessible name**, that the route registers no route-scoped key binding at all, that "Copy
+link to step" copies a link naming the selected step *on the landing state* (where the
+selection is `defaultSelection()` and the URL is bare), that nothing is announced
+assertively — MUI's `Alert` defaults to `role="alert"` and this screen uses it as a styling
+container — that Stop is a Dialog which stops nothing until confirmed, and that the empty
+state says what to do next. **Every stage below inherits this rule**: a converted screen ships
+with a test that names its controls, or the discoverability claim is unguarded.
 
 ---
 
@@ -225,7 +244,11 @@ The owner's decision point. Estimates are in *runs* — one agent run of the siz
 **Total: ~14 further runs** to convert all 21 routes, removing roughly **7,000 of the 7,118
 remaining lines of CSS modules** and every one of the 18 hidden actions.
 
-Three honest caveats on that number:
+Four honest caveats on that number:
+
+- **Each stage now also writes a controls test** (§1). Stage 0's is ~430 lines and took a
+  fraction of a run; multi-screen stages need one per converted screen, so budget roughly
+  +0.2 runs per stage — inside the rounding of the numbers above, not on top of them.
 
 - **It excludes the backend gaps.** The three capabilities with no interface (audit §5) are Go
   work. Best guess 2–3 further runs, but they were not investigated in depth here and should be
@@ -272,10 +295,11 @@ it closes the entire discoverability problem the ticket was written about.
 |---|---|
 | `tsc -b --noEmit` | Passes |
 | `eslint .` | Passes |
-| `vitest run` | Passes — 49 files, 451 tests |
+| `vitest run` | Passes — 50 files, 458 tests |
 | axe-core, all 21 routes | Zero critical violations |
 | Token contrast, both themes | Passes |
 | Route reachability crawl | Passes |
+| Run-detail controls (`runDetailControls.test.tsx`) | Passes — 7 cases; verified failing against the pre-fix code |
 | `go build` · `go vet` · `golangci-lint` · `go test` | **Not run — this container has no Go toolchain** |
 
 No Go source was modified, so the Go half of `make check` is expected to be unaffected. That

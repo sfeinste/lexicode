@@ -68,7 +68,10 @@ export function InterventionBar({ run, messages }: { run: Run; messages: RunMess
   return (
     <>
       {shownCheckout !== null && (
-        <Alert severity="info">
+        // A persistent panel, not an event: it re-renders on every load of a taken-over run,
+        // so it must not be an assertive live region. (MUI's `Alert` default is
+        // `role="alert"` — see the header note in RunDetailPage.tsx.)
+        <Alert severity="info" role="presentation">
           <Typography variant="body2" gutterBottom>
             Taken over. Check the branch out locally:
           </Typography>
