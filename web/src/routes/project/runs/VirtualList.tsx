@@ -24,7 +24,11 @@ export interface VirtualListProps<T> {
   overscan?: number;
   /** Scroll so this index is visible (centered); used by ?step= permalinks and `f`. */
   scrollToIndex?: number;
-  className?: string;
+  /**
+   * The scroll viewport's height. Windowing needs a bounded box, and the caller owns the
+   * layout — the run detail's timeline pane sizes this from the §5.7 three-pane geometry.
+   */
+  height?: number | string;
   /** Viewport height fallback for environments without layout (jsdom); the real height is
    * measured from the element. */
   defaultHeight?: number;
@@ -38,7 +42,7 @@ export function VirtualList<T>({
   itemKey,
   overscan = 10,
   scrollToIndex,
-  className,
+  height,
   defaultHeight = 600,
   "aria-label": ariaLabel,
 }: VirtualListProps<T>) {
@@ -101,9 +105,8 @@ export function VirtualList<T>({
   return (
     <div
       ref={outerRef}
-      className={className}
       onScroll={onScroll}
-      style={{ overflowY: "auto", position: "relative" }}
+      style={{ overflowY: "auto", position: "relative", height }}
       aria-label={ariaLabel}
     >
       <div style={{ height: items.length * rowHeight, position: "relative" }}>{rows}</div>

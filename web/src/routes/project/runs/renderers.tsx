@@ -9,15 +9,44 @@
  * Log-line permalinks (rule 12): every output line renders through <OutputLines>, which
  * numbers lines and reports clicks so the page can write ?line=. The selected line
  * highlights and scrolls into view.
+ *
+ * D-1 (amended) — what each thing is, in library terms:
+ *   DetailCard      Paper(variant="outlined") + Typography
+ *   Collapsible     Accordion / AccordionSummary / AccordionDetails
+ *   OutputLines     List(component="ol") + ListItemButton, dense, monospace
+ *   answer options  ToggleButtonGroup + ToggleButton (exclusive or multiple per question)
+ *   approvals       Button · Checkbox+FormControlLabel · TextField · Alert · Chip
+ *
+ * Two of these are compositions rather than a single component, and both are named as such:
+ * a numbered, line-addressable log is not a Material UI component, and neither is a diff
+ * hunk. Both are built from List/ListItemButton and Paper/Typography respectively, with no
+ * bespoke CSS beyond the §3 tokens the theme already exposes.
  */
-import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
+import Chip from "@mui/material/Chip";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import List from "@mui/material/List";
+import ListItem from "@mui/material/ListItem";
+import ListItemButton from "@mui/material/ListItemButton";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Typography from "@mui/material/Typography";
 
 import type { Elicitation, RunActivity } from "../../../lib/api/client";
 import { CostChip } from "../../../components/CostChip/CostChip";
 import { useRespondElicitation } from "../../../lib/api/runQueries";
 import { formatDuration } from "../../../lib/format/format";
-import styles from "./runs.module.css";
+import { AppLink } from "../../../theme/routerLinks";
 import { timingSplit, toolDisplayName } from "./timeline";
 
 // ---- payload shapes (the S20 adapter contracts) -----------------------------------------
@@ -77,6 +106,19 @@ function payloadOf(a: RunActivity): KnownPayload {
   return typeof p === "object" && p !== null ? (p as KnownPayload) : {};
 }
 
+/** Machine output, everywhere it appears: §3.3's monospace stack at the mono size. */
+const MONO = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--fs-mono)",
+} as const;
+
+/** The line tones an output line can carry, as §3.2 palette paths. */
+const LINE_TONE: Record<string, string> = {
+  add: "success.main",
+  del: "error.main",
+  err: "error.main",
+};
+
 // ---- line-addressable output ------------------------------------------------------------
 
 export interface LineSelection {
@@ -87,6 +129,12 @@ export interface LineSelection {
 /**
  * Numbered, clickable output lines. `start` continues the step's numbering across blocks
  * (stdout then stderr, or successive hunks) so ?line= is unambiguous within a step.
+ *
+ * A composition (Material UI has no log viewer): `List` as an `<ol>` with the HTML `start`
+ * attribute doing the numbering the app used to do by hand, and one `ListItemButton` per
+ * line so a line is selectable by click AND by keyboard — `ListItemButton` is focusable and
+ * Enter-activated, which the old bare `<button>` grid also was, but now with the library's
+ * `selected` state carrying the highlight instead of a data attribute.
  */
 function OutputLines({
   text,
@@ -99,36 +147,55 @@ function OutputLines({
   sel: LineSelection;
   classify?: (line: string) => string | undefined;
 }) {
-  const selectedRef = useRef<HTMLButtonElement | null>(null);
+  const selectedRef = useRef<HTMLLIElement | null>(null);
   useEffect(() => {
     selectedRef.current?.scrollIntoView({ block: "center" });
   }, [sel.selected]);
   if (text === "") return null;
   const lines = text.replace(/\n$/, "").split("\n");
   return (
-    <ol className={styles.outputLines} start={start}>
+    <List
+      component="ol"
+      dense
+      disablePadding
+      // The <ol>'s own `start` attribute does the numbering the app used to do by hand;
+      // it is what makes the numbers line up with the step, not with the block.
+      start={start}
+      sx={{ ...MONO, overflowX: "auto" }}
+    >
       {lines.map((line, i) => {
         const n = start + i;
         const isSel = sel.selected === n;
+        const tone = classify?.(line);
         return (
-          <li key={n}>
-            <button
-              type="button"
-              ref={isSel ? selectedRef : undefined}
-              className={styles.outputLine}
-              data-selected={isSel || undefined}
-              data-tone={classify?.(line)}
-              onClick={() => sel.onSelect(n)}
+          <ListItemButton
+            key={n}
+            component="li"
+            ref={isSel ? selectedRef : undefined}
+            selected={isSel}
+            dense
+            onClick={() => sel.onSelect(n)}
+            sx={{
+              ...MONO,
+              py: 0,
+              gap: 1,
+              alignItems: "baseline",
+              whiteSpace: "pre",
+              color: tone !== undefined ? LINE_TONE[tone] : "text.primary",
+            }}
+          >
+            <Box
+              component="span"
+              aria-hidden="true"
+              sx={{ color: "text.disabled", minWidth: "3ch", textAlign: "right" }}
             >
-              <span className={styles.lineNo} aria-hidden="true">
-                {n}
-              </span>
-              {line === "" ? " " : line}
-            </button>
-          </li>
+              {n}
+            </Box>
+            {line === "" ? " " : line}
+          </ListItemButton>
         );
       })}
-    </ol>
+    </List>
   );
 }
 
@@ -149,13 +216,28 @@ function DetailCard({
   children?: ReactNode;
 }) {
   return (
-    <article className={styles.detailCard}>
-      <header className={styles.detailCardHead}>
-        <div className={styles.detailCardTitle}>{title}</div>
-        {meta !== undefined && <div className={styles.detailCardMeta}>{meta}</div>}
-      </header>
+    <Paper component="article" variant="outlined" sx={{ p: 1, display: "grid", gap: 1 }}>
+      <Box
+        component="header"
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
+      >
+        <Typography component="div" variant="body1" sx={{ fontWeight: 600 }}>
+          {title}
+        </Typography>
+        {meta !== undefined && (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: "text.secondary" }}>
+            {meta}
+          </Box>
+        )}
+      </Box>
       {children}
-    </article>
+    </Paper>
   );
 }
 
@@ -164,7 +246,11 @@ function StepMeta({ a }: { a: RunActivity }) {
   const split = timingSplit(a);
   return (
     <>
-      {split !== null && <span>{formatDuration(split.totalMs)}</span>}
+      {split !== null && (
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          {formatDuration(split.totalMs)}
+        </Typography>
+      )}
       {a.cost_cents > 0 && (
         <CostChip
           usd={a.cost_cents / 100}
@@ -175,11 +261,12 @@ function StepMeta({ a }: { a: RunActivity }) {
           }}
         />
       )}
-      {a.attempt > 1 && <span className={styles.retryBadge}>attempt {a.attempt}</span>}
+      {a.attempt > 1 && <Chip size="small" variant="outlined" label={`attempt ${a.attempt}`} />}
     </>
   );
 }
 
+/** A disclosure. MUI's Accordion, with the spec's own ▸/▾ glyph as the expand indicator. */
 function Collapsible({
   label,
   open: openInitially,
@@ -191,12 +278,28 @@ function Collapsible({
 }) {
   const [open, setOpen] = useState(openInitially ?? false);
   return (
-    <div>
-      <button type="button" className={styles.collapseToggle} onClick={() => setOpen(!open)}>
-        {open ? "▾" : "▸"} {label}
-      </button>
-      {open && children}
-    </div>
+    <Accordion
+      expanded={open}
+      onChange={() => setOpen(!open)}
+      disableGutters
+      square
+      elevation={0}
+      sx={{ backgroundColor: "transparent", "&::before": { display: "none" } }}
+    >
+      <AccordionSummary
+        expandIcon={
+          <Box component="span" aria-hidden="true" sx={{ fontSize: "var(--fs-mono)" }}>
+            ▸
+          </Box>
+        }
+        sx={{ minHeight: 0, px: 0, "& .MuiAccordionSummary-content": { my: "4px" } }}
+      >
+        <Typography variant="body1" sx={{ color: "text.secondary" }}>
+          {label}
+        </Typography>
+      </AccordionSummary>
+      <AccordionDetails sx={{ p: 0 }}>{children}</AccordionDetails>
+    </Accordion>
   );
 }
 
@@ -211,17 +314,27 @@ function BashDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
   const failed = a.ok === false;
   return (
     <DetailCard
-      title={<code className={styles.cmdLine}>$ {cmd}</code>}
+      title={
+        <Box component="code" sx={MONO}>
+          $ {cmd}
+        </Box>
+      }
       meta={<StepMeta a={a} />}
     >
       {done && (
-        <div className={styles.exitRow} data-failed={failed || undefined}>
-          {failed ? "✕" : "✓"} exit {p.exit}
-          {p.truncated === true && <span className={styles.truncNote}> · output truncated</span>}
-        </div>
+        // §10: colour is never the only carrier — the exit chip leads with ✓ or ✕.
+        <Chip
+          size="small"
+          variant="outlined"
+          color={failed ? "error" : "success"}
+          label={`${failed ? "✕" : "✓"} exit ${p.exit}${
+            p.truncated === true ? " · output truncated" : ""
+          }`}
+          sx={{ ...MONO, alignSelf: "start" }}
+        />
       )}
       {(stdout !== "" || stderr !== "") && (
-        <Collapsible label={failed ? "output" : "output"} open={failed || (sel.selected !== undefined)}>
+        <Collapsible label="output" open={failed || sel.selected !== undefined}>
           <OutputLines text={stdout} start={1} sel={sel} />
           <OutputLines
             text={stderr}
@@ -231,7 +344,11 @@ function BashDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
           />
         </Collapsible>
       )}
-      {!done && <div className={styles.pendingNote}>still running…</div>}
+      {!done && (
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          still running…
+        </Typography>
+      )}
     </DetailCard>
   );
 }
@@ -244,18 +361,34 @@ function DiffDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
     <DetailCard
       title={
         <>
-          {a.tool_name} <code>{p.path ?? ""}</code>
+          {a.tool_name}{" "}
+          <Box component="code" sx={MONO}>
+            {p.path ?? ""}
+          </Box>
         </>
       }
       meta={<StepMeta a={a} />}
     >
-      {p.error !== undefined && <pre className={styles.errorText}>{p.error}</pre>}
+      {p.error !== undefined && <Alert severity="error">{p.error}</Alert>}
       {hunks.map((h, i) => {
         const start = offset + 1;
         offset += h.lines.length;
         return (
-          <div key={i} className={styles.diffHunk}>
-            <div className={styles.diffHeader}>{h.header}</div>
+          <Paper key={i} variant="outlined" sx={{ overflow: "hidden" }}>
+            <Typography
+              variant="body2"
+              sx={{
+                ...MONO,
+                px: 1,
+                py: "2px",
+                color: "text.secondary",
+                backgroundColor: "lexicode.surface2",
+                borderBottom: 1,
+                borderColor: "divider",
+              }}
+            >
+              {h.header}
+            </Typography>
             <OutputLines
               text={h.lines.join("\n")}
               start={start}
@@ -264,11 +397,13 @@ function DiffDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
                 line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : undefined
               }
             />
-          </div>
+          </Paper>
         );
       })}
       {hunks.length === 0 && p.error === undefined && (
-        <div className={styles.pendingNote}>no textual change</div>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          no textual change
+        </Typography>
       )}
     </DetailCard>
   );
@@ -280,9 +415,15 @@ function ReadDetail({ a }: { a: RunActivity }) {
     <DetailCard
       title={
         <>
-          Read <code>{p.path ?? ""}</code>
+          Read{" "}
+          <Box component="code" sx={MONO}>
+            {p.path ?? ""}
+          </Box>
           {p.lines !== undefined && (
-            <span className={styles.detailInlineMeta}> · {p.lines} lines</span>
+            <Box component="span" sx={{ color: "text.secondary", fontWeight: 400 }}>
+              {" "}
+              · {p.lines} lines
+            </Box>
           )}
         </>
       }
@@ -297,15 +438,18 @@ function SearchDetail({ a }: { a: RunActivity }) {
     <DetailCard
       title={
         <>
-          Search <code>{p.pattern ?? ""}</code>
+          Search{" "}
+          <Box component="code" sx={MONO}>
+            {p.pattern ?? ""}
+          </Box>
         </>
       }
       meta={<StepMeta a={a} />}
     >
       {p.matches !== undefined && (
-        <div className={styles.detailLine}>
+        <Typography variant="body1">
           {p.matches} {p.matches === 1 ? "match" : "matches"}
-        </div>
+        </Typography>
       )}
     </DetailCard>
   );
@@ -315,16 +459,27 @@ function TodoDetail({ a }: { a: RunActivity }) {
   const items = payloadOf(a).items ?? [];
   return (
     <DetailCard title="Plan" meta={<StepMeta a={a} />}>
-      <ul className={styles.todoList}>
+      <List dense disablePadding>
         {items.map((it, i) => (
-          <li key={i} data-status={it.status}>
-            <span aria-hidden="true" className={styles.todoMark}>
+          <ListItem key={i} data-status={it.status} disableGutters sx={{ gap: 1, py: 0 }}>
+            <Box
+              component="span"
+              aria-hidden="true"
+              sx={{
+                color:
+                  it.status === "completed"
+                    ? "success.main"
+                    : it.status === "in_progress"
+                      ? "lexicode.running"
+                      : "text.disabled",
+              }}
+            >
               {it.status === "completed" ? "✓" : it.status === "in_progress" ? "●" : "○"}
-            </span>
-            {it.content ?? ""}
-          </li>
+            </Box>
+            <Typography variant="body1">{it.content ?? ""}</Typography>
+          </ListItem>
         ))}
-      </ul>
+      </List>
     </DetailCard>
   );
 }
@@ -352,7 +507,7 @@ export function ElicitationDetail({ a, intervene }: { a: RunActivity; intervene?
       <DetailCard title={a.title} meta={<StepMeta a={a} />}>
         {p.response !== undefined && (
           <Collapsible label="response">
-            <pre className={styles.rawFallback}>{JSON.stringify(p.response, null, 2)}</pre>
+            <RawBlock value={p.response} />
           </Collapsible>
         )}
       </DetailCard>
@@ -363,6 +518,27 @@ export function ElicitationDetail({ a, intervene }: { a: RunActivity; intervene?
     return <ApprovalRow a={a} el={el} intervene={intervene!} />;
   }
   return <QuestionRow a={a} el={el} intervene={intervene} />;
+}
+
+/** Raw JSON, always behind a disclosure and never a default rendering (rule 4). */
+function RawBlock({ value }: { value: unknown }) {
+  return (
+    <Box
+      component="pre"
+      sx={{
+        ...MONO,
+        m: 0,
+        p: 1,
+        overflowX: "auto",
+        backgroundColor: "lexicode.surface2",
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+    </Box>
+  );
 }
 
 // ---- ask_human ---------------------------------------------------------------------------
@@ -414,85 +590,76 @@ function QuestionRow({
         const c = choiceOf(i);
         const multi = q.multiSelect === true;
         return (
-          <div key={i} className={styles.questionCard}>
+          <Paper key={i} variant="outlined" sx={{ p: 1, display: "grid", gap: 1 }}>
             {q.header !== undefined && q.header !== "" && (
-              <span className={styles.questionHeader}>{q.header}</span>
+              <Chip size="small" variant="outlined" label={q.header} sx={{ justifySelf: "start" }} />
             )}
-            <div className={styles.questionText}>{q.question}</div>
-            <ul className={styles.optionList}>
-              {(q.options ?? []).map((o, j) => {
-                const label = o.label ?? "";
-                const selected = !c.useOther && c.labels.includes(label);
-                return (
-                  <li key={j}>
-                    <button
-                      type="button"
-                      className={styles.optionCard}
-                      data-selected={selected || undefined}
-                      disabled={!pending}
-                      onClick={() => {
-                        const labels = multi
-                          ? selected
-                            ? c.labels.filter((l) => l !== label)
-                            : [...c.labels, label]
-                          : [label];
-                        setChoice(i, { labels, other: c.other, useOther: false });
-                      }}
-                    >
-                      <span className={styles.optionLabel}>{label}</span>
-                      {o.description !== undefined && o.description !== "" && (
-                        <span className={styles.optionDesc}>{o.description}</span>
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-              <li>
-                <div
-                  className={styles.optionCard}
-                  data-selected={c.useOther || undefined}
-                  data-other="true"
+            <Typography variant="body1" sx={{ fontWeight: 600 }}>
+              {q.question}
+            </Typography>
+            {/* ToggleButtonGroup is the library's own multi/single choice control, and it
+                gives each option a real pressed state instead of a data attribute. */}
+            <ToggleButtonGroup
+              orientation="vertical"
+              exclusive={!multi}
+              value={multi ? c.labels : (c.labels[0] ?? null)}
+              disabled={!pending}
+              aria-label={q.question ?? `Question ${i + 1}`}
+              onChange={(_e, next: string | string[] | null) => {
+                const labels =
+                  next === null ? [] : Array.isArray(next) ? next : [next];
+                setChoice(i, { labels, other: c.other, useOther: false });
+              }}
+              sx={{ alignItems: "stretch" }}
+            >
+              {(q.options ?? []).map((o, j) => (
+                <ToggleButton
+                  key={j}
+                  value={o.label ?? ""}
+                  sx={{ display: "grid", gap: "2px", justifyItems: "start", textAlign: "left" }}
                 >
-                  <span className={styles.optionLabel}>Other</span>
-                  <input
-                    className={styles.otherInput}
-                    placeholder="Type your own answer…"
-                    disabled={!pending}
-                    value={c.other}
-                    onFocus={() => setChoice(i, { ...c, useOther: true })}
-                    onChange={(e) =>
-                      setChoice(i, { labels: [], other: e.target.value, useOther: true })
-                    }
-                  />
-                </div>
-              </li>
-            </ul>
-          </div>
+                  <Typography variant="body1">{o.label ?? ""}</Typography>
+                  {o.description !== undefined && o.description !== "" && (
+                    <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                      {o.description}
+                    </Typography>
+                  )}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+            <TextField
+              size="small"
+              label="Other"
+              placeholder="Type your own answer…"
+              disabled={!pending}
+              value={c.other}
+              onFocus={() => setChoice(i, { ...c, useOther: true })}
+              onChange={(e) => setChoice(i, { labels: [], other: e.target.value, useOther: true })}
+            />
+          </Paper>
         );
       })}
-      {questions.length === 0 && (
-        <pre className={styles.rawFallback}>{JSON.stringify(a.payload, null, 2)}</pre>
-      )}
+      {questions.length === 0 && <RawBlock value={a.payload} />}
       {pending && intervene !== undefined ? (
         <>
-          <button
-            type="button"
-            className={styles.answerButton}
+          <Button
+            variant="contained"
             disabled={!complete || respond.isPending}
             onClick={submit}
+            sx={{ justifySelf: "start" }}
           >
             Answer
-          </button>
-          {respond.isError && (
-            <div className={styles.respondError} role="alert">
-              {respond.error.message}
-            </div>
-          )}
+          </Button>
+          {respond.isError && <Alert severity="error">{respond.error.message}</Alert>}
         </>
       ) : (
-        <div className={styles.resolvedChip} data-state={el?.state ?? "pending"}>
-          {resolvedLabel(el)}
-        </div>
+        <Chip
+          size="small"
+          variant="outlined"
+          data-state={el?.state ?? "pending"}
+          label={resolvedLabel(el)}
+          sx={{ justifySelf: "start" }}
+        />
       )}
     </DetailCard>
   );
@@ -556,61 +723,67 @@ function ApprovalRow({
 
   return (
     <DetailCard
-      title={<span className={styles.approvalTitle}>▲ {req.action ?? a.title}</span>}
+      title={
+        <Box component="span" sx={{ color: "lexicode.needsYou" }}>
+          ▲ {req.action ?? a.title}
+        </Box>
+      }
       meta={<StepMeta a={a} />}
     >
-      <dl className={styles.approvalFields}>
+      <Box component="dl" sx={{ display: "grid", gap: "2px", m: 0 }}>
         {fields.map(([label, value]) =>
           value !== undefined && value !== "" ? (
-            <div key={label} className={styles.approvalField}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
-            </div>
+            <Box key={label} sx={{ display: "flex", gap: 1 }}>
+              <Typography component="dt" variant="body1" sx={{ color: "text.secondary", minWidth: 96 }}>
+                {label}
+              </Typography>
+              <Typography component="dd" variant="body1" sx={{ m: 0 }}>
+                {value}
+              </Typography>
+            </Box>
           ) : null,
         )}
-      </dl>
+      </Box>
       {req.input !== undefined && (
         <Collapsible label="tool input">
-          <pre className={styles.rawFallback}>{JSON.stringify(req.input, null, 2)}</pre>
+          <RawBlock value={req.input} />
         </Collapsible>
       )}
 
       {pending ? (
-        <div className={styles.approvalControls}>
+        <Stack spacing={1}>
           {mode === "edits" && (
-            <div className={styles.approvalEditor}>
-              <textarea
-                className={styles.approvalTextarea}
+            <>
+              <TextField
+                multiline
+                minRows={8}
+                fullWidth
                 value={edited}
-                rows={8}
+                slotProps={{ htmlInput: { style: { fontFamily: "var(--font-mono)" } } }}
                 onChange={(e) => {
                   setEdited(e.target.value);
                   setEditError(null);
                 }}
-                aria-label="Edited tool input (JSON)"
+                label="Edited tool input (JSON)"
               />
-              {editError !== null && (
-                <div className={styles.respondError} role="alert">
-                  {editError}
-                </div>
-              )}
-            </div>
+              {editError !== null && <Alert severity="error">{editError}</Alert>}
+            </>
           )}
           {mode === "respond" && (
-            <textarea
-              className={styles.approvalTextarea}
+            <TextField
+              multiline
+              minRows={3}
+              fullWidth
               value={message}
-              rows={3}
               placeholder="Tell the agent what to do instead…"
               onChange={(e) => setMessage(e.target.value)}
-              aria-label="Response to the agent"
+              label="Response to the agent"
             />
           )}
-          <div className={styles.approvalButtons}>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
             {mode === "edits" ? (
-              <button
-                type="button"
-                className={styles.answerButton}
+              <Button
+                variant="contained"
                 disabled={respond.isPending}
                 onClick={() => {
                   try {
@@ -625,83 +798,82 @@ function ApprovalRow({
                 }}
               >
                 ✓ Approve with these edits
-              </button>
+              </Button>
             ) : mode === "respond" ? (
-              <button
-                type="button"
-                className={styles.answerButton}
+              <Button
+                variant="contained"
                 disabled={respond.isPending || message.trim() === ""}
                 onClick={() => act({ action: "deny", message: message.trim() })}
               >
                 ↩ Send response
-              </button>
+              </Button>
             ) : (
-              <button
-                type="button"
-                className={styles.answerButton}
+              <Button
+                variant="contained"
                 disabled={respond.isPending}
                 onClick={() => act(alwaysAllow ? { action: "remember" } : { action: "approve" })}
               >
                 ✓ Approve
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
-              className={styles.approvalSecondary}
-              data-active={mode === "edits" || undefined}
+            <Button
+              variant={mode === "edits" ? "contained" : "outlined"}
+              color="inherit"
               onClick={() => setMode(mode === "edits" ? "none" : "edits")}
             >
               Approve with edits
-            </button>
-            <button
-              type="button"
-              className={styles.approvalSecondary}
-              data-active={mode === "respond" || undefined}
+            </Button>
+            <Button
+              variant={mode === "respond" ? "contained" : "outlined"}
+              color="inherit"
               onClick={() => setMode(mode === "respond" ? "none" : "respond")}
             >
               Respond
-            </button>
-            <button
-              type="button"
-              className={styles.approvalSecondary}
-              data-danger="true"
+            </Button>
+            <Button
+              variant="outlined"
+              color="error"
               disabled={respond.isPending}
               onClick={() => act({ action: "deny" })}
             >
               ✕ Deny
-            </button>
-          </div>
-          <label className={styles.alwaysAllow}>
-            <input
-              type="checkbox"
-              checked={alwaysAllow}
-              onChange={(e) => setAlwaysAllow(e.target.checked)}
-            />
-            Always allow {req.tool_name ?? "this tool"} like this — writes one scoped rule in
-            agent settings
-          </label>
-          {respond.isError && (
-            <div className={styles.respondError} role="alert">
-              {respond.error.message}
-            </div>
-          )}
-        </div>
+            </Button>
+          </Stack>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={alwaysAllow}
+                onChange={(e) => setAlwaysAllow(e.target.checked)}
+              />
+            }
+            label={
+              <Typography variant="body1">
+                Always allow {req.tool_name ?? "this tool"} like this — writes one scoped rule
+                in agent settings
+              </Typography>
+            }
+          />
+          {respond.isError && <Alert severity="error">{respond.error.message}</Alert>}
+        </Stack>
       ) : (
-        <div className={styles.resolvedChip} data-state={el.state}>
-          {resolvedLabel(el)}
-        </div>
+        <Chip
+          size="small"
+          variant="outlined"
+          data-state={el.state}
+          label={resolvedLabel(el)}
+          sx={{ justifySelf: "start" }}
+        />
       )}
       {ruleID !== null && (
-        <div className={styles.ruleAdded}>
+        <Alert severity="success">
           Rule added —{" "}
-          <Link
+          <AppLink
             to="/p/$key/agents/$id"
             params={{ key: intervene.projectKey, id: intervene.agentID }}
-            className={styles.ruleLink}
           >
             view in agent settings
-          </Link>
-        </div>
+          </AppLink>
+        </Alert>
       )}
     </DetailCard>
   );
@@ -729,39 +901,54 @@ function MCPDetail({ a }: { a: RunActivity }) {
   let body: ReactNode = null;
   switch (a.tool_name) {
     case "mcp__lexicode__set_step":
-      body = <div className={styles.detailLine}>current step → “{p.step ?? ""}”</div>;
+      body = <Typography variant="body1">current step → “{p.step ?? ""}”</Typography>;
       break;
     case "mcp__lexicode__check_criterion":
       body = (
-        <div className={styles.detailLine}>
-          {p.met === true ? "✓ met" : "○ unmet"}
+        <Typography variant="body1">
+          <Box
+            component="span"
+            aria-hidden="true"
+            sx={{ color: p.met === true ? "success.main" : "text.disabled" }}
+          >
+            {p.met === true ? "✓" : "○"}
+          </Box>{" "}
+          {p.met === true ? "met" : "unmet"}
           {p.note !== undefined && p.note !== "" && <> — {p.note}</>}
-        </div>
+        </Typography>
       );
       break;
     case "mcp__lexicode__propose_wiki_page":
       body = (
-        <div className={styles.detailLine}>
-          proposed <code>{p.slug ?? ""}</code>
+        <Typography variant="body1">
+          proposed{" "}
+          <Box component="code" sx={MONO}>
+            {p.slug ?? ""}
+          </Box>
           {p.reason !== undefined && p.reason !== "" && <> — {p.reason}</>}
-        </div>
+        </Typography>
       );
       break;
     default:
       body = (
         <Collapsible label="parameters">
-          <pre className={styles.rawFallback}>
-            {JSON.stringify(p.raw ?? a.payload, null, 2)}
-          </pre>
+          <RawBlock value={p.raw ?? a.payload} />
         </Collapsible>
       );
   }
   return (
-    <DetailCard title={<span className={styles.mcpLabel}>{label}</span>} meta={<StepMeta a={a} />}>
+    <DetailCard
+      title={
+        <Box component="span" sx={MONO}>
+          {label}
+        </Box>
+      }
+      meta={<StepMeta a={a} />}
+    >
       {body}
       {typeof p.result === "string" && p.result !== "" && (
         <Collapsible label="result">
-          <pre className={styles.rawFallback}>{p.result}</pre>
+          <RawBlock value={p.result} />
         </Collapsible>
       )}
     </DetailCard>
@@ -777,10 +964,14 @@ function UnknownToolDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
       {typeof p.result === "string" && p.result !== "" && (
         <OutputLines text={p.result} start={1} sel={sel} />
       )}
-      {p.truncated === true && <div className={styles.truncNote}>output truncated</div>}
+      {p.truncated === true && (
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          output truncated
+        </Typography>
+      )}
       {p.raw !== undefined && (
         <Collapsible label="raw input">
-          <pre className={styles.rawFallback}>{JSON.stringify(p.raw, null, 2)}</pre>
+          <RawBlock value={p.raw} />
         </Collapsible>
       )}
     </DetailCard>
@@ -790,19 +981,42 @@ function UnknownToolDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
 function ProvisionDetail({ a }: { a: RunActivity }) {
   const p = payloadOf(a);
   if (p.line !== undefined) {
-    return <DetailCard title={<code>{p.line}</code>} />;
+    return (
+      <DetailCard
+        title={
+          <Box component="code" sx={MONO}>
+            {p.line}
+          </Box>
+        }
+      />
+    );
   }
   return (
     <DetailCard
       title={
         <>
-          {p.state === "ok" ? "✓" : p.state === "failed" ? "✕" : p.state === "running" ? "●" : "○"}{" "}
+          <Box
+            component="span"
+            aria-hidden="true"
+            sx={{
+              color:
+                p.state === "ok"
+                  ? "success.main"
+                  : p.state === "failed"
+                    ? "error.main"
+                    : p.state === "running"
+                      ? "lexicode.running"
+                      : "text.disabled",
+            }}
+          >
+            {p.state === "ok" ? "✓" : p.state === "failed" ? "✕" : p.state === "running" ? "●" : "○"}
+          </Box>{" "}
           {p.step ?? a.title}
         </>
       }
     >
       {p.detail !== undefined && p.detail !== "" && (
-        <div className={styles.detailLine}>{p.detail}</div>
+        <Typography variant="body1">{p.detail}</Typography>
       )}
     </DetailCard>
   );
@@ -823,26 +1037,45 @@ export function ActivityDetail({
     case "thought":
       return (
         <DetailCard title="Thought" meta={<StepMeta a={a} />}>
-          <p className={styles.prose}>{payloadOf(a).text ?? a.title}</p>
+          <Typography variant="body1" sx={{ whiteSpace: "pre-wrap" }}>
+            {payloadOf(a).text ?? a.title}
+          </Typography>
         </DetailCard>
       );
     case "response":
       return (
-        <article className={styles.outcomeBlock}>
-          <header className={styles.outcomeHead}>
-            ✓ Outcome
-            <StepMeta a={a} />
-          </header>
-          <p className={styles.prose}>{payloadOf(a).text ?? a.title}</p>
-        </article>
+        <Alert
+          severity="success"
+          icon={
+            <Box component="span" aria-hidden="true">
+              ✓
+            </Box>
+          }
+          action={<StepMeta a={a} />}
+        >
+          <Typography variant="body1" sx={{ whiteSpace: "pre-wrap" }}>
+            {payloadOf(a).text ?? a.title}
+          </Typography>
+        </Alert>
       );
     case "error": {
       const p = payloadOf(a);
       return (
-        <article className={styles.outcomeBlock} data-failed="true">
-          <header className={styles.outcomeHead}>✕ {p.subtype !== undefined && p.subtype !== "" ? p.subtype : "Error"}</header>
-          <p className={styles.prose}>{p.result !== undefined && p.result !== "" ? p.result : a.title}</p>
-        </article>
+        <Alert
+          severity="error"
+          icon={
+            <Box component="span" aria-hidden="true">
+              ✕
+            </Box>
+          }
+        >
+          <Typography variant="body1" sx={{ fontWeight: 600 }}>
+            {p.subtype !== undefined && p.subtype !== "" ? p.subtype : "Error"}
+          </Typography>
+          <Typography variant="body1" sx={{ whiteSpace: "pre-wrap" }}>
+            {p.result !== undefined && p.result !== "" ? p.result : a.title}
+          </Typography>
+        </Alert>
       );
     }
     case "elicitation":

@@ -27,6 +27,59 @@ a literal transcription of UI spec §3 — no utility framework, because the spe
 tokens and a utility layer would let them drift. No component library; the spec's component list
 (§7) is the component library.
 
+### Amendment A-1 (LEXI-13, August 2026) — reversed: the UI moves onto Material UI
+
+**Status:** the last paragraph of D-1 above ("No component library; the spec's component list (§7)
+is the component library") is **superseded**. Everything else in D-1 stands: still one Go binary,
+still an embedded React SPA, still TanStack Router, TanStack Query and Zustand.
+
+**What changes.** The UI is rebuilt on [Material UI](https://mui.com) v9. Components come from the
+library; a composition of library primitives is allowed and must say so in a comment; a hand-made
+component is not. `styles/tokens.css` remains the single source of truth for colour, type and
+density, and the MUI theme consumes it **by reference** — `palette.success.main` is literally
+`var(--ok)`, not a copy of the hex. Light, dark and system keep working through the existing
+`data-theme` attribute; MUI's own colour-scheme machinery is deliberately not used, because a
+second switch would have to be kept in sync with the first.
+
+**Why the original decision was reasonable and is still being reversed.** "No component library"
+was not laziness. The spec prescribes exact tokens, and a library's defaults do drift from a
+transcribed palette; owning the components meant owning the density, the glyph vocabulary and the
+§10 accessibility rules outright. That reasoning held. What it did not price was the cost of
+*everything a component library gives you for free that nobody schedules a story for*: a focus
+trap on a dialog, Escape-to-close, focus restoration on close, a tooltip that opens on keyboard
+focus rather than hover only, a disclosure with correct `aria-expanded` wiring, a toggle group
+with roving focus. Thirty-nine stories shipped a great deal of capability and, one screen at a
+time, quietly skipped those. The audit in
+[../design/discoverability-audit.md](../design/discoverability-audit.md) is the bill: **15 of the
+152 actions in the app have no in-context control at all** — keyboard-only, palette-only, or
+reachable only by typing a URL — and ten of the fifteen are on the board. The run detail's
+take-over dialog was a `<div role="dialog">` with a click handler on its backdrop — no focus trap,
+no Escape, and a dismissal a keyboard user could not perform.
+
+That is a systemic outcome, not a series of oversights, and systemic outcomes are what a decision
+is supposed to prevent. Hand-making the component set made the *right* thing (a proper dialog, a
+labelled control for every capability) cost a day each time, so it kept losing to the feature in
+the story. A library inverts that price.
+
+**Why Material UI specifically** — the four-way comparison, the honest weaknesses, and the reasons
+Mantine, Ant Design, Chakra, Fluent UI and React Aria Components were rejected are in
+[../design/ui-library-evaluation.md](../design/ui-library-evaluation.md). The short version: it is
+the only candidate that is simultaneously (a) unambiguously a *component* library rather than a
+primitive kit, (b) able to theme entirely from CSS custom properties so the §3 tokens survive
+intact, and (c) large enough that "does it have one" is almost never the question. Its weaknesses
+are real and named there — chiefly a +96 kB gzip toll, a data grid whose virtualisation is a paid
+tier, and a visual language that has to be actively suppressed to meet §2.2's density.
+
+**What the spec keeps.** `design/ui-ux-spec.md` remains binding for *what each screen does* — the
+information architecture (§1), the status vocabulary (§4), the run detail's three panes (§5.7), the
+eight trigger outcome classes (§4.2), the empty-state copy (§8) and the twelve interaction rules
+(§9). Its *visual* prescriptions — §3's exact token values excepted, since those stay — are
+superseded by the library's conventions where the two disagree.
+
+**Migration:** staged, in [06-ui-migration.md](06-ui-migration.md). Every stage leaves the app
+building, passing `make check`, and usable. Stage 0 (the theme, the shared status/cost primitives
+and the run detail as proof of concept) is merged.
+
 ## D-2 — SQLite, WAL mode, single file
 
 `~/.lexicode/lexicode.db`. WAL, `foreign_keys=ON`, `busy_timeout=5000`, one writer connection and

@@ -6,8 +6,19 @@
  *
  * The vocabulary is UI spec §4 in full: the run states (§4.1) and the trigger outcome
  * classes (§4.2). §4.3's "flavors of needs-you" are copy on NeedsYouCard, not statuses.
+ *
+ * D-1 (amended) — composition, not invention: this is `Box` + `Typography` from Material
+ * UI, and the seven §3.2 hues are palette entries on the theme (`success`, `error`,
+ * `warning`, `primary` and the three `lexicode.*` slots Material has no name for). The
+ * vocabulary table below is unchanged from the CSS-module version; only the rendering moved
+ * onto library primitives.
  */
-import styles from "./StatusDot.module.css";
+import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+import { visuallyHidden } from "@mui/utils";
+
+// The §3.2 meaning → theme palette path map. Its own module so this stays a component file.
+import { PALETTE_PATH } from "./statusPalette";
 
 export interface StatusMeta {
   /** The semantic color token, without the leading `--`. One hue per meaning (§3.2). */
@@ -64,15 +75,39 @@ export function StatusDot({ status, label, hideLabel }: StatusDotProps) {
   const meta: StatusMeta = STATUS_VOCABULARY[status];
   const text = label ?? meta.label;
   return (
-    <span className={styles.root} data-status={status}>
-      <span
+    <Box
+      component="span"
+      data-status={status}
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <Box
+        component="span"
         aria-hidden="true"
-        className={meta.pulse ? `${styles.glyph} ${styles.pulse}` : styles.glyph}
-        style={{ color: `var(--${meta.color})` }}
+        sx={{
+          color: PALETTE_PATH[meta.color],
+          fontSize: "var(--fs-mono)",
+          lineHeight: 1,
+          // §3.4: the 2s pulse on the running dot — one of the only three animations in
+          // the app. The keyframes are declared once, in tokens.css.
+          ...(meta.pulse === true
+            ? { animation: "lx-pulse 2s ease-in-out infinite" }
+            : null),
+        }}
       >
         {meta.glyph}
-      </span>
-      <span className={hideLabel ? styles.srOnly : styles.label}>{text}</span>
-    </span>
+      </Box>
+      <Typography
+        component="span"
+        variant="inherit"
+        sx={hideLabel === true ? visuallyHidden : { color: "inherit" }}
+      >
+        {text}
+      </Typography>
+    </Box>
   );
 }

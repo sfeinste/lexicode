@@ -1,21 +1,64 @@
 /*
  * Run detail (UI spec §5.7): three panes — step timeline · tool-aware detail · Context &
- * cost — over a current-step line and the (S24-disabled) steering bar.
+ * cost — over a current-step line and the steering bar.
  *
  * The load-bearing rules, in code:
  * - Verbosity is client-side over `level`, instant, no refetch; the default drops to
  *   Summary when ≥4 of the project's runs are in flight.
  * - ToolCallRow grouping is client-side over the normalized stream (timeline.ts).
- * - Failed steps auto-expand and are the default selection; `f` jumps to the next failure.
+ * - Failed steps auto-expand and are the default selection; `f` jumps to the next failure —
+ *   and so does the **Next failure** button beside the verbosity switch (see below).
  * - Selection (?step=, ?line=) and verbosity (?level=) live in the URL (rule 12).
  * - Live activities stream over SSE topic run:<id> into the query cache (applyEvent.ts);
  *   the §7 acknowledgment SLA renders a stall warning when a running run has produced no
  *   first thought within 10 seconds.
  * - The timeline is a hand-rolled fixed-height virtualized list (VirtualList.tsx) so a
  *   500-step run scrolls at 60fps.
+ *
+ * ---- D-1 (amended): this screen is the Material UI proof of concept (S39) --------------
+ *
+ * Why this screen and not an easier one: it is the hardest thing in the app. Three panes,
+ * a live stream, a virtualized list, a radio-style view switch, a dense selectable
+ * timeline, inline approvals, a modal, and the entire §4 status vocabulary. If the library
+ * could not carry this, it could not carry Lexicode.
+ *
+ * What the library supplies here, by name:
+ *   Box · Paper · Stack · Typography · Button · ToggleButtonGroup/ToggleButton · Tooltip ·
+ *   Chip · Alert/AlertTitle · Divider · List/ListItem/ListItemButton · Link
+ *
+ * The two compositions, declared rather than smuggled:
+ *   1. THE THREE-PANE FRAME is `Box` with a CSS grid and a `Paper` per pane. Material UI
+ *      has no application-layout component, so the frame is spec §5.7's own geometry
+ *      expressed in `sx`, with the §10 breakpoints as MUI breakpoint keys.
+ *   2. THE VIRTUALIZED TIMELINE keeps VirtualList.tsx (~80 lines, no dependency) and
+ *      renders `ListItemButton` rows inside it. MUI's own virtualized grid is a paid tier
+ *      (MUI X Pro), and this list is fixed-height and one-dimensional, which is the case
+ *      where windowing is arithmetic rather than a product.
+ *
+ * The discoverability fix this screen was carrying: `f` — "next failure" — was reachable
+ * ONLY by pressing the key. Nothing on the screen said the affordance existed. It now has
+ * a labelled button that shares one implementation with the chord, so the shortcut is a
+ * shortcut rather than the only door.
  */
-import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import Alert from "@mui/material/Alert";
+import AlertTitle from "@mui/material/AlertTitle";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import Divider from "@mui/material/Divider";
+import Link from "@mui/material/Link";
+import List from "@mui/material/List";
+import ListItem from "@mui/material/ListItem";
+import ListItemButton from "@mui/material/ListItemButton";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
+import { visuallyHidden } from "@mui/utils";
 
 import { ContextMeter } from "../../../components/ContextMeter/ContextMeter";
 import { CostChip } from "../../../components/CostChip/CostChip";
@@ -39,13 +82,14 @@ import { useRunChainQuery } from "../../../lib/api/triggerQueries";
 import { markMomentSeen, momentPending } from "../../../lib/activation";
 import { formatDuration, formatRelativeTime, formatTokenCount } from "../../../lib/format/format";
 import { formatDiffStat, isLargeDiff } from "../../../lib/format/prSize";
+import { chordLabel } from "../../../lib/keyboard/hooks";
 import { useKeyBindings, useKeyScope } from "../../../lib/keyboard/hooks";
 import { useStreamTopics } from "../../../lib/sse/useStreamTopics";
 import { useMediaQuery } from "../../../lib/useMediaQuery";
+import { AppLink, AppLinkButton } from "../../../theme/routerLinks";
 import { runAnnouncement, type AnnounceSnapshot } from "./announce";
 import { ActivityDetail } from "./renderers";
 import { InterventionBar } from "./Intervention";
-import styles from "./runs.module.css";
 import {
   buildTimeline,
   defaultSelection,
@@ -59,6 +103,9 @@ import { inFlight } from "./viewState";
 
 /** Every timeline row is one line high — what makes the windowing exact. */
 const ROW_HEIGHT = 28;
+
+/** The timeline pane’s scroll viewport. Windowing needs a bounded box (VirtualList). */
+const TIMELINE_HEIGHT = 420;
 
 const TERMINAL = new Set(["completed", "failed", "timed_out", "canceled", "loop_stopped"]);
 
@@ -87,6 +134,15 @@ const GLYPHS: Record<RunActivity["type"], string> = {
   provision: "○",
 };
 
+/** §3.2 hues as theme palette paths — the same seven meanings StatusDot renders. */
+const TONE: Record<string, string> = {
+  ok: "success.main",
+  fail: "error.main",
+  running: "lexicode.running",
+  "needs-you": "lexicode.needsYou",
+  muted: "text.disabled",
+};
+
 function stepGlyph(a: RunActivity): { glyph: string; tone: string } {
   if (a.type === "provision") {
     const state = (a.payload as { state?: string } | null)?.state;
@@ -104,27 +160,47 @@ function stepGlyph(a: RunActivity): { glyph: string; tone: string } {
   return { glyph: GLYPHS[a.type], tone: "muted" };
 }
 
-/** The §5.7 timing gutter: a right-aligned duration with a queued/model/tool split bar. */
+/**
+ * The §5.7 timing gutter: a right-aligned duration with a queued/model/tool split bar.
+ * A composition — three `Box` segments inside a `Tooltip`, because "why was this slow"
+ * has to be answerable at a glance and no library ships a three-segment micro-bar.
+ */
 function TimingGutter({ a }: { a: RunActivity }) {
   const split = timingSplit(a);
-  if (split === null) return <span className={styles.gutter} />;
+  if (split === null) return <Box component="span" sx={{ minWidth: 72 }} />;
   const known = split.queuedMs + split.modelMs + split.toolMs;
   const base = Math.max(split.totalMs, known, 1);
   const pct = (n: number) => `${((n / base) * 100).toFixed(1)}%`;
   return (
-    <span
-      className={styles.gutter}
-      title={`queued ${formatDuration(split.queuedMs)} · model ${formatDuration(split.modelMs)} · tool ${formatDuration(split.toolMs)}`}
+    <Tooltip
+      title={`queued ${formatDuration(split.queuedMs)} · model ${formatDuration(
+        split.modelMs,
+      )} · tool ${formatDuration(split.toolMs)}`}
     >
-      {known > 0 && (
-        <span className={styles.gutterBar} aria-hidden="true">
-          <span className={styles.segQueued} style={{ width: pct(split.queuedMs) }} />
-          <span className={styles.segModel} style={{ width: pct(split.modelMs) }} />
-          <span className={styles.segTool} style={{ width: pct(split.toolMs) }} />
-        </span>
-      )}
-      <span className={styles.gutterText}>{formatDuration(split.totalMs)}</span>
-    </span>
+      <Box
+        component="span"
+        sx={{ display: "inline-flex", alignItems: "center", gap: "6px", minWidth: 72 }}
+      >
+        {known > 0 && (
+          <Box
+            component="span"
+            aria-hidden="true"
+            sx={{ display: "inline-flex", width: 36, height: 4, borderRadius: 2, overflow: "hidden" }}
+          >
+            <Box component="span" sx={{ width: pct(split.queuedMs), bgcolor: "text.disabled" }} />
+            <Box component="span" sx={{ width: pct(split.modelMs), bgcolor: "lexicode.running" }} />
+            <Box component="span" sx={{ width: pct(split.toolMs), bgcolor: "primary.main" }} />
+          </Box>
+        )}
+        <Typography
+          component="span"
+          variant="body2"
+          sx={{ fontFamily: "var(--font-mono)", color: "text.disabled", ml: "auto" }}
+        >
+          {formatDuration(split.totalMs)}
+        </Typography>
+      </Box>
+    </Tooltip>
   );
 }
 
@@ -202,7 +278,16 @@ export function RunDetailPage() {
     setJump(selectedIndex);
   }, [selectedSeq, selectedIndex]);
 
-  // `f` — next failure (§6), wrapping.
+  /**
+   * Next failure — ONE implementation, TWO doors (§6 keyboard map + the button beside the
+   * verbosity switch). The `f` chord used to be the only way to reach this, which is
+   * exactly the pattern LEXI-13 is about: the capability existed, the way in did not.
+   */
+  const failureTarget = nextFailure(activities, selectedSeq);
+  const goToNextFailure = () => {
+    if (failureTarget !== null) selectStep(failureTarget);
+  };
+
   useKeyScope("route", true);
   useKeyBindings(
     () => [
@@ -225,7 +310,7 @@ export function RunDetailPage() {
   const now = useNow(live);
 
   // §10 responsive: >=1400 all three panes; below, the context pane collapses to a header
-  // toggle (1100-1400), and the whole thing stacks vertically under 1100 (runs.module.css).
+  // toggle (1100-1400), and the whole thing stacks vertically under 1100.
   const threePane = useMediaQuery("(min-width: 1400px)", true);
   const [contextOpen, setContextOpen] = useState(false);
   const contextShown = threePane || contextOpen;
@@ -278,10 +363,18 @@ export function RunDetailPage() {
     now - new Date(run.started_at).getTime() > 10_000;
 
   if (detailQuery.isPending) {
-    return <p className={styles.muted}>Loading run…</p>;
+    return (
+      <Typography variant="body1" sx={{ color: "text.secondary", p: 2 }}>
+        Loading run…
+      </Typography>
+    );
   }
   if (detailQuery.isError || run === undefined) {
-    return <p className={styles.errorText}>This run failed to load.</p>;
+    return (
+      <Alert severity="error" sx={{ m: 2 }}>
+        This run failed to load.
+      </Alert>
+    );
   }
 
   const agentName = agents.data?.agents.find((a) => a.id === run.agent_id)?.name ?? "agent";
@@ -294,16 +387,32 @@ export function RunDetailPage() {
       : null;
 
   return (
-    <div className={styles.detailPage}>
-      <header className={styles.runHeader}>
-        <Link to="/p/$key/runs" params={{ key }} className={styles.backLink}>
+    <Box sx={{ display: "grid", gap: 1, p: 1, minWidth: 0 }}>
+      <Stack
+        component="header"
+        direction="row"
+        spacing={1}
+        useFlexGap
+        sx={{ alignItems: "center", flexWrap: "wrap" }}
+      >
+        <AppLinkButton to="/p/$key/runs" params={{ key }} size="small">
           ← Runs
-        </Link>
-        <h1 className={styles.runTitle}>Run #{run.seq}</h1>
+        </AppLinkButton>
+        <Typography variant="h1" sx={{ fontFamily: "var(--font-mono)" }}>
+          Run #{run.seq}
+        </Typography>
         <StatusDot status={run.state} />
-        <span className={styles.headerMeta}>{agentName}</span>
-        <span className={styles.headerMeta}>{run.model}</span>
-        {elapsed !== null && <span className={styles.headerMeta}>{elapsed}</span>}
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          {agentName}
+        </Typography>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          {run.model}
+        </Typography>
+        {elapsed !== null && (
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            {elapsed}
+          </Typography>
+        )}
         <CostChip
           usd={run.cost_cents > 0 ? run.cost_cents / 100 : null}
           split={{
@@ -313,105 +422,186 @@ export function RunDetailPage() {
           }}
         />
         {run.state === "queued" && run.hold_reason !== "" && (
-          <span className={styles.holdReason}>{run.hold_reason}</span>
+          <Chip size="small" variant="outlined" label={run.hold_reason} />
         )}
         {!threePane && (
-          <button
-            type="button"
-            className={styles.contextToggle}
+          <Button
+            size="small"
             aria-expanded={contextShown}
             onClick={() => setContextOpen((v) => !v)}
+            sx={{ ml: "auto" }}
           >
             Context {contextShown ? "▾" : "▸"}
-          </button>
+          </Button>
         )}
-      </header>
+      </Stack>
 
       {/* §10: state transitions and step boundaries only — never the log stream. */}
-      <div aria-live="polite" role="status" className={styles.srOnly}>
+      <Box aria-live="polite" role="status" sx={visuallyHidden}>
         {announced}
-      </div>
+      </Box>
 
       {/* §8: the first completed run is the activation event — mark it, teach the next
           action. Restrained: one card, shown exactly once per project. */}
       {firstCompletedMoment && (
-        <section className={styles.momentCard} data-kind="completed" aria-label="First completed run">
-          <p className={styles.momentHead}>✓ Your first completed run.</p>
-          <p className={styles.momentBody}>
-            Next:{" "}
-            {(() => {
-              const pr = detailQuery.data.outputs.find((o) => o.kind === "pull_request");
-              const out = pr ?? detailQuery.data.outputs.find((o) => o.url !== "");
-              return out !== undefined && out.url !== "" ? (
-                <a href={out.url} target="_blank" rel="noreferrer">
-                  review the diff
-                </a>
-              ) : (
-                <>review the output below</>
-              );
-            })()}
-            , or turn the feedback into a{" "}
-            <Link to="/p/$key/wiki" params={{ key }}>
-              wiki page
-            </Link>{" "}
-            so the next run starts smarter.
-          </p>
-        </section>
+        <Alert
+          severity="success"
+          icon={
+            <Box component="span" aria-hidden="true">
+              ✓
+            </Box>
+          }
+          aria-label="First completed run"
+        >
+          <AlertTitle>Your first completed run.</AlertTitle>
+          Next:{" "}
+          {(() => {
+            const pr = detailQuery.data.outputs.find((o) => o.kind === "pull_request");
+            const out = pr ?? detailQuery.data.outputs.find((o) => o.url !== "");
+            return out !== undefined && out.url !== "" ? (
+              <Link href={out.url} target="_blank" rel="noreferrer">
+                review the diff
+              </Link>
+            ) : (
+              <>review the output below</>
+            );
+          })()}
+          , or turn the feedback into a{" "}
+          <AppLink to="/p/$key/wiki" params={{ key }}>
+            wiki page
+          </AppLink>{" "}
+          so the next run starts smarter.
+        </Alert>
       )}
 
       {/* §8: the first `needs input` teaches that agents are interactive — unmissable. */}
       {firstNeedsInputMoment && (
-        <section className={styles.momentCard} data-kind="needs-input" aria-label="First question from an agent">
-          <p className={styles.momentHead}>▲ {agentName} is asking you a question.</p>
-          <p className={styles.momentBody}>
-            Agents aren&apos;t fire-and-forget: this run is paused until you answer, right
-            here in the step detail below. Your answer goes straight back into the running
-            session.
-          </p>
-        </section>
+        <Alert
+          severity="warning"
+          icon={
+            <Box component="span" aria-hidden="true">
+              ▲
+            </Box>
+          }
+          aria-label="First question from an agent"
+        >
+          <AlertTitle>{agentName} is asking you a question.</AlertTitle>
+          Agents aren&apos;t fire-and-forget: this run is paused until you answer, right here
+          in the step detail below. Your answer goes straight back into the running session.
+        </Alert>
       )}
 
       {/* S29: a loop-stopped run leads with the cycle it built — the §5.9 chain view. */}
       {run.state === "loop_stopped" && <LoopChainPanel projectKey={key} runId={run.id} />}
 
-      <div className={styles.panes} data-context={contextShown || undefined}>
-        {/* Left — step timeline (virtualized) + the verbosity switch. */}
-        <aside className={styles.timelinePane}>
-          <VirtualList
-            items={rows}
-            rowHeight={ROW_HEIGHT}
-            itemKey={rowKey}
-            scrollToIndex={jump}
-            className={styles.timelineScroll}
-            aria-label="Step timeline"
-            renderRow={(row) => (
-              <TimelineRowView
-                row={row}
-                selectedSeq={selectedSeq}
-                onSelect={selectStep}
-                onToggle={toggleGroup}
-              />
-            )}
-          />
-          <div className={styles.verbosityRow} role="radiogroup" aria-label="Verbosity">
-            {(["summary", "normal", "verbose"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                role="radio"
-                aria-checked={verbosity === v}
-                data-active={verbosity === v || undefined}
-                className={styles.verbosityButton}
-                onClick={() => setVerbosity(v)}
-              >
-                {v[0].toUpperCase() + v.slice(1)}
-              </button>
-            ))}
-          </div>
-        </aside>
+      <Box
+        sx={{
+          display: "grid",
+          gap: 1,
+          minWidth: 0,
+          alignItems: "start",
+          // §10's breakpoints are 1100 and 1400, which are NOT MUI's `md`/`lg` (900/1200).
+          // The spec's numbers win, so they are written as raw media queries rather than
+          // rounded to the nearest theme breakpoint: stacked below 1100; timeline + detail
+          // from 1100; the context pane joins at 1400 (or earlier, via the header toggle).
+          gridTemplateColumns: "1fr",
+          "@media (min-width: 1100px)": {
+            gridTemplateColumns: contextShown
+              ? "300px minmax(0, 1fr) 280px"
+              : "300px minmax(0, 1fr)",
+          },
+        }}
+      >
+        {/* Left — step timeline (virtualized) + the verbosity switch + Next failure. */}
+        <Paper
+          component="aside"
+          variant="outlined"
+          sx={{ display: "grid", gridTemplateRows: "minmax(0, 1fr) auto", minWidth: 0 }}
+        >
+          {/* §8: an empty timeline says what happens next, and it replaces the list rather
+              than sitting under an empty 420px box. */}
+          {rows.length === 0 ? (
+            <Box
+              aria-label="Step timeline"
+              sx={{ height: TIMELINE_HEIGHT, display: "grid", alignContent: "start", p: 1 }}
+            >
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                {live
+                  ? "No steps yet. They appear here as the agent works — you can queue a message for it in the composer below."
+                  : "This run recorded no steps. Its outcome is on the status line below."}
+              </Typography>
+            </Box>
+          ) : (
+            <VirtualList
+              items={rows}
+              rowHeight={ROW_HEIGHT}
+              itemKey={rowKey}
+              scrollToIndex={jump}
+              aria-label="Step timeline"
+              height={TIMELINE_HEIGHT}
+              defaultHeight={TIMELINE_HEIGHT}
+              renderRow={(row) => (
+                <TimelineRowView
+                  row={row}
+                  selectedSeq={selectedSeq}
+                  onSelect={selectStep}
+                  onToggle={toggleGroup}
+                />
+              )}
+            />
+          )}
+          <Divider />
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: "center", justifyContent: "space-between", p: "6px" }}
+          >
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={verbosity}
+              aria-label="Verbosity"
+              onChange={(_e, v: Verbosity | null) => {
+                if (v !== null) setVerbosity(v);
+              }}
+            >
+              {(["summary", "normal", "verbose"] as const).map((v) => (
+                <ToggleButton key={v} value={v}>
+                  {v[0].toUpperCase() + v.slice(1)}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+            {/*
+              The visible door to `f`. Disabled — with the reason in the tooltip — rather
+              than hidden when a run has no failures, so the affordance still teaches that
+              the capability exists.
+            */}
+            <Tooltip
+              title={
+                failureTarget === null
+                  ? "No failed steps in this run"
+                  : `Jump to the next failed step (${chordLabel("f")})`
+              }
+            >
+              <Box component="span">
+                <Button
+                  size="small"
+                  color="error"
+                  disabled={failureTarget === null}
+                  onClick={goToNextFailure}
+                >
+                  <Box component="span" aria-hidden="true" sx={{ mr: "4px" }}>
+                    ✕
+                  </Box>
+                  Next failure
+                </Button>
+              </Box>
+            </Tooltip>
+          </Stack>
+        </Paper>
 
         {/* Centre — the tool-aware detail of the selected step. */}
-        <main className={styles.detailPane} aria-label="Step detail">
+        <Box component="main" aria-label="Step detail" sx={{ minWidth: 0, display: "grid", gap: 1 }}>
           {selected !== undefined ? (
             <ActivityDetail
               a={selected}
@@ -423,13 +613,13 @@ export function RunDetailPage() {
               }}
             />
           ) : (
-            <p className={styles.muted}>
+            <Typography variant="body1" sx={{ color: "text.secondary" }}>
               {activities.length === 0
-                ? "No activity yet — steps appear here as the run works."
-                : "Select a step from the timeline."}
-            </p>
+                ? "No activity yet — steps appear here as the run works. Send it a message from the composer below and it lands as soon as the agent starts."
+                : "Select a step from the timeline to see what the agent did."}
+            </Typography>
           )}
-        </main>
+        </Box>
 
         {/* Right — Context & cost. Collapses to the header toggle below 1400 (§10). */}
         {contextShown && (
@@ -440,31 +630,44 @@ export function RunDetailPage() {
             outputs={detailQuery.data.outputs}
           />
         )}
-      </div>
+      </Box>
 
       {/* The current-step line: the run's own mutable sentence while it works; the outcome
           when it is done; the §7 stall warning when the model has gone quiet at the start. */}
-      <footer className={styles.currentStepLine} data-stalled={stalled || undefined}>
+      <Paper
+        component="footer"
+        variant="outlined"
+        data-stalled={stalled || undefined}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 1,
+          px: 1,
+          py: "6px",
+          backgroundColor: "lexicode.surface2",
+        }}
+      >
         {stalled ? (
-          <span className={styles.stallWarning}>
-            ▲ Still waiting on the model — no activity {`${Math.floor((now - new Date(run.started_at as string).getTime()) / 1000)}s`} after start.
-          </span>
+          <Typography variant="body1" sx={{ color: "lexicode.needsYou" }}>
+            ▲ Still waiting on the model — no activity{" "}
+            {`${Math.floor((now - new Date(run.started_at as string).getTime()) / 1000)}s`} after
+            start.
+          </Typography>
         ) : isTerminal(run.state) ? (
-          <span>{outcomeSummary(run, activities)}</span>
+          <Typography variant="body1">{outcomeSummary(run, activities)}</Typography>
         ) : (
-          <span>
+          <Typography variant="body1">
             Step {run.step_count > 0 ? run.step_count : "–"} —{" "}
             {run.current_step !== "" ? run.current_step : "starting up"}
-          </span>
+          </Typography>
         )}
-        <span className={styles.currentStepStatus}>
-          <StatusDot status={run.state} />
-        </span>
-      </footer>
+        <StatusDot status={run.state} />
+      </Paper>
 
       {/* S24: the live steering composer, Stop, and Take over. */}
       <InterventionBar run={run} messages={detailQuery.data.messages} />
-    </div>
+    </Box>
   );
 }
 
@@ -472,16 +675,22 @@ export function RunDetailPage() {
 function LoopChainPanel({ projectKey, runId }: { projectKey: string; runId: string }) {
   const chain = useRunChainQuery(runId);
   return (
-    <section className={styles.chainPanel} aria-label="Loop chain">
-      <h2 className={styles.paneTitle}>Loop stopped — the causal chain</h2>
+    <Paper component="section" variant="outlined" aria-label="Loop chain" sx={{ p: 1 }}>
+      <Typography variant="h2" sx={{ mb: 1 }}>
+        Loop stopped — the causal chain
+      </Typography>
       {chain.isPending ? (
-        <p className={styles.muted}>Loading chain…</p>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          Loading chain…
+        </Typography>
       ) : chain.isError || chain.data === undefined ? (
-        <p className={styles.muted}>The chain failed to load.</p>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          The chain failed to load.
+        </Typography>
       ) : (
         <LoopChain chain={chain.data.chain} projectKey={projectKey} />
       )}
-    </section>
+    </Paper>
   );
 }
 
@@ -502,65 +711,67 @@ function TimelineRowView({
   onSelect: (seq: number) => void;
   onToggle: (firstSeq: number) => void;
 }) {
+  const rowSx = {
+    height: ROW_HEIGHT,
+    gap: 1,
+    px: 1,
+    py: 0,
+    fontSize: "var(--fs-body)",
+    whiteSpace: "nowrap" as const,
+  };
   if (row.kind === "group") {
     return (
-      <button
-        type="button"
-        className={styles.timelineRow}
-        data-group="true"
-        data-failed={!row.ok || undefined}
+      <ListItemButton
+        dense
         onClick={() => onToggle(row.firstSeq)}
         aria-expanded={row.expanded}
+        sx={rowSx}
       >
-        <span className={styles.rowGlyph} data-tone={row.ok ? "ok" : "fail"} aria-hidden="true">
+        <Box component="span" aria-hidden="true" sx={{ color: row.ok ? "success.main" : "error.main" }}>
           {row.ok ? "✓" : "✕"}
-        </span>
-        <span className={styles.rowTitle}>
+        </Box>
+        <Typography component="span" variant="body1" noWrap sx={{ flex: 1, minWidth: 0 }}>
           {row.label} <span aria-hidden="true">{row.expanded ? "▾" : "▸"}</span>
-        </span>
-        {row.costCents > 0 && (
-          <span className={styles.rowCost}>
-            <CostChip usd={row.costCents / 100} />
-          </span>
-        )}
-        <span className={styles.gutter}>
-          <span className={styles.gutterText}>
-            {row.durationMs !== null ? formatDuration(row.durationMs) : ""}
-          </span>
-        </span>
-      </button>
+        </Typography>
+        {row.costCents > 0 && <CostChip usd={row.costCents / 100} />}
+        <Typography
+          component="span"
+          variant="body2"
+          sx={{ fontFamily: "var(--font-mono)", color: "text.disabled", minWidth: 72, textAlign: "right" }}
+        >
+          {row.durationMs !== null ? formatDuration(row.durationMs) : ""}
+        </Typography>
+      </ListItemButton>
     );
   }
   const a = row.activity;
   const { glyph, tone } = stepGlyph(a);
   return (
-    <button
-      type="button"
-      className={styles.timelineRow}
-      data-child={row.child || undefined}
-      data-selected={a.seq === selectedSeq || undefined}
-      data-failed={a.ok === false || undefined}
+    <ListItemButton
+      dense
+      selected={a.seq === selectedSeq}
       onClick={() => onSelect(a.seq)}
+      sx={{ ...rowSx, pl: row.child ? 3 : 1 }}
     >
-      <span className={styles.rowGlyph} data-tone={tone} aria-hidden="true">
+      <Box component="span" aria-hidden="true" sx={{ color: TONE[tone] ?? "text.disabled" }}>
         {glyph}
-      </span>
-      <span className={styles.rowTitle}>{a.title}</span>
-      {a.attempt > 1 && <span className={styles.retryBadge}>×{a.attempt}</span>}
+      </Box>
+      <Typography component="span" variant="body1" noWrap sx={{ flex: 1, minWidth: 0 }}>
+        {a.title}
+      </Typography>
+      {a.attempt > 1 && <Chip size="small" variant="outlined" label={`×${a.attempt}`} />}
       {a.cost_cents > 0 && (
-        <span className={styles.rowCost}>
-          <CostChip
-            usd={a.cost_cents / 100}
-            split={{
-              inputTokens: a.tokens_in,
-              outputTokens: a.tokens_out,
-              cacheReadTokens: a.tokens_cache_read,
-            }}
-          />
-        </span>
+        <CostChip
+          usd={a.cost_cents / 100}
+          split={{
+            inputTokens: a.tokens_in,
+            outputTokens: a.tokens_out,
+            cacheReadTokens: a.tokens_cache_read,
+          }}
+        />
       )}
       <TimingGutter a={a} />
-    </button>
+    </ListItemButton>
   );
 }
 
@@ -583,10 +794,16 @@ function ContextPane({
   const project = useProjectQuery(projectKey);
   const prSizeThreshold = project.data?.settings.pr_size_warning_lines.value ?? 0;
   const pr = outputs.find((o) => o.kind === "pull_request");
-  const branch = outputs.find((o) => o.kind === "branch") ?? outputs.find((o) => o.kind === "partial_work");
+  const branch =
+    outputs.find((o) => o.kind === "branch") ?? outputs.find((o) => o.kind === "partial_work");
   return (
-    <aside className={styles.contextPane} aria-label="Context and cost">
-      <h2 className={styles.paneTitle}>Loaded context</h2>
+    <Paper
+      component="aside"
+      variant="outlined"
+      aria-label="Context and cost"
+      sx={{ p: 1, display: "grid", gap: 1, minWidth: 0 }}
+    >
+      <Typography variant="h2">Loaded context</Typography>
       {budget.data !== undefined && (
         <ContextMeter
           alwaysTokens={budget.data.always_tokens}
@@ -595,29 +812,50 @@ function ContextPane({
         />
       )}
       {context.length === 0 ? (
-        <p className={styles.muted}>Nothing beyond the ticket itself.</p>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          Nothing beyond the ticket itself was loaded. To give the next run more to work
+          from, scope a{" "}
+          <AppLink to="/p/$key/wiki" params={{ key: projectKey }}>
+            wiki page
+          </AppLink>{" "}
+          to <code>always</code> or to the paths this run touches.
+        </Typography>
       ) : (
-        <ul className={styles.contextList}>
+        <List dense disablePadding>
           {context.map((c) => (
-            <li key={`${c.provider}:${c.source_ref}:${c.position}`} className={styles.contextItem}>
-              <span className={styles.contextTitle}>▸ {c.title}</span>
-              <span className={styles.contextReason}>{c.reason}</span>
-              <span className={styles.contextTokens}>{formatTokenCount(c.tokens)} tok</span>
-            </li>
+            <ListItem
+              key={`${c.provider}:${c.source_ref}:${c.position}`}
+              disableGutters
+              sx={{ display: "grid", gap: 0, py: "2px" }}
+            >
+              <Typography variant="body1">▸ {c.title}</Typography>
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                {c.reason}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{ fontFamily: "var(--font-mono)", color: "text.disabled" }}
+              >
+                {formatTokenCount(c.tokens)} tok
+              </Typography>
+            </ListItem>
           ))}
-        </ul>
+        </List>
       )}
-      <div className={styles.costBlock}>
-        <div className={styles.costRow}>
-          <span>Tokens</span>
-          <span>{formatTokenCount(run.tokens_in + run.tokens_out)}</span>
-        </div>
-        <div className={styles.costSplitRow}>
+      <Divider />
+      <Box sx={{ display: "grid", gap: "2px" }}>
+        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+          <Typography variant="body1">Tokens</Typography>
+          <Typography variant="body1" sx={{ fontFamily: "var(--font-mono)" }}>
+            {formatTokenCount(run.tokens_in + run.tokens_out)}
+          </Typography>
+        </Box>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
           in {formatTokenCount(run.tokens_in)} · out {formatTokenCount(run.tokens_out)} · cache{" "}
           {formatTokenCount(run.tokens_cache_read)}
-        </div>
-        <div className={styles.costRow}>
-          <span>Cost</span>
+        </Typography>
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <Typography variant="body1">Cost</Typography>
           <CostChip
             usd={run.cost_cents > 0 ? run.cost_cents / 100 : null}
             split={{
@@ -626,53 +864,74 @@ function ContextPane({
               cacheReadTokens: run.tokens_cache_read,
             }}
           />
-        </div>
-      </div>
+        </Box>
+      </Box>
       {(branch !== undefined || pr !== undefined || outputs.length > 0) && (
         <>
-          <h2 className={styles.paneTitle}>Outputs</h2>
-          <ul className={styles.outputList}>
+          <Divider />
+          <Typography variant="h2">Outputs</Typography>
+          <List dense disablePadding>
             {outputs.map((o) => (
-              <li key={o.id} className={styles.outputItem}>
-                <span className={styles.outputKind}>{o.kind.replace("_", " ")}</span>
+              <ListItem key={o.id} disableGutters sx={{ display: "grid", gap: 0, py: "2px" }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  {o.kind.replace("_", " ")}
+                </Typography>
                 {o.url !== "" ? (
-                  <a href={o.url} target="_blank" rel="noreferrer" className={styles.outputRef}>
+                  <Link
+                    href={o.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    sx={{ fontFamily: "var(--font-mono)" }}
+                  >
                     {o.ref}
-                  </a>
+                  </Link>
                 ) : (
-                  <code className={styles.outputRef}>{o.ref}</code>
+                  <Box component="code" sx={{ fontFamily: "var(--font-mono)" }}>
+                    {o.ref}
+                  </Box>
                 )}
-                {o.summary !== "" && <span className={styles.outputSummary}>{o.summary}</span>}
+                {o.summary !== "" && <Typography variant="body1">{o.summary}</Typography>}
                 {o.kind === "pull_request" &&
                   o.additions !== undefined &&
                   o.deletions !== undefined && (
-                    <span
-                      className={styles.diffStat}
-                      data-large={
-                        isLargeDiff(o.additions, o.deletions, prSizeThreshold) || undefined
-                      }
-                    >
-                      {formatDiffStat(o.additions, o.deletions)}
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontFamily: "var(--font-mono)", color: "text.secondary" }}
+                      >
+                        {formatDiffStat(o.additions, o.deletions)}
+                      </Typography>
                       {isLargeDiff(o.additions, o.deletions, prSizeThreshold) && (
-                        <span
-                          className={styles.diffWarn}
+                        <Tooltip
                           title={`Above the ${prSizeThreshold}-line warning threshold (project settings)`}
                         >
-                          ⚠ large diff
-                        </span>
+                          <Chip
+                            size="small"
+                            variant="outlined"
+                            color="warning"
+                            label="⚠ large diff"
+                          />
+                        </Tooltip>
                       )}
-                    </span>
+                    </Box>
                   )}
-              </li>
+              </ListItem>
             ))}
-          </ul>
+          </List>
         </>
       )}
-      <div className={styles.paneFoot}>
-        <span className={styles.muted}>queued {formatRelativeTime(run.queued_at)}</span>
-        {run.branch !== null && <code className={styles.branchName}>{run.branch}</code>}
-      </div>
-    </aside>
+      <Divider />
+      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1 }}>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          queued {formatRelativeTime(run.queued_at)}
+        </Typography>
+        {run.branch !== null && (
+          <Box component="code" sx={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-mono)" }}>
+            {run.branch}
+          </Box>
+        )}
+      </Box>
+    </Paper>
   );
 }
 

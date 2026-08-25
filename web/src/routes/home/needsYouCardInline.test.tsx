@@ -12,9 +12,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NeedsYouRun } from "../../lib/api/client";
 
 vi.mock("@tanstack/react-router", () => ({
-  // The card and the S24 renderers only need Link and useNavigate; plain anchors keep the
-  // test free of a route tree.
+  // The card and the S24 renderers only need Link, createLink and useNavigate; plain
+  // anchors keep the test free of a route tree.
   Link: ({ children }: { children?: React.ReactNode }) => (
+    <a data-mock-link href="#">
+      {children}
+    </a>
+  ),
+  // S39: theme/routerLinks.tsx adapts MUI's Link/Button into router links with createLink
+  // (see that file for why). The double is the same plain anchor as Link's.
+  createLink: () => ({ children }: { children?: React.ReactNode }) => (
     <a data-mock-link href="#">
       {children}
     </a>
@@ -152,9 +159,13 @@ describe("NeedsYouCard inline answer (S36)", () => {
     // Answering posts to the respond endpoint — no navigation happened (the router is
     // mocked; nothing here can change the URL).
     fireEvent.click(screen.getByText("Exponential backoff"));
+    // Two buttons read "Answer": the card's own expand action, and the QuestionRow's
+    // submit. The submit is the one INSIDE the detail card — DetailCard renders an
+    // <article>, so that containment is the stable way to tell them apart. (Before S39
+    // this matched on the CSS-module class name, which the MUI conversion retired.)
     const submit = screen
       .getAllByRole("button", { name: "Answer" })
-      .find((b) => b.className.includes("answerButton"));
+      .find((b) => b.closest("article") !== null);
     expect(submit).toBeTruthy();
     fireEvent.click(submit!);
 

@@ -40,9 +40,13 @@ import { WikiPagePage } from "../routes/project/wiki/WikiPagePage";
 import { AuditLogPage } from "../routes/workspace-settings/AuditLogPage";
 import { WorkspaceSettingsPage } from "../routes/workspace-settings/WorkspaceSettingsPage";
 import { AppShell } from "./shell/AppShell";
+import { RootLayout } from "./shell/RootLayout";
 import { ProjectLayout } from "./shell/ProjectLayout";
 
+// The root route carries the Material UI theme (see RootLayout for why it lives here and
+// not in App.tsx). Every route in the tree renders inside it.
 const rootRoute = createRootRoute({
+  component: RootLayout,
   notFoundComponent: NotFound,
   errorComponent: ErrorScreen,
 });

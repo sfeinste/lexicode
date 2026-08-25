@@ -4,6 +4,21 @@
 **Visual direction:** dense dev-tool, dark-first (Linear / Vercel / Sentry lane). Compact rows, monospace for anything machine-generated, keyboard-driven, light mode as a real second theme rather than an afterthought.
 **Audience for V1:** a small self-hosted team. Light auth, human members alongside agents, activity attribution. No org/workspace layer above the project list.
 
+> **Partially superseded — August 2026 (LEXI-13).** The UI is being rebuilt on Material UI; see
+> [D-1 amendment A-1](../plan/00-decisions.md#amendment-a-1-lexi-13-august-2026--reversed-the-ui-moves-onto-material-ui).
+>
+> **Still binding:** everything about what each screen *does* — the information architecture (§1),
+> the status vocabulary (§4), the screens (§5), the keyboard map (§6), the empty-state copy (§8),
+> the interaction rules (§9), and the accessibility requirements (§10). §3's **token values** stay
+> too: `styles/tokens.css` remains the single source of truth for colour, type and density, and the
+> component library's theme consumes it by reference.
+>
+> **Superseded:** §7's component table as a build instruction ("the spec's component list is the
+> component library"). Components now come from the library; a composition of library primitives is
+> allowed and must say so. Where a §5 layout sketch and a library convention disagree, the
+> convention wins. One rule is added on top of §9: **no action may be reachable only by keyboard** —
+> every shortcut also has a visible, labelled control.
+
 ---
 
 ## 1. Information architecture

@@ -6,9 +6,17 @@
  *
  * Hover shows the input / output / reasoning / cache-read split when the caller has it
  * (UI spec §7).
+ *
+ * D-1 (amended) — composition, not invention: Material UI's `Tooltip` wrapping a `Box`.
+ * The split moved from a `title` attribute onto a real Tooltip, which is the visible
+ * upgrade the library buys here: `title` is invisible to touch, appears after a browser
+ * delay nobody can tune, and cannot be read by keyboard at all. Tooltip opens on focus.
  */
+import Box from "@mui/material/Box";
+import Tooltip from "@mui/material/Tooltip";
+import { visuallyHidden } from "@mui/utils";
+
 import { formatTokenCount, formatUSD } from "../../lib/format/format";
-import styles from "./CostChip.module.css";
 
 export interface CostSplit {
   inputTokens?: number;
@@ -28,7 +36,11 @@ const ESTIMATE_NOTE =
 
 export function CostChip({ usd, split }: CostChipProps) {
   if (usd === null || usd === undefined) {
-    return <span className={styles.root}>—</span>;
+    return (
+      <Box component="span" sx={{ fontFamily: "var(--font-mono)", color: "text.disabled" }}>
+        —
+      </Box>
+    );
   }
   const parts: string[] = [ESTIMATE_NOTE];
   if (split) {
@@ -45,12 +57,29 @@ export function CostChip({ usd, split }: CostChipProps) {
     if (detail) parts.push(detail);
   }
   return (
-    <span className={styles.root} title={parts.join("\n")}>
-      <span aria-hidden="true" className={styles.estimateMark}>
-        ~
-      </span>
-      {formatUSD(usd)}
-      <span className={styles.srOnly}>(estimated)</span>
-    </span>
+    <Tooltip title={parts.join(" · ")} describeChild>
+      {/* tabIndex so the split is reachable without a pointer — the Tooltip opens on
+          focus, which the old `title` attribute never did. */}
+      <Box
+        component="span"
+        tabIndex={0}
+        sx={{
+          display: "inline-flex",
+          alignItems: "baseline",
+          gap: "1px",
+          fontFamily: "var(--font-mono)",
+          fontSize: "var(--fs-mono)",
+          color: "text.secondary",
+        }}
+      >
+        <Box component="span" aria-hidden="true" sx={{ color: "text.disabled" }}>
+          ~
+        </Box>
+        {formatUSD(usd)}
+        <Box component="span" sx={visuallyHidden}>
+          (estimated)
+        </Box>
+      </Box>
+    </Tooltip>
   );
 }
