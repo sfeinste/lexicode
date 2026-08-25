@@ -135,6 +135,12 @@ export interface LineSelection {
  * line so a line is selectable by click AND by keyboard — `ListItemButton` is focusable and
  * Enter-activated, which the old bare `<button>` grid also was, but now with the library's
  * `selected` state carrying the highlight instead of a data attribute.
+ *
+ * The button goes INSIDE a `ListItem`, which is MUI's documented shape for a clickable row
+ * and the only one that keeps the list a list: `ListItemButton` renders through ButtonBase,
+ * which puts `role="button"` on its root, so making the `<li>` itself the button strips its
+ * implicit `listitem` role — an `<ol>` with no list children (axe `list`, serious) and a log
+ * whose line positions a screen reader can no longer announce.
  */
 function OutputLines({
   text,
@@ -168,31 +174,36 @@ function OutputLines({
         const isSel = sel.selected === n;
         const tone = classify?.(line);
         return (
-          <ListItemButton
+          <ListItem
             key={n}
             component="li"
             ref={isSel ? selectedRef : undefined}
-            selected={isSel}
-            dense
-            onClick={() => sel.onSelect(n)}
-            sx={{
-              ...MONO,
-              py: 0,
-              gap: 1,
-              alignItems: "baseline",
-              whiteSpace: "pre",
-              color: tone !== undefined ? LINE_TONE[tone] : "text.primary",
-            }}
+            disablePadding
+            sx={{ display: "block" }}
           >
-            <Box
-              component="span"
-              aria-hidden="true"
-              sx={{ color: "text.disabled", minWidth: "3ch", textAlign: "right" }}
+            <ListItemButton
+              selected={isSel}
+              dense
+              onClick={() => sel.onSelect(n)}
+              sx={{
+                ...MONO,
+                py: 0,
+                gap: 1,
+                alignItems: "baseline",
+                whiteSpace: "pre",
+                color: tone !== undefined ? LINE_TONE[tone] : "text.primary",
+              }}
             >
-              {n}
-            </Box>
-            {line === "" ? " " : line}
-          </ListItemButton>
+              <Box
+                component="span"
+                aria-hidden="true"
+                sx={{ color: "text.disabled", minWidth: "3ch", textAlign: "right" }}
+              >
+                {n}
+              </Box>
+              {line === "" ? " " : line}
+            </ListItemButton>
+          </ListItem>
         );
       })}
     </List>
@@ -284,6 +295,11 @@ function Collapsible({
       disableGutters
       square
       elevation={0}
+      // Accordion wraps its summary in an <h3> by default. "output" and "tool input" are
+      // disclosures, not sections of the document, and an h3 inside the centre pane jumps
+      // the outline (h1 "Run #7" → h2 pane titles). The library's own slot override drops
+      // the heading and keeps everything else.
+      slotProps={{ heading: { component: "div" } }}
       sx={{ backgroundColor: "transparent", "&::before": { display: "none" } }}
     >
       <AccordionSummary
@@ -602,7 +618,10 @@ function QuestionRow({
             <ToggleButtonGroup
               orientation="vertical"
               exclusive={!multi}
-              value={multi ? c.labels : (c.labels[0] ?? null)}
+              // Focusing Other releases the chosen option, because `submit` will send the
+              // free text: leaving a toggle pressed while the answer comes from elsewhere
+              // shows two answers selected and disables Answer with no visible reason.
+              value={c.useOther ? (multi ? [] : null) : multi ? c.labels : (c.labels[0] ?? null)}
               disabled={!pending}
               aria-label={q.question ?? `Question ${i + 1}`}
               onChange={(_e, next: string | string[] | null) => {

@@ -87,6 +87,51 @@ const run = {
   acknowledged_at: null,
 };
 
+/**
+ * The run detail is the S39 Material UI proof of concept, and an empty activity list renders
+ * none of what was converted — no timeline rows, no log lines, no disclosures. It is seeded
+ * with a real stream (a thought, a passing step, a failing Bash step with stdout) so this
+ * suite sees the converted markup rather than an empty screen. The failing step is also the
+ * default selection, so the centre pane renders its output lines without a ?step= URL.
+ */
+const activity = (over: Record<string, unknown>) => ({
+  seq: 1,
+  type: "action",
+  level: 1,
+  tool_name: "Bash",
+  group_key: "",
+  title: "npm test",
+  payload: {},
+  ok: true,
+  attempt: 1,
+  duration_ms: 1000,
+  queued_ms: 100,
+  model_ms: 500,
+  tool_ms: 400,
+  cost_cents: 3,
+  tokens_in: 100,
+  tokens_out: 40,
+  tokens_cache_read: 0,
+  created_at: T,
+  ...over,
+});
+
+const RUN_ACTIVITIES = [
+  activity({ seq: 1, type: "thought", tool_name: "", title: "Reading the failing test" }),
+  activity({ seq: 2, title: "npm run build", ok: true }),
+  activity({
+    seq: 3,
+    title: "npm test",
+    ok: false,
+    payload: {
+      argv: ["bash", "-lc", "npm test"],
+      exit: 1,
+      stdout: "> npm test\n1 failing\n",
+      stderr: "AssertionError: expected 1 to equal 2\n",
+    },
+  }),
+];
+
 const agent = {
   id: "a1",
   project_id: "p1",
@@ -142,7 +187,7 @@ const FIXTURES: Array<[RegExp, unknown]> = [
   [/\/projects\/PAY\/runs\?view=needs_you$/, { runs: [] }],
   [/\/projects\/PAY\/runs$/, { runs: [run] }],
   [/\/runs\/r1$/, { run, outputs: [], context: [], messages: [], elicitations: [] }],
-  [/\/runs\/r1\/activities/, { activities: [] }],
+  [/\/runs\/r1\/activities/, { activities: RUN_ACTIVITIES }],
   [/\/runs\/r1\/chain$/, { chain: [] }],
   [/\/projects\/PAY\/agents$/, { agents: [agent] }],
   [/\/projects\/PAY\/tickets/, { tickets: [] }],

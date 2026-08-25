@@ -15,10 +15,17 @@
  *     `data-theme="dark"` and resolves to the two different token sets.
  *  4. THE EMPTY STATE SAYS WHAT TO DO NEXT — §8's rule, applied to the two "nothing here"
  *     states this screen owns (no steps yet; no context loaded).
+ *  5. THE POPULATED SCREEN IS CLEAN UNDER AXE. The route-wide suite (routes/__tests__/
+ *     axe.test.tsx) only fails on `critical`; the library conversion's own risk is the
+ *     structural roles it puts on rows, which axe rates `serious`. So the run detail — with
+ *     a real stream, a failing step and its output lines on screen — is checked here at
+ *     serious as well, which is the bar the ticket's "zero critical violations on the
+ *     converted screen" criterion is worth nothing without.
  */
 import { act, render, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
+import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { routeTree } from "../../../app/router";
@@ -285,6 +292,47 @@ describe("run detail on Material UI (S39)", () => {
     // The two themes really are different palettes — tokens.css is the switch, and the
     // contrast floors for both are asserted in styles/tokens.contrast.test.ts.
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  }, 30_000);
+
+  it("the log viewer stays a list: <ol> of <li>, with the button inside the item", async () => {
+    const { container, unmount } = await renderRunDetail();
+    // The failing step is the default selection, so its stdout renders without a ?step= URL.
+    const log = container.querySelector("ol.MuiList-root");
+    expect(log, "the selected failing step renders its output lines").not.toBeNull();
+    const items = [...log!.children];
+    expect(items.length).toBeGreaterThan(0);
+    for (const li of items) {
+      expect(li.tagName).toBe("LI");
+      // ButtonBase puts role="button" on whatever it renders as; on the <li> itself that
+      // strips the implicit listitem role and the <ol> stops being a list.
+      expect(li.getAttribute("role")).toBeNull();
+      expect(li.querySelector('[role="button"], button')).not.toBeNull();
+    }
+    unmount();
+  }, 20_000);
+
+  it("has no critical or serious axe violations with a populated stream", async () => {
+    const { container, unmount } = await renderRunDetail();
+    // Guard: this only means anything while the fixture actually renders the conversion.
+    expect(container.querySelector("ol.MuiList-root")).not.toBeNull();
+
+    const results = await axe.run(container, {
+      // Needs real layout/canvas; asserted arithmetically in styles/tokens.contrast.test.ts.
+      rules: { "color-contrast": { enabled: false } },
+    });
+    const bad = results.violations.filter(
+      (v) => v.impact === "critical" || v.impact === "serious",
+    );
+    expect(
+      bad,
+      bad
+        .map(
+          (v) =>
+            `${v.impact}/${v.id}: ${v.help} → ${v.nodes.map((n) => n.target.join(" ")).join("; ")}`,
+        )
+        .join("\n"),
+    ).toEqual([]);
+    unmount();
   }, 30_000);
 
   it("the context pane's empty state says what to do next", async () => {

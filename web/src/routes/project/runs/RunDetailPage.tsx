@@ -104,8 +104,18 @@ import { inFlight } from "./viewState";
 /** Every timeline row is one line high — what makes the windowing exact. */
 const ROW_HEIGHT = 28;
 
-/** The timeline pane’s scroll viewport. Windowing needs a bounded box (VirtualList). */
-const TIMELINE_HEIGHT = 420;
+/**
+ * The page fills the space under the top bar + project header (42px) + tabs (41px) — §5.7's
+ * own geometry — so the three panes own their scroll and the S24 intervention bar is never
+ * pushed below the fold no matter how long a step's output is.
+ */
+const PAGE_HEIGHT = "calc(100dvh - var(--topbar-height) - 83px)";
+
+/**
+ * jsdom reports clientHeight 0, so VirtualList cannot measure its box there. This is the
+ * fallback it windows against in tests only; in a browser the timeline is sized by the pane.
+ */
+const TIMELINE_FALLBACK_HEIGHT = 420;
 
 const TERMINAL = new Set(["completed", "failed", "timed_out", "canceled", "loop_stopped"]);
 
@@ -387,13 +397,26 @@ export function RunDetailPage() {
       : null;
 
   return (
-    <Box sx={{ display: "grid", gap: 1, p: 1, minWidth: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 1,
+        p: 1,
+        minWidth: 0,
+        minHeight: 0,
+        height: PAGE_HEIGHT,
+        // §10: below 1100 the panes stack, so the page grows past the fold and the browser
+        // scrolls it as a whole — the same escape hatch the pre-conversion CSS had.
+        "@media (max-width: 1099px)": { height: "auto", minHeight: PAGE_HEIGHT },
+      }}
+    >
       <Stack
         component="header"
         direction="row"
         spacing={1}
         useFlexGap
-        sx={{ alignItems: "center", flexWrap: "wrap" }}
+        sx={{ alignItems: "center", flexWrap: "wrap", flex: "none" }}
       >
         <AppLinkButton to="/p/$key/runs" params={{ key }} size="small">
           ← Runs
@@ -452,6 +475,7 @@ export function RunDetailPage() {
             </Box>
           }
           aria-label="First completed run"
+          sx={{ flex: "none" }}
         >
           <AlertTitle>Your first completed run.</AlertTitle>
           Next:{" "}
@@ -484,6 +508,7 @@ export function RunDetailPage() {
             </Box>
           }
           aria-label="First question from an agent"
+          sx={{ flex: "none" }}
         >
           <AlertTitle>{agentName} is asking you a question.</AlertTitle>
           Agents aren&apos;t fire-and-forget: this run is paused until you answer, right here
@@ -499,7 +524,10 @@ export function RunDetailPage() {
           display: "grid",
           gap: 1,
           minWidth: 0,
-          alignItems: "start",
+          // The panes take the rest of the page and each owns its own scroll: `minHeight: 0`
+          // is what lets a grid item be shorter than its content instead of growing the page.
+          flex: 1,
+          minHeight: 0,
           // §10's breakpoints are 1100 and 1400, which are NOT MUI's `md`/`lg` (900/1200).
           // The spec's numbers win, so they are written as raw media queries rather than
           // rounded to the nearest theme breakpoint: stacked below 1100; timeline + detail
@@ -516,14 +544,21 @@ export function RunDetailPage() {
         <Paper
           component="aside"
           variant="outlined"
-          sx={{ display: "grid", gridTemplateRows: "minmax(0, 1fr) auto", minWidth: 0 }}
+          sx={{
+            display: "grid",
+            gridTemplateRows: "minmax(0, 1fr) auto",
+            minWidth: 0,
+            minHeight: 0,
+            // Stacked (§10), the timeline keeps a bounded window rather than eating the page.
+            "@media (max-width: 1099px)": { maxHeight: "40vh" },
+          }}
         >
           {/* §8: an empty timeline says what happens next, and it replaces the list rather
-              than sitting under an empty 420px box. */}
+              than sitting above an empty scroll box. */}
           {rows.length === 0 ? (
             <Box
               aria-label="Step timeline"
-              sx={{ height: TIMELINE_HEIGHT, display: "grid", alignContent: "start", p: 1 }}
+              sx={{ display: "grid", alignContent: "start", p: 1, minHeight: 0, overflow: "auto" }}
             >
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
                 {live
@@ -538,8 +573,10 @@ export function RunDetailPage() {
               itemKey={rowKey}
               scrollToIndex={jump}
               aria-label="Step timeline"
-              height={TIMELINE_HEIGHT}
-              defaultHeight={TIMELINE_HEIGHT}
+              // Sized by the pane, not by a constant: the grid row above is `minmax(0, 1fr)`,
+              // so a tall screen gets a tall timeline and VirtualList measures what it got.
+              height="100%"
+              defaultHeight={TIMELINE_FALLBACK_HEIGHT}
               renderRow={(row) => (
                 <TimelineRowView
                   row={row}
@@ -601,7 +638,20 @@ export function RunDetailPage() {
         </Paper>
 
         {/* Centre — the tool-aware detail of the selected step. */}
-        <Box component="main" aria-label="Step detail" sx={{ minWidth: 0, display: "grid", gap: 1 }}>
+        <Box
+          component="main"
+          aria-label="Step detail"
+          sx={{
+            minWidth: 0,
+            display: "grid",
+            gap: 1,
+            // The centre pane scrolls itself: a step with thousands of stdout lines must not
+            // push the steering composer, Stop and Take over off the bottom of the page.
+            minHeight: 0,
+            alignContent: "start",
+            overflow: "auto",
+          }}
+        >
           {selected !== undefined ? (
             <ActivityDetail
               a={selected}
@@ -640,6 +690,7 @@ export function RunDetailPage() {
         data-stalled={stalled || undefined}
         sx={{
           display: "flex",
+          flex: "none",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 1,
@@ -665,8 +716,11 @@ export function RunDetailPage() {
         <StatusDot status={run.state} />
       </Paper>
 
-      {/* S24: the live steering composer, Stop, and Take over. */}
-      <InterventionBar run={run} messages={detailQuery.data.messages} />
+      {/* S24: the live steering composer, Stop, and Take over — always on screen, never
+          scrolled away by the pane above it. */}
+      <Box sx={{ flex: "none" }}>
+        <InterventionBar run={run} messages={detailQuery.data.messages} />
+      </Box>
     </Box>
   );
 }
@@ -675,7 +729,12 @@ export function RunDetailPage() {
 function LoopChainPanel({ projectKey, runId }: { projectKey: string; runId: string }) {
   const chain = useRunChainQuery(runId);
   return (
-    <Paper component="section" variant="outlined" aria-label="Loop chain" sx={{ p: 1 }}>
+    <Paper
+      component="section"
+      variant="outlined"
+      aria-label="Loop chain"
+      sx={{ p: 1, flex: "none" }}
+    >
       <Typography variant="h2" sx={{ mb: 1 }}>
         Loop stopped — the causal chain
       </Typography>
@@ -801,7 +860,17 @@ function ContextPane({
       component="aside"
       variant="outlined"
       aria-label="Context and cost"
-      sx={{ p: 1, display: "grid", gap: 1, minWidth: 0 }}
+      sx={{
+        p: 1,
+        display: "grid",
+        gap: 1,
+        minWidth: 0,
+        // Its own scroll too: a run with many loaded context items or outputs stays inside
+        // the pane rather than lengthening the page.
+        minHeight: 0,
+        alignContent: "start",
+        overflow: "auto",
+      }}
     >
       <Typography variant="h2">Loaded context</Typography>
       {budget.data !== undefined && (

@@ -20,6 +20,11 @@ images are committed. Nothing in `make check` looks at a pixel — axe runs over
 no colour — so a screenshot is currently the only way to catch a colour that the library filled in
 for us. It has already caught one; see weakness #7 in the evaluation.
 
+The same gap covers layout, and it cost the first pass a second defect: jsdom has no layout either,
+so nothing in `make check` could see that the converted screen had lost the `100vh` frame the
+hand-written CSS gave it. It was legible in `run-detail-dark.png` as a third of a viewport of dead
+space below the status footer. Read the images, do not just regenerate them.
+
 | File | What it shows |
 |---|---|
 | `run-detail-dark.png` | The converted run detail, dark. Three panes, the collapsed `Read 5 files ▸` group, the timing gutters, and the **Next failure** button the conversion added. |
