@@ -1,22 +1,59 @@
 /*
  * Tool-aware detail renderers (UI spec §5.7 centre pane; interaction rule 4: raw JSON is
- * never the default). One component per payload contract from the S20 adapter:
+ * never the default) — converted to MUI as part of the LEXI-13 proof of concept.
+ *
+ * One component per payload contract from the S20 adapter:
  *   Edit/Write → diff hunks · Bash → `$ cmd` + collapsible output + exit code · Read → one
  *   line · Grep/Glob → pattern + match count · TodoWrite → checklist · lexicode MCP tools →
  *   labelled cards · unknown → the honest compact fallback (title + result, raw one
  *   disclosure away, never the default).
  *
+ * Composition notes (no invented components):
+ * - The card shell is MUI `Card` + `CardHeader` + `CardContent`.
+ * - Every disclosure is MUI `Accordion` — previously a hand-rolled ▸/▾ button.
+ * - Answer options are a MUI `ToggleButtonGroup`; single-select questions use `exclusive`,
+ *   multi-select ones do not, so the widget itself states which kind of question it is.
+ * - A log line is a MUI `ButtonBase` (the documented primitive behind every clickable MUI
+ *   surface). `ListItemButton` per line would cost far too much for a 5,000-line log.
+ * - `CostChip` stays for now: it is shared with the run list and the project header, which
+ *   this run does not convert (plan/06-ui-redesign-plan.md, stage 3).
+ *
  * Log-line permalinks (rule 12): every output line renders through <OutputLines>, which
  * numbers lines and reports clicks so the page can write ?line=. The selected line
- * highlights and scrolls into view.
+ * highlights and scrolls into view. The "copy this link" affordance itself is a visible
+ * button in the page toolbar (RunDetailPage) — it used to be tacit knowledge.
  */
-import { Link } from "@tanstack/react-router";
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
+import Alert from "@mui/material/Alert";
+import AlertTitle from "@mui/material/AlertTitle";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import ButtonBase from "@mui/material/ButtonBase";
+import Card from "@mui/material/Card";
+import CardContent from "@mui/material/CardContent";
+import CardHeader from "@mui/material/CardHeader";
+import Checkbox from "@mui/material/Checkbox";
+import Chip from "@mui/material/Chip";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import MuiLink from "@mui/material/Link";
+import List from "@mui/material/List";
+import ListItem from "@mui/material/ListItem";
+import ListItemText from "@mui/material/ListItemText";
+import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Typography from "@mui/material/Typography";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { Elicitation, RunActivity } from "../../../lib/api/client";
 import { CostChip } from "../../../components/CostChip/CostChip";
+import { RouterLink } from "../../../components/RouterLink/RouterLink";
 import { useRespondElicitation } from "../../../lib/api/runQueries";
 import { formatDuration } from "../../../lib/format/format";
+import { MONO_FONT } from "../../../styles/muiTheme";
 import styles from "./runs.module.css";
 import { timingSplit, toolDisplayName } from "./timeline";
 
@@ -77,12 +114,38 @@ function payloadOf(a: RunActivity): KnownPayload {
   return typeof p === "object" && p !== null ? (p as KnownPayload) : {};
 }
 
+const monoSx = { fontFamily: MONO_FONT, fontSize: 12 } as const;
+
+/**
+ * A status glyph inside a control's label — a `Box` span, exactly the pattern the timeline
+ * rows already use, named so the rule is greppable rather than remembered.
+ *
+ * §4 requires that colour is never the sole carrier; the WORD beside the glyph is what
+ * satisfies that, so the glyph itself is decoration. Left visible it becomes part of the
+ * control's accessible name and a screen reader announces "✓ Approve" as "check mark,
+ * Approve". Every glyph that sits inside a Button or a Chip label goes through here.
+ */
+export function Glyph({ children }: { children: ReactNode }) {
+  return (
+    <Box component="span" aria-hidden="true" sx={{ mr: 0.5 }}>
+      {children}
+    </Box>
+  );
+}
+
 // ---- line-addressable output ------------------------------------------------------------
 
 export interface LineSelection {
   selected?: number;
   onSelect: (line: number) => void;
 }
+
+/** Tone → the §3.2 semantic token a log line is tinted with. */
+const LINE_TONE: Record<string, string> = {
+  err: "var(--fail)",
+  add: "var(--ok)",
+  del: "var(--fail)",
+};
 
 /**
  * Numbered, clickable output lines. `start` continues the step's numbering across blocks
@@ -106,29 +169,38 @@ function OutputLines({
   if (text === "") return null;
   const lines = text.replace(/\n$/, "").split("\n");
   return (
-    <ol className={styles.outputLines} start={start}>
+    <Box component="ol" start={start} sx={{ m: 0, p: 0, listStyle: "none" }}>
       {lines.map((line, i) => {
         const n = start + i;
         const isSel = sel.selected === n;
+        const tone = classify?.(line);
         return (
           <li key={n}>
-            <button
-              type="button"
+            <ButtonBase
               ref={isSel ? selectedRef : undefined}
-              className={styles.outputLine}
-              data-selected={isSel || undefined}
-              data-tone={classify?.(line)}
               onClick={() => sel.onSelect(n)}
+              sx={{
+                ...monoSx,
+                display: "flex",
+                width: "100%",
+                justifyContent: "flex-start",
+                textAlign: "left",
+                whiteSpace: "pre",
+                px: 0.5,
+                color: tone !== undefined ? LINE_TONE[tone] : "text.primary",
+                bgcolor: isSel ? "action.selected" : "transparent",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
             >
-              <span className={styles.lineNo} aria-hidden="true">
+              <Box component="span" aria-hidden="true" sx={{ ...monoSx, width: 40, color: "text.disabled" }}>
                 {n}
-              </span>
-              {line === "" ? " " : line}
-            </button>
+              </Box>
+              {line === "" ? " " : line}
+            </ButtonBase>
           </li>
         );
       })}
-    </ol>
+    </Box>
   );
 }
 
@@ -149,13 +221,21 @@ function DetailCard({
   children?: ReactNode;
 }) {
   return (
-    <article className={styles.detailCard}>
-      <header className={styles.detailCardHead}>
-        <div className={styles.detailCardTitle}>{title}</div>
-        {meta !== undefined && <div className={styles.detailCardMeta}>{meta}</div>}
-      </header>
-      {children}
-    </article>
+    <Card variant="outlined">
+      <CardHeader
+        title={title}
+        action={
+          meta !== undefined ? (
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              {meta}
+            </Stack>
+          ) : undefined
+        }
+        slotProps={{ title: { variant: "h3", component: "div" } }}
+        sx={{ py: 1, px: 1.5 }}
+      />
+      {children !== undefined && <CardContent sx={{ pt: 0, px: 1.5 }}>{children}</CardContent>}
+    </Card>
   );
 }
 
@@ -164,7 +244,11 @@ function StepMeta({ a }: { a: RunActivity }) {
   const split = timingSplit(a);
   return (
     <>
-      {split !== null && <span>{formatDuration(split.totalMs)}</span>}
+      {split !== null && (
+        <Typography variant="caption" sx={{ fontFamily: MONO_FONT }}>
+          {formatDuration(split.totalMs)}
+        </Typography>
+      )}
       {a.cost_cents > 0 && (
         <CostChip
           usd={a.cost_cents / 100}
@@ -175,11 +259,12 @@ function StepMeta({ a }: { a: RunActivity }) {
           }}
         />
       )}
-      {a.attempt > 1 && <span className={styles.retryBadge}>attempt {a.attempt}</span>}
+      {a.attempt > 1 && <Chip size="small" color="warning" label={`attempt ${a.attempt}`} />}
     </>
   );
 }
 
+/** Every disclosure on this screen is the same MUI Accordion. */
 function Collapsible({
   label,
   open: openInitially,
@@ -189,14 +274,30 @@ function Collapsible({
   open?: boolean;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(openInitially ?? false);
   return (
-    <div>
-      <button type="button" className={styles.collapseToggle} onClick={() => setOpen(!open)}>
-        {open ? "▾" : "▸"} {label}
-      </button>
-      {open && children}
-    </div>
+    <Accordion
+      disableGutters
+      defaultExpanded={openInitially ?? false}
+      elevation={0}
+      sx={{ "&::before": { display: "none" }, border: 1, borderColor: "divider", mt: 1 }}
+    >
+      <AccordionSummary
+        expandIcon={<Box aria-hidden="true">▾</Box>}
+        sx={{ minHeight: 32, "& .MuiAccordionSummary-content": { my: 0.5 } }}
+      >
+        <Typography variant="body2">{label}</Typography>
+      </AccordionSummary>
+      <AccordionDetails sx={{ pt: 0, overflowX: "auto" }}>{children}</AccordionDetails>
+    </Accordion>
+  );
+}
+
+/** Raw payloads, when a disclosure is opened deliberately. Never a default rendering. */
+function Raw({ value }: { value: unknown }) {
+  return (
+    <Box component="pre" sx={{ ...monoSx, m: 0, whiteSpace: "pre-wrap" }}>
+      {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+    </Box>
   );
 }
 
@@ -211,17 +312,29 @@ function BashDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
   const failed = a.ok === false;
   return (
     <DetailCard
-      title={<code className={styles.cmdLine}>$ {cmd}</code>}
+      title={
+        <Box component="code" sx={monoSx}>
+          $ {cmd}
+        </Box>
+      }
       meta={<StepMeta a={a} />}
     >
       {done && (
-        <div className={styles.exitRow} data-failed={failed || undefined}>
-          {failed ? "✕" : "✓"} exit {p.exit}
-          {p.truncated === true && <span className={styles.truncNote}> · output truncated</span>}
-        </div>
+        // `role="presentation"`, not MUI's default `role="alert"`: an exit code is content
+        // the centre pane displays, and the pane remounts on every selection — see the
+        // header note in RunDetailPage.tsx.
+        <Alert
+          severity={failed ? "error" : "success"}
+          role="presentation"
+          icon={<span aria-hidden="true">{failed ? "✕" : "✓"}</span>}
+          sx={{ py: 0 }}
+        >
+          exit {p.exit}
+          {p.truncated === true && " · output truncated"}
+        </Alert>
       )}
       {(stdout !== "" || stderr !== "") && (
-        <Collapsible label={failed ? "output" : "output"} open={failed || (sel.selected !== undefined)}>
+        <Collapsible label="Output" open={failed || sel.selected !== undefined}>
           <OutputLines text={stdout} start={1} sel={sel} />
           <OutputLines
             text={stderr}
@@ -231,7 +344,11 @@ function BashDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
           />
         </Collapsible>
       )}
-      {!done && <div className={styles.pendingNote}>still running…</div>}
+      {!done && (
+        <Typography variant="body2" color="text.secondary">
+          still running…
+        </Typography>
+      )}
     </DetailCard>
   );
 }
@@ -244,18 +361,27 @@ function DiffDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
     <DetailCard
       title={
         <>
-          {a.tool_name} <code>{p.path ?? ""}</code>
+          {a.tool_name}{" "}
+          <Box component="code" sx={monoSx}>
+            {p.path ?? ""}
+          </Box>
         </>
       }
       meta={<StepMeta a={a} />}
     >
-      {p.error !== undefined && <pre className={styles.errorText}>{p.error}</pre>}
+      {p.error !== undefined && (
+        <Alert severity="error" role="presentation">
+          <Raw value={p.error} />
+        </Alert>
+      )}
       {hunks.map((h, i) => {
         const start = offset + 1;
         offset += h.lines.length;
         return (
-          <div key={i} className={styles.diffHunk}>
-            <div className={styles.diffHeader}>{h.header}</div>
+          <Box key={i} sx={{ mt: 1, border: 1, borderColor: "divider", overflowX: "auto" }}>
+            <Typography variant="caption" sx={{ ...monoSx, display: "block", px: 0.5, bgcolor: "action.hover" }}>
+              {h.header}
+            </Typography>
             <OutputLines
               text={h.lines.join("\n")}
               start={start}
@@ -264,11 +390,13 @@ function DiffDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
                 line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : undefined
               }
             />
-          </div>
+          </Box>
         );
       })}
       {hunks.length === 0 && p.error === undefined && (
-        <div className={styles.pendingNote}>no textual change</div>
+        <Typography variant="body2" color="text.secondary">
+          no textual change
+        </Typography>
       )}
     </DetailCard>
   );
@@ -280,9 +408,15 @@ function ReadDetail({ a }: { a: RunActivity }) {
     <DetailCard
       title={
         <>
-          Read <code>{p.path ?? ""}</code>
+          Read{" "}
+          <Box component="code" sx={monoSx}>
+            {p.path ?? ""}
+          </Box>
           {p.lines !== undefined && (
-            <span className={styles.detailInlineMeta}> · {p.lines} lines</span>
+            <Typography component="span" variant="caption" color="text.secondary">
+              {" "}
+              · {p.lines} lines
+            </Typography>
           )}
         </>
       }
@@ -297,15 +431,18 @@ function SearchDetail({ a }: { a: RunActivity }) {
     <DetailCard
       title={
         <>
-          Search <code>{p.pattern ?? ""}</code>
+          Search{" "}
+          <Box component="code" sx={monoSx}>
+            {p.pattern ?? ""}
+          </Box>
         </>
       }
       meta={<StepMeta a={a} />}
     >
       {p.matches !== undefined && (
-        <div className={styles.detailLine}>
+        <Typography variant="body2">
           {p.matches} {p.matches === 1 ? "match" : "matches"}
-        </div>
+        </Typography>
       )}
     </DetailCard>
   );
@@ -315,16 +452,35 @@ function TodoDetail({ a }: { a: RunActivity }) {
   const items = payloadOf(a).items ?? [];
   return (
     <DetailCard title="Plan" meta={<StepMeta a={a} />}>
-      <ul className={styles.todoList}>
+      <List dense disablePadding>
         {items.map((it, i) => (
-          <li key={i} data-status={it.status}>
-            <span aria-hidden="true" className={styles.todoMark}>
+          <ListItem key={i} disableGutters sx={{ py: 0 }}>
+            <Box
+              component="span"
+              aria-hidden="true"
+              sx={{
+                width: 16,
+                color:
+                  it.status === "completed"
+                    ? "var(--ok)"
+                    : it.status === "in_progress"
+                      ? "var(--running)"
+                      : "var(--muted)",
+              }}
+            >
               {it.status === "completed" ? "✓" : it.status === "in_progress" ? "●" : "○"}
-            </span>
-            {it.content ?? ""}
-          </li>
+            </Box>
+            <ListItemText
+              primary={it.content ?? ""}
+              secondary={it.status === "completed" ? "done" : (it.status ?? "")}
+              slotProps={{
+                primary: { variant: "body2" },
+                secondary: { variant: "caption" },
+              }}
+            />
+          </ListItem>
         ))}
-      </ul>
+      </List>
     </DetailCard>
   );
 }
@@ -341,7 +497,13 @@ export interface InterveneContext {
  * row (payload {elicitation_id, response}) renders the response. Exported since S36:
  * InlineElicitation embeds this exact component in the home needs-you card and the inbox
  * rows, so answering from a card and answering on the run detail are one code path. */
-export function ElicitationDetail({ a, intervene }: { a: RunActivity; intervene?: InterveneContext }) {
+export function ElicitationDetail({
+  a,
+  intervene,
+}: {
+  a: RunActivity;
+  intervene?: InterveneContext;
+}) {
   const p = payloadOf(a) as KnownPayload & {
     elicitation_id?: string;
     response?: unknown;
@@ -351,8 +513,8 @@ export function ElicitationDetail({ a, intervene }: { a: RunActivity; intervene?
     return (
       <DetailCard title={a.title} meta={<StepMeta a={a} />}>
         {p.response !== undefined && (
-          <Collapsible label="response">
-            <pre className={styles.rawFallback}>{JSON.stringify(p.response, null, 2)}</pre>
+          <Collapsible label="Response">
+            <Raw value={p.response} />
           </Collapsible>
         )}
       </DetailCard>
@@ -413,86 +575,89 @@ function QuestionRow({
       {questions.map((q, i) => {
         const c = choiceOf(i);
         const multi = q.multiSelect === true;
+        const labelId = `question-${a.seq}-${i}`;
         return (
-          <div key={i} className={styles.questionCard}>
+          <Box key={i} sx={{ mb: 2 }}>
             {q.header !== undefined && q.header !== "" && (
-              <span className={styles.questionHeader}>{q.header}</span>
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                {q.header}
+              </Typography>
             )}
-            <div className={styles.questionText}>{q.question}</div>
-            <ul className={styles.optionList}>
-              {(q.options ?? []).map((o, j) => {
-                const label = o.label ?? "";
-                const selected = !c.useOther && c.labels.includes(label);
-                return (
-                  <li key={j}>
-                    <button
-                      type="button"
-                      className={styles.optionCard}
-                      data-selected={selected || undefined}
-                      disabled={!pending}
-                      onClick={() => {
-                        const labels = multi
-                          ? selected
-                            ? c.labels.filter((l) => l !== label)
-                            : [...c.labels, label]
-                          : [label];
-                        setChoice(i, { labels, other: c.other, useOther: false });
-                      }}
-                    >
-                      <span className={styles.optionLabel}>{label}</span>
-                      {o.description !== undefined && o.description !== "" && (
-                        <span className={styles.optionDesc}>{o.description}</span>
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-              <li>
-                <div
-                  className={styles.optionCard}
-                  data-selected={c.useOther || undefined}
-                  data-other="true"
+            <Typography variant="body1" id={labelId} gutterBottom>
+              {q.question}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }} gutterBottom>
+              {multi ? "Choose any that apply." : "Choose one."}
+            </Typography>
+            <ToggleButtonGroup
+              orientation="vertical"
+              fullWidth
+              exclusive={!multi}
+              disabled={!pending}
+              aria-labelledby={labelId}
+              value={c.useOther ? (multi ? [] : null) : multi ? c.labels : (c.labels[0] ?? null)}
+              onChange={(_e, next: string | string[] | null) => {
+                const labels =
+                  next === null ? [] : Array.isArray(next) ? next : [next];
+                setChoice(i, { labels, other: c.other, useOther: false });
+              }}
+            >
+              {(q.options ?? []).map((o, j) => (
+                <ToggleButton
+                  key={j}
+                  value={o.label ?? ""}
+                  sx={{ justifyContent: "flex-start", textAlign: "left", display: "block" }}
                 >
-                  <span className={styles.optionLabel}>Other</span>
-                  <input
-                    className={styles.otherInput}
-                    placeholder="Type your own answer…"
-                    disabled={!pending}
-                    value={c.other}
-                    onFocus={() => setChoice(i, { ...c, useOther: true })}
-                    onChange={(e) =>
-                      setChoice(i, { labels: [], other: e.target.value, useOther: true })
-                    }
-                  />
-                </div>
-              </li>
-            </ul>
-          </div>
+                  <Typography variant="body2" component="span" sx={{ display: "block" }}>
+                    {o.label ?? ""}
+                  </Typography>
+                  {o.description !== undefined && o.description !== "" && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                      {o.description}
+                    </Typography>
+                  )}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+            <TextField
+              fullWidth
+              size="small"
+              sx={{ mt: 1 }}
+              label="Other — type your own answer"
+              disabled={!pending}
+              value={c.other}
+              onFocus={() => setChoice(i, { ...c, useOther: true })}
+              onChange={(e) =>
+                setChoice(i, { labels: [], other: e.target.value, useOther: true })
+              }
+            />
+          </Box>
         );
       })}
-      {questions.length === 0 && (
-        <pre className={styles.rawFallback}>{JSON.stringify(a.payload, null, 2)}</pre>
-      )}
+      {questions.length === 0 && <Raw value={a.payload} />}
       {pending && intervene !== undefined ? (
         <>
-          <button
-            type="button"
+          <Button
+            variant="contained"
             className={styles.answerButton}
             disabled={!complete || respond.isPending}
             onClick={submit}
           >
             Answer
-          </button>
+          </Button>
           {respond.isError && (
-            <div className={styles.respondError} role="alert">
+            <Alert severity="error" role="alert" sx={{ mt: 1 }}>
               {respond.error.message}
-            </div>
+            </Alert>
           )}
         </>
       ) : (
-        <div className={styles.resolvedChip} data-state={el?.state ?? "pending"}>
-          {resolvedLabel(el)}
-        </div>
+        <Chip
+          size="small"
+          variant="outlined"
+          label={<ResolvedLabel el={el} />}
+          color={el?.state === "denied" ? "error" : "default"}
+        />
       )}
     </DetailCard>
   );
@@ -556,61 +721,74 @@ function ApprovalRow({
 
   return (
     <DetailCard
-      title={<span className={styles.approvalTitle}>▲ {req.action ?? a.title}</span>}
+      title={
+        <>
+          <Box component="span" aria-hidden="true" sx={{ color: "var(--needs-you)" }}>
+            ▲{" "}
+          </Box>
+          {req.action ?? a.title}
+        </>
+      }
       meta={<StepMeta a={a} />}
     >
-      <dl className={styles.approvalFields}>
+      <Box component="dl" sx={{ m: 0, mb: 1 }}>
         {fields.map(([label, value]) =>
           value !== undefined && value !== "" ? (
-            <div key={label} className={styles.approvalField}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
-            </div>
+            <Box key={label} sx={{ display: "flex", gap: 1, py: 0.25 }}>
+              <Typography component="dt" variant="caption" color="text.secondary" sx={{ width: 92, flexShrink: 0 }}>
+                {label}
+              </Typography>
+              <Typography component="dd" variant="body2" sx={{ m: 0 }}>
+                {value}
+              </Typography>
+            </Box>
           ) : null,
         )}
-      </dl>
+      </Box>
       {req.input !== undefined && (
-        <Collapsible label="tool input">
-          <pre className={styles.rawFallback}>{JSON.stringify(req.input, null, 2)}</pre>
+        <Collapsible label="Tool input">
+          <Raw value={req.input} />
         </Collapsible>
       )}
 
       {pending ? (
-        <div className={styles.approvalControls}>
+        <Stack spacing={1} sx={{ mt: 1 }}>
           {mode === "edits" && (
-            <div className={styles.approvalEditor}>
-              <textarea
-                className={styles.approvalTextarea}
+            <>
+              <TextField
+                multiline
+                minRows={8}
+                fullWidth
                 value={edited}
-                rows={8}
+                label="Edited tool input (JSON)"
+                slotProps={{ htmlInput: { style: { fontFamily: MONO_FONT, fontSize: 12 } } }}
                 onChange={(e) => {
                   setEdited(e.target.value);
                   setEditError(null);
                 }}
-                aria-label="Edited tool input (JSON)"
               />
               {editError !== null && (
-                <div className={styles.respondError} role="alert">
+                <Alert severity="error" role="alert">
                   {editError}
-                </div>
+                </Alert>
               )}
-            </div>
+            </>
           )}
           {mode === "respond" && (
-            <textarea
-              className={styles.approvalTextarea}
+            <TextField
+              multiline
+              minRows={3}
+              fullWidth
               value={message}
-              rows={3}
+              label="Response to the agent"
               placeholder="Tell the agent what to do instead…"
               onChange={(e) => setMessage(e.target.value)}
-              aria-label="Response to the agent"
             />
           )}
-          <div className={styles.approvalButtons}>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
             {mode === "edits" ? (
-              <button
-                type="button"
-                className={styles.answerButton}
+              <Button
+                variant="contained"
                 disabled={respond.isPending}
                 onClick={() => {
                   try {
@@ -624,102 +802,121 @@ function ApprovalRow({
                   }
                 }}
               >
-                ✓ Approve with these edits
-              </button>
+                <Glyph>✓</Glyph>Approve with these edits
+              </Button>
             ) : mode === "respond" ? (
-              <button
-                type="button"
-                className={styles.answerButton}
+              <Button
+                variant="contained"
                 disabled={respond.isPending || message.trim() === ""}
                 onClick={() => act({ action: "deny", message: message.trim() })}
               >
-                ↩ Send response
-              </button>
+                <Glyph>↩</Glyph>Send response
+              </Button>
             ) : (
-              <button
-                type="button"
-                className={styles.answerButton}
+              <Button
+                variant="contained"
                 disabled={respond.isPending}
                 onClick={() => act(alwaysAllow ? { action: "remember" } : { action: "approve" })}
               >
-                ✓ Approve
-              </button>
+                <Glyph>✓</Glyph>Approve
+              </Button>
             )}
-            <button
-              type="button"
-              className={styles.approvalSecondary}
-              data-active={mode === "edits" || undefined}
+            <Button
+              variant={mode === "edits" ? "contained" : "outlined"}
+              color="inherit"
               onClick={() => setMode(mode === "edits" ? "none" : "edits")}
             >
               Approve with edits
-            </button>
-            <button
-              type="button"
-              className={styles.approvalSecondary}
-              data-active={mode === "respond" || undefined}
+            </Button>
+            <Button
+              variant={mode === "respond" ? "contained" : "outlined"}
+              color="inherit"
               onClick={() => setMode(mode === "respond" ? "none" : "respond")}
             >
               Respond
-            </button>
-            <button
-              type="button"
-              className={styles.approvalSecondary}
-              data-danger="true"
+            </Button>
+            <Button
+              variant="outlined"
+              color="error"
               disabled={respond.isPending}
               onClick={() => act({ action: "deny" })}
             >
-              ✕ Deny
-            </button>
-          </div>
-          <label className={styles.alwaysAllow}>
-            <input
-              type="checkbox"
-              checked={alwaysAllow}
-              onChange={(e) => setAlwaysAllow(e.target.checked)}
-            />
-            Always allow {req.tool_name ?? "this tool"} like this — writes one scoped rule in
-            agent settings
-          </label>
+              <Glyph>✕</Glyph>Deny
+            </Button>
+          </Stack>
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={alwaysAllow}
+                onChange={(e) => setAlwaysAllow(e.target.checked)}
+              />
+            }
+            label={
+              <Typography variant="body2">
+                Always allow {req.tool_name ?? "this tool"} like this — writes one scoped
+                rule in agent settings
+              </Typography>
+            }
+          />
           {respond.isError && (
-            <div className={styles.respondError} role="alert">
+            <Alert severity="error" role="alert">
               {respond.error.message}
-            </div>
+            </Alert>
           )}
-        </div>
+        </Stack>
       ) : (
-        <div className={styles.resolvedChip} data-state={el.state}>
-          {resolvedLabel(el)}
-        </div>
+        <Chip
+          size="small"
+          variant="outlined"
+          label={<ResolvedLabel el={el} />}
+          color={el.state === "denied" ? "error" : "default"}
+        />
       )}
       {ruleID !== null && (
-        <div className={styles.ruleAdded}>
+        // The one alert here that appears in response to a click rather than a selection, so
+        // it does announce — but politely (`role="status"`), not with MUI's assertive default.
+        <Alert severity="info" role="status" sx={{ mt: 1 }}>
           Rule added —{" "}
-          <Link
+          <MuiLink
+            component={RouterLink}
             to="/p/$key/agents/$id"
             params={{ key: intervene.projectKey, id: intervene.agentID }}
-            className={styles.ruleLink}
           >
             view in agent settings
-          </Link>
-        </div>
+          </MuiLink>
+        </Alert>
       )}
     </DetailCard>
   );
 }
 
-function resolvedLabel(el?: Elicitation): string {
+/** How an elicitation ended: a decorative glyph, and the word that actually says it. */
+function resolution(el?: Elicitation): { glyph?: string; text: string } {
   switch (el?.state) {
     case "answered":
-      return el.kind === "approval" ? "✓ Approved" : "↩ Answered";
+      return el.kind === "approval"
+        ? { glyph: "✓", text: "Approved" }
+        : { glyph: "↩", text: "Answered" };
     case "denied":
-      return "✕ Denied";
+      return { glyph: "✕", text: "Denied" };
     case "expired":
-      return "Expired without an answer";
+      return { text: "Expired without an answer" };
     case "canceled":
-      return "Canceled with the run";
+      return { text: "Canceled with the run" };
     default:
-      return "Waiting…";
+      return { text: "Waiting…" };
   }
+}
+
+function ResolvedLabel({ el }: { el?: Elicitation }) {
+  const { glyph, text } = resolution(el);
+  return (
+    <>
+      {glyph !== undefined && <Glyph>{glyph}</Glyph>}
+      {text}
+    </>
+  );
 }
 
 /** The lexicode MCP tools get labelled cards; other MCP tools a labelled honest card. */
@@ -729,39 +926,40 @@ function MCPDetail({ a }: { a: RunActivity }) {
   let body: ReactNode = null;
   switch (a.tool_name) {
     case "mcp__lexicode__set_step":
-      body = <div className={styles.detailLine}>current step → “{p.step ?? ""}”</div>;
+      body = <Typography variant="body2">current step → “{p.step ?? ""}”</Typography>;
       break;
     case "mcp__lexicode__check_criterion":
       body = (
-        <div className={styles.detailLine}>
+        <Typography variant="body2">
           {p.met === true ? "✓ met" : "○ unmet"}
           {p.note !== undefined && p.note !== "" && <> — {p.note}</>}
-        </div>
+        </Typography>
       );
       break;
     case "mcp__lexicode__propose_wiki_page":
       body = (
-        <div className={styles.detailLine}>
-          proposed <code>{p.slug ?? ""}</code>
+        <Typography variant="body2">
+          proposed{" "}
+          <Box component="code" sx={monoSx}>
+            {p.slug ?? ""}
+          </Box>
           {p.reason !== undefined && p.reason !== "" && <> — {p.reason}</>}
-        </div>
+        </Typography>
       );
       break;
     default:
       body = (
-        <Collapsible label="parameters">
-          <pre className={styles.rawFallback}>
-            {JSON.stringify(p.raw ?? a.payload, null, 2)}
-          </pre>
+        <Collapsible label="Parameters">
+          <Raw value={p.raw ?? a.payload} />
         </Collapsible>
       );
   }
   return (
-    <DetailCard title={<span className={styles.mcpLabel}>{label}</span>} meta={<StepMeta a={a} />}>
+    <DetailCard title={label} meta={<StepMeta a={a} />}>
       {body}
       {typeof p.result === "string" && p.result !== "" && (
-        <Collapsible label="result">
-          <pre className={styles.rawFallback}>{p.result}</pre>
+        <Collapsible label="Result">
+          <Raw value={p.result} />
         </Collapsible>
       )}
     </DetailCard>
@@ -777,10 +975,14 @@ function UnknownToolDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
       {typeof p.result === "string" && p.result !== "" && (
         <OutputLines text={p.result} start={1} sel={sel} />
       )}
-      {p.truncated === true && <div className={styles.truncNote}>output truncated</div>}
+      {p.truncated === true && (
+        <Typography variant="caption" color="text.secondary">
+          output truncated
+        </Typography>
+      )}
       {p.raw !== undefined && (
-        <Collapsible label="raw input">
-          <pre className={styles.rawFallback}>{JSON.stringify(p.raw, null, 2)}</pre>
+        <Collapsible label="Raw input">
+          <Raw value={p.raw} />
         </Collapsible>
       )}
     </DetailCard>
@@ -790,19 +992,29 @@ function UnknownToolDetail({ a, sel }: { a: RunActivity; sel: LineSelection }) {
 function ProvisionDetail({ a }: { a: RunActivity }) {
   const p = payloadOf(a);
   if (p.line !== undefined) {
-    return <DetailCard title={<code>{p.line}</code>} />;
+    return (
+      <DetailCard
+        title={
+          <Box component="code" sx={monoSx}>
+            {p.line}
+          </Box>
+        }
+      />
+    );
   }
   return (
     <DetailCard
       title={
         <>
-          {p.state === "ok" ? "✓" : p.state === "failed" ? "✕" : p.state === "running" ? "●" : "○"}{" "}
+          <Box component="span" aria-hidden="true">
+            {p.state === "ok" ? "✓" : p.state === "failed" ? "✕" : p.state === "running" ? "●" : "○"}{" "}
+          </Box>
           {p.step ?? a.title}
         </>
       }
     >
       {p.detail !== undefined && p.detail !== "" && (
-        <div className={styles.detailLine}>{p.detail}</div>
+        <Typography variant="body2">{p.detail}</Typography>
       )}
     </DetailCard>
   );
@@ -823,26 +1035,30 @@ export function ActivityDetail({
     case "thought":
       return (
         <DetailCard title="Thought" meta={<StepMeta a={a} />}>
-          <p className={styles.prose}>{payloadOf(a).text ?? a.title}</p>
+          <Typography variant="body1">{payloadOf(a).text ?? a.title}</Typography>
         </DetailCard>
       );
     case "response":
       return (
-        <article className={styles.outcomeBlock}>
-          <header className={styles.outcomeHead}>
-            ✓ Outcome
-            <StepMeta a={a} />
-          </header>
-          <p className={styles.prose}>{payloadOf(a).text ?? a.title}</p>
-        </article>
+        <Alert severity="success" role="presentation" icon={<span aria-hidden="true">✓</span>}>
+          <AlertTitle>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <span>Outcome</span>
+              <StepMeta a={a} />
+            </Stack>
+          </AlertTitle>
+          {payloadOf(a).text ?? a.title}
+        </Alert>
       );
     case "error": {
       const p = payloadOf(a);
       return (
-        <article className={styles.outcomeBlock} data-failed="true">
-          <header className={styles.outcomeHead}>✕ {p.subtype !== undefined && p.subtype !== "" ? p.subtype : "Error"}</header>
-          <p className={styles.prose}>{p.result !== undefined && p.result !== "" ? p.result : a.title}</p>
-        </article>
+        <Alert severity="error" role="presentation" icon={<span aria-hidden="true">✕</span>}>
+          <AlertTitle>
+            {p.subtype !== undefined && p.subtype !== "" ? p.subtype : "Error"}
+          </AlertTitle>
+          {p.result !== undefined && p.result !== "" ? p.result : a.title}
+        </Alert>
       );
     }
     case "elicitation":

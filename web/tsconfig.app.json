@@ -20,5 +20,5 @@
     "noUncheckedSideEffectImports": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["src"]
+  "include": ["src", "screenshots"]
 }

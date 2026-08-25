@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lexicode — screenshot harness</title>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!--
+      Seed the theme BEFORE any module loads. `stores/ui` is a zustand `persist` store
+      created at import time, and ES module imports are hoisted — so writing localStorage
+      inside harness.tsx would land after the store had already hydrated with the default
+      ("system"), and every screenshot would come out light.
+    -->
+    <script>
+      (function () {
+        var theme = new URLSearchParams(window.location.search).get("theme") || "dark";
+        document.documentElement.setAttribute("data-theme", theme);
+        window.localStorage.setItem(
+          "lexicode-ui",
+          JSON.stringify({
+            state: { railCollapsed: false, theme: theme, density: "comfortable" },
+            version: 0,
+          }),
+        );
+      })();
+    </script>
+    <script type="module" src="./harness.tsx"></script>
+  </body>
+</html>
