@@ -1,19 +1,42 @@
 /*
- * S24 intervention surfaces on the run detail (UI spec §5.7):
+ * S24 intervention surfaces on the run detail (UI spec §5.7) — converted to MUI for the
+ * LEXI-13 proof of concept.
  *
  * - The steering composer — live from `queued` onward (§10.3). A sent message renders
  *   inline with the "Applied after the current step." chip and flips to delivered when the
  *   adapter accepts it (run.message SSE frame → detail refetch).
- * - Stop — inline confirm, then terminal `canceled` with the artifact push preserved.
+ * - Stop — a real MUI Dialog that says what stopping does, replacing the old inline
+ *   "Confirm stop / Keep running" toolbar swap. Swapping a toolbar in place under the
+ *   pointer is exactly the pattern a newcomer misreads.
  * - Take over — a note field ("tell the agent what you changed before resuming"), then the
  *   copy-paste checkout block, monospace with a copy button (§10.7). The block also renders
  *   statically on any run whose state_reason is `takeover`, so it survives a reload.
+ *
+ * Every control here is a MUI component. The composer's Enter-to-send shortcut is kept as a
+ * convenience only: the Send button beside it does the same thing and is always visible, so
+ * nothing on this screen is reachable by keyboard alone.
  */
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogContentText from "@mui/material/DialogContentText";
+import DialogTitle from "@mui/material/DialogTitle";
+import List from "@mui/material/List";
+import ListItem from "@mui/material/ListItem";
+import ListItemText from "@mui/material/ListItemText";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
 import { useState } from "react";
 
 import type { Run, RunMessage } from "../../../lib/api/client";
 import { useSteerRun, useStopRun, useTakeoverRun } from "../../../lib/api/runQueries";
-import styles from "./runs.module.css";
+import { MONO_FONT } from "../../../styles/muiTheme";
 
 const TERMINAL = new Set(["completed", "failed", "timed_out", "canceled", "loop_stopped"]);
 
@@ -45,162 +68,159 @@ export function InterventionBar({ run, messages }: { run: Run; messages: RunMess
   return (
     <>
       {shownCheckout !== null && (
-        <div className={styles.takeoverBlock}>
-          <div className={styles.takeoverLead}>
+        <Alert severity="info">
+          <Typography variant="body2" gutterBottom>
             Taken over. Check the branch out locally:
-          </div>
+          </Typography>
           <CopyLine text={shownCheckout} />
           {run.takeover_note !== "" && (
-            <div className={styles.takeoverNote}>Note for the next run: {run.takeover_note}</div>
+            <Typography variant="caption" sx={{ display: "block", mt: 0.5 }}>
+              Note for the next run: {run.takeover_note}
+            </Typography>
           )}
-        </div>
+        </Alert>
       )}
 
       {messages.length > 0 && (
-        <div className={styles.steerList} aria-label="Steering messages">
-          {messages.map((m) => (
-            <div key={m.id} className={styles.steerRow} data-state={m.state}>
-              <span className={styles.steerBody}>{m.body}</span>
-              <span className={styles.steerState}>
-                {m.state === "queued"
-                  ? "Applied after the current step."
-                  : m.state === "delivered"
-                    ? "Delivered"
-                    : "Dropped"}
-              </span>
-            </div>
-          ))}
-        </div>
+        <Paper sx={{ px: 1.5, py: 0.5 }}>
+          <List dense disablePadding aria-label="Steering messages">
+            {messages.map((m) => (
+              <ListItem key={m.id} disableGutters sx={{ gap: 1 }}>
+                <ListItemText primary={m.body} slotProps={{ primary: { variant: "body2" } }} />
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  color={m.state === "dropped" ? "error" : "default"}
+                  label={
+                    m.state === "queued"
+                      ? "Applied after the current step."
+                      : m.state === "delivered"
+                        ? "Delivered"
+                        : "Dropped"
+                  }
+                />
+              </ListItem>
+            ))}
+          </List>
+        </Paper>
       )}
 
       {!terminal && (
-        <footer className={styles.steeringBar}>
-          <input
-            className={styles.steeringInput}
-            placeholder="Send a message to this run… (applied after the current step)"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") send();
-            }}
-          />
-          <button
-            type="button"
-            className={styles.steeringButton}
-            disabled={steer.isPending || draft.trim() === ""}
-            onClick={send}
-          >
-            Send
-          </button>
-          {confirmingStop ? (
-            <>
-              <button
-                type="button"
-                className={styles.steeringButton}
-                data-danger="true"
-                disabled={stop.isPending}
-                onClick={() =>
-                  stop.mutate("stopped by a human", {
-                    onSettled: () => setConfirmingStop(false),
-                  })
-                }
-              >
-                Confirm stop
-              </button>
-              <button
-                type="button"
-                className={styles.steeringButton}
-                onClick={() => setConfirmingStop(false)}
-              >
-                Keep running
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className={styles.steeringButton}
-              onClick={() => setConfirmingStop(true)}
+        <Paper component="footer" sx={{ p: 1 }}>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", flexWrap: "wrap" }}>
+            <TextField
+              size="small"
+              sx={{ flexGrow: 1, minWidth: 220 }}
+              label="Send a message to this run"
+              helperText="Applied after the current step."
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") send();
+              }}
+            />
+            <Button
+              variant="contained"
+              disabled={steer.isPending || draft.trim() === ""}
+              onClick={send}
             >
-              Stop
-            </button>
-          )}
-          <button
-            type="button"
-            className={styles.steeringButton}
-            onClick={() => setTakingOver(true)}
-          >
-            Take over
-          </button>
-        </footer>
+              Send
+            </Button>
+            <Button variant="outlined" color="error" onClick={() => setConfirmingStop(true)}>
+              Stop run
+            </Button>
+            <Button variant="outlined" color="inherit" onClick={() => setTakingOver(true)}>
+              Take over
+            </Button>
+          </Stack>
+        </Paper>
       )}
 
-      {takingOver && (
-        <TakeoverDialog
-          pending={takeover.isPending}
-          onCancel={() => setTakingOver(false)}
-          onConfirm={(note) =>
-            takeover.mutate(note, {
-              onSuccess: (res) => {
-                setCheckout(res.checkout === "" ? null : res.checkout);
-                setTakingOver(false);
-              },
-            })
-          }
-        />
-      )}
+      <Dialog open={confirmingStop} onClose={() => setConfirmingStop(false)}>
+        <DialogTitle>Stop this run?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The agent stops where it is. Anything it has already committed stays on its
+            branch, so no work is lost — but the run cannot be resumed.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmingStop(false)}>Keep running</Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={stop.isPending}
+            onClick={() =>
+              stop.mutate("stopped by a human", {
+                onSettled: () => setConfirmingStop(false),
+              })
+            }
+          >
+            Stop run
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <TakeoverDialog
+        open={takingOver}
+        pending={takeover.isPending}
+        onCancel={() => setTakingOver(false)}
+        onConfirm={(note) =>
+          takeover.mutate(note, {
+            onSuccess: (res) => {
+              setCheckout(res.checkout === "" ? null : res.checkout);
+              setTakingOver(false);
+            },
+          })
+        }
+      />
     </>
   );
 }
 
 function TakeoverDialog({
+  open,
   pending,
   onCancel,
   onConfirm,
 }: {
+  open: boolean;
   pending: boolean;
   onCancel: () => void;
   onConfirm: (note: string) => void;
 }) {
   const [note, setNote] = useState("");
   return (
-    <div className={styles.takeoverDialogBackdrop} role="presentation" onClick={onCancel}>
-      <div
-        role="dialog"
-        aria-label="Take over this run"
-        className={styles.takeoverDialog}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className={styles.takeoverDialogTitle}>Take over this run</h2>
-        <p className={styles.takeoverDialogBody}>
+    <Dialog open={open} onClose={onCancel} fullWidth maxWidth="sm">
+      <DialogTitle>Take over this run</DialogTitle>
+      <DialogContent>
+        <DialogContentText gutterBottom>
           The run stops (its branch is preserved) and you get a command to check the branch
           out locally.
-        </p>
-        <label className={styles.takeoverLabel}>
-          Tell the agent what you changed before resuming
-          <textarea
-            className={styles.takeoverTextarea}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={3}
-            placeholder="e.g. I renamed the retry helper and fixed the config loader myself."
-          />
-        </label>
-        <div className={styles.takeoverDialogActions}>
-          <button type="button" className={styles.steeringButton} onClick={onCancel}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className={styles.steeringButton}
-            data-danger="true"
-            disabled={pending}
-            onClick={() => onConfirm(note)}
-          >
-            Stop and take over
-          </button>
-        </div>
-      </div>
-    </div>
+        </DialogContentText>
+        <TextField
+          fullWidth
+          multiline
+          minRows={3}
+          sx={{ mt: 1 }}
+          label="Tell the agent what you changed before resuming"
+          placeholder="e.g. I renamed the retry helper and fixed the config loader myself."
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onCancel}>Cancel</Button>
+        <Button
+          variant="contained"
+          color="error"
+          disabled={pending}
+          onClick={() => onConfirm(note)}
+        >
+          Stop and take over
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
@@ -208,11 +228,24 @@ function TakeoverDialog({
 export function CopyLine({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className={styles.copyLine}>
-      <code className={styles.copyLineText}>{text}</code>
-      <button
-        type="button"
-        className={styles.copyButton}
+    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+      <Box
+        component="code"
+        sx={{
+          fontFamily: MONO_FONT,
+          fontSize: 12,
+          px: 1,
+          py: 0.5,
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 1,
+          overflowX: "auto",
+        }}
+      >
+        {text}
+      </Box>
+      <Button
+        size="small"
         onClick={() => {
           void navigator.clipboard.writeText(text).then(() => {
             setCopied(true);
@@ -221,7 +254,7 @@ export function CopyLine({ text }: { text: string }) {
         }}
       >
         {copied ? "Copied" : "Copy"}
-      </button>
-    </div>
+      </Button>
+    </Stack>
   );
 }

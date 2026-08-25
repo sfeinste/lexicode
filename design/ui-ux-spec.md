@@ -1,5 +1,20 @@
 # UI/UX Spec — Lexicode
 
+> **§3, §6 and §7 are superseded (LEXI-13, Aug 2026).** The UI is being rebuilt on MUI, so this
+> document's *visual* prescriptions no longer bind: §3's hand-transcribed tokens are now the
+> source the MUI theme is **derived** from rather than CSS to write by hand (`web/src/styles/muiTheme.ts`),
+> §6's keyboard map is being **removed rather than supplemented** — every action gets a visible,
+> labelled control — and §7's component table is replaced by the library's own components.
+>
+> **Everything else in this document still binds**, and is still enforced by tests: the §1
+> information architecture, the §4 status vocabulary, the §5 screen definitions, the §8 empty-state
+> copy, the §9 interaction rules and the §10 accessibility floors.
+>
+> See [ui-library-evaluation.md](ui-library-evaluation.md),
+> [ui-discoverability-audit.md](ui-discoverability-audit.md),
+> [../plan/06-ui-redesign-plan.md](../plan/06-ui-redesign-plan.md), and the D-1 amendment in
+> [../plan/00-decisions.md](../plan/00-decisions.md).
+
 **Version:** 0.1 · Companion to the Product Brief · August 2026
 **Visual direction:** dense dev-tool, dark-first (Linear / Vercel / Sentry lane). Compact rows, monospace for anything machine-generated, keyboard-driven, light mode as a real second theme rather than an afterthought.
 **Audience for V1:** a small self-hosted team. Light auth, human members alongside agents, activity attribution. No org/workspace layer above the project list.

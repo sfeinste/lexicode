@@ -34,6 +34,12 @@ export default defineConfig({
     // cleanup; test files still import describe/it/expect explicitly.
     globals: true,
     environment: 'jsdom',
+    // LEXI-13: styles/muiTheme.ts derives the MUI palette from tokens.css via '?raw', so
+    // tokens.css stays the single source of colour. Vitest stubs every .css import to an
+    // empty string unless CSS processing is on — including '?raw' — which would leave the
+    // theme with no palette under test. It also makes CSS-module class names real rather
+    // than stubbed, which is what the class-name assertions in the suite already assume.
+    css: true,
     include: ['src/**/*.test.{ts,tsx}'],
   },
   server: {

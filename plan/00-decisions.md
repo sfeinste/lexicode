@@ -27,6 +27,50 @@ a literal transcription of UI spec §3 — no utility framework, because the spe
 tokens and a utility layer would let them drift. No component library; the spec's component list
 (§7) is the component library.
 
+### Amendment (LEXI-13, Aug 2026) — a component library after all: MUI
+
+**The last sentence above is reversed by the owner.** "No component library; the spec's component
+list (§7) is the component library" is superseded by: **the UI is rebuilt on MUI
+(`@mui/material` v9), using the library's own components and conventions.** Everything else in
+D-1 — the Go binary, the embedded SPA, React 19, Vite, TanStack Router and Query, Zustand, and
+`tokens.css` as the token ladder — stands unchanged.
+
+**Why the original decision was reasonable.** It was not a mistake at the time. The spec
+prescribed exact hex values, an exact type scale and an exact 32px row rhythm, and a component
+library's defaults would have fought all three. A hand-built set guaranteed the tokens could not
+drift. That guarantee was delivered: `tokens.contrast.test.ts` still passes in both themes.
+
+**Why it is being reversed anyway.** The decision optimised for *visual fidelity to the spec*
+and, in doing so, spent the budget that should have gone on *affordances*. Building every
+control by hand means each one costs something, so controls that felt optional never got built —
+and a keyboard chord is nearly free where a labelled menu is not. The result is measured in
+[../design/ui-discoverability-audit.md](../design/ui-discoverability-audit.md): across 21
+routes and 139 catalogued actions, **18 are reachable only by keyboard, and 9 of those have no
+other route in at all** — including delegating a ticket to an agent, which starts a run and
+spends money, and which is bound to one unlabelled keypress. Three further capabilities have no
+interface whatsoever. A component library does not merely save time here; it changes what is
+cheap. A `Menu` with six labelled items is one import, so it gets built.
+
+The spec's *information architecture* remains authoritative — the routes, the §4 status
+vocabulary, the three panes of the run detail, the eight trigger outcome classes, the §8 empty
+states and the §9 interaction rules are all still binding, and are still enforced by tests. What
+is superseded is §3's prescription that those tokens be hand-transcribed into bespoke CSS, and
+§6's keyboard-first premise: **the chords are being removed, not supplemented.**
+
+**How the token guarantee survives the reversal.** `tokens.css` is not replaced and is not
+duplicated. `web/src/styles/muiTheme.ts` parses that same stylesheet at import time and hands
+the values to `createTheme`, so the MUI palette *is* the §3 ladder, `tokens.contrast.test.ts`
+keeps enforcing §10's 4.5:1 / 3:1 floors against it, and editing a token still moves the whole
+app. The drift the original decision feared is prevented by derivation rather than by
+abstinence.
+
+**Why MUI over the alternatives**, with bundle, theming, accessibility and maintenance measured
+for seven candidates, and with the places MUI is weak for this product stated plainly:
+[../design/ui-library-evaluation.md](../design/ui-library-evaluation.md). The migration is
+staged so that every stage leaves the app shippable:
+[06-ui-redesign-plan.md](06-ui-redesign-plan.md). One screen — the run detail, the hardest one —
+is already converted, as evidence rather than argument.
+
 ## D-2 — SQLite, WAL mode, single file
 
 `~/.lexicode/lexicode.db`. WAL, `foreign_keys=ON`, `busy_timeout=5000`, one writer connection and

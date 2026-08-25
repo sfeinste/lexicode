@@ -18,6 +18,7 @@ brief §3 must actually work.
 | [03-contracts.md](03-contracts.md) | Go port interfaces, the container protocol, the Lexicode MCP tool surface, the HTTP/SSE API. |
 | [04-implementation-plan.md](04-implementation-plan.md) | 39 sequential stories with acceptance criteria. This is the work queue. |
 | [05-quality-guardrails.md](05-quality-guardrails.md) | Research pass (Aug 2026) on guardrails that raise agent code quality. Not V1 scope — a ranked, evidenced backlog for after it. |
+| [06-ui-redesign-plan.md](06-ui-redesign-plan.md) | The staged migration of the UI onto MUI (LEXI-13). Reverses D-1's "no component library"; every stage leaves the app shippable. Read the [D-1 amendment](00-decisions.md) first. |
 
 ## Rules for implementing agents
 
